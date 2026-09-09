@@ -4,9 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Anchor,
+  FileWarning,
+  History,
   LayoutDashboard,
   Monitor,
+  Package,
   Scale,
+  ShieldAlert,
   ShieldCheck,
   Terminal,
 } from "lucide-react";
@@ -15,6 +19,10 @@ import { cn } from "@/lib/utils";
 const nav = [
   { href: "/", label: "Fleet", icon: LayoutDashboard },
   { href: "/devices", label: "Hosts", icon: Monitor },
+  { href: "/advisories", label: "Advisories", icon: ShieldAlert },
+  { href: "/patches", label: "Patches", icon: Package },
+  { href: "/versions", label: "Versions", icon: History },
+  { href: "/integrity", label: "Integrity", icon: FileWarning },
   { href: "/policies", label: "Policies", icon: ShieldCheck },
   { href: "/enroll", label: "Enroll", icon: Terminal },
   { href: "/scope", label: "Scope", icon: Scale },
@@ -55,7 +63,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="flex flex-col gap-1 px-3">
           {nav.map((item) => {
             const Icon = item.icon;
-            const active = pathname === item.href;
+            const active =
+              item.href === "/"
+                ? pathname === "/"
+                : pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
               <Link
                 key={item.href}
@@ -74,7 +85,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <p className="mt-auto px-5 py-6 text-xs leading-relaxed text-muted-foreground">
-          Self-hosted host inventory. No accounts, no premium tiers.
+          Self-hosted security inventory. No accounts, no premium tiers.
         </p>
       </aside>
       <main className="min-w-0 flex-1 px-4 py-6 sm:px-8">{children}</main>

@@ -3,6 +3,7 @@ import { DeviceTable } from "@/components/device-table";
 import { SampleToggle } from "@/components/sample-toggle";
 import { ensureStore, publicDevice } from "@/lib/store";
 import { isOnline, policySummary } from "@/lib/policies";
+import { allFindings } from "@/lib/advisories";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -11,8 +12,18 @@ export default async function HomePage() {
   const store = await ensureStore();
   const devices = store.devices.map(publicDevice);
   const online = store.devices.filter((d) => isOnline(d)).length;
-  const failing = policySummary(store.devices).reduce((n, p) => n + p.failing, 0);
+  const failing = policySummary(store.devices, store.fimEvents, store.triages).reduce(
+    (n, p) => n + p.failing,
+    0,
+  );
   const samples = store.devices.some((d) => d.sample);
+  const findings = allFindings(store.devices, store.triages);
+  const serious = findings.filter(
+    (f) =>
+      f.status === "open" &&
+      (f.advisory.severity === "critical" || f.advisory.severity === "high"),
+  ).length;
+  const patches = store.devices.reduce((n, d) => n + d.pendingUpdates.length, 0);
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -20,8 +31,9 @@ export default async function HomePage() {
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Fleet</h1>
           <p className="mt-1 max-w-2xl text-muted-foreground">
-            Inventory and policy checks for machines you enroll. This is the open slice: heartbeat,
-            hardware, and a few host controls — not Apple/Windows MDM.
+            Security inventory for machines you enroll: versions, pending patches, a local
+            advisory catalog, and file integrity on watched paths. No MDM lock/wipe, no
+            subscriptions.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -35,28 +47,46 @@ export default async function HomePage() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">Hosts</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Hosts online</CardTitle>
           </CardHeader>
-          <CardContent className="text-3xl font-semibold">{store.devices.length}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">Online</CardTitle>
-          </CardHeader>
-          <CardContent className="text-3xl font-semibold">{online}</CardContent>
+          <CardContent className="text-3xl font-semibold">
+            {online}
+            <span className="ml-2 text-base font-normal text-muted-foreground">
+              / {store.devices.length}
+            </span>
+          </CardContent>
         </Card>
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Policy failures
+              High+ advisories
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-3xl font-semibold">{failing}</CardContent>
+          <CardContent className="text-3xl font-semibold">{serious}</CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Pending patches
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-3xl font-semibold">{patches}</CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Integrity events
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-3xl font-semibold">{store.fimEvents.length}</CardContent>
         </Card>
       </div>
+      <p className="text-sm text-muted-foreground">
+        {failing} policy check{failing === 1 ? "" : "s"} failing across the fleet.
+      </p>
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">

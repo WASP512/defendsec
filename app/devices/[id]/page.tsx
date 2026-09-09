@@ -2,9 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { PolicyBadge, OnlineBadge } from "@/components/status-badge";
+import { PolicyBadge, OnlineBadge, SeverityBadge } from "@/components/status-badge";
+import { FindingActions } from "@/components/finding-actions";
 import { ensureStore } from "@/lib/store";
 import { evaluateDevice } from "@/lib/policies";
+import { findingsForDevice } from "@/lib/advisories";
 import {
   formatBytesMb,
   formatUptime,
@@ -24,7 +26,9 @@ export default async function DeviceDetailPage({
   const store = await ensureStore();
   const device = store.devices.find((d) => d.id === id);
   if (!device) notFound();
-  const policies = evaluateDevice(device);
+  const policies = evaluateDevice(device, store.fimEvents, store.triages);
+  const findings = findingsForDevice(device, store.triages);
+  const drifts = store.fimEvents.filter((event) => event.deviceId === device.id);
 
   const facts = [
     ["Platform", `${platformLabel(device.platform)} ${device.osVersion}`.trim()],
@@ -84,7 +88,86 @@ export default async function DeviceDetailPage({
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Software</h2>
+        <h2 className="text-lg font-semibold">Advisories</h2>
+        {findings.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No catalog matches for reported software.</p>
+        ) : (
+          <ul className="divide-y rounded-xl border">
+            {findings.map((finding) => (
+              <li key={finding.key} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{finding.advisory.cve}</span>
+                    <SeverityBadge severity={finding.advisory.severity} />
+                    {finding.status === "acknowledged" ? (
+                      <Badge variant="outline">acknowledged</Badge>
+                    ) : (
+                      <Badge>open</Badge>
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {finding.packageName} {finding.version} is below {finding.advisory.below}.{" "}
+                    {finding.advisory.summary}
+                  </p>
+                </div>
+                <FindingActions findingKey={finding.key} status={finding.status} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Pending patches</h2>
+        {device.pendingUpdates.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No pending updates reported.</p>
+        ) : (
+          <ul className="divide-y rounded-xl border">
+            {device.pendingUpdates.map((item) => (
+              <li key={`${item.name}-${item.available}`} className="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:justify-between">
+                <span>{item.name}</span>
+                <span className="text-muted-foreground">
+                  {item.current} → {item.available}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">File integrity</h2>
+        {device.fim.length === 0 && drifts.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No watched paths reported.</p>
+        ) : (
+          <div className="space-y-3">
+            {drifts.length > 0 ? (
+              <ul className="divide-y rounded-xl border border-destructive/30">
+                {drifts.map((event) => (
+                  <li key={event.id} className="px-4 py-3 text-sm">
+                    <p className="font-medium">{event.path}</p>
+                    <p className="break-all text-muted-foreground">
+                      {event.previous.slice(0, 12)}… → {event.current.slice(0, 12)}… ·{" "}
+                      {relativeTime(event.detectedAt)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <ul className="divide-y rounded-xl border">
+              {device.fim.map((file) => (
+                <li key={file.path} className="px-4 py-3 text-sm">
+                  <p className="font-medium">{file.path}</p>
+                  <p className="break-all text-muted-foreground">{file.sha256}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Software versions</h2>
         {device.software.length === 0 ? (
           <p className="text-sm text-muted-foreground">No software inventory reported.</p>
         ) : (

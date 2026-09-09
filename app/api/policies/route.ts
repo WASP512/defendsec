@@ -6,5 +6,7 @@ export const runtime = "nodejs";
 
 export async function GET() {
   const store = await ensureStore();
-  return NextResponse.json({ policies: policySummary(store.devices) });
+  return NextResponse.json({
+    policies: policySummary(store.devices, store.fimEvents, store.triages),
+  });
 }

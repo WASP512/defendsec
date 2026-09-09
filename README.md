@@ -1,10 +1,10 @@
 # Keel
 
-Self-hosted host inventory. Enroll machines with a Python agent, see them in a console, and run a handful of snapshot policies. There are no accounts, premium flags, or subscriptions.
+Self-hosted **security inventory** for machines you enroll. No accounts, premium flags, or subscriptions.
 
-This is **not** a FleetDM replacement. Fleet’s hard parts are live osquery at scale and vendor MDM (Apple Business Manager, Windows MDM, Android Enterprise). Keel is the first layer you can actually own without those contracts: enroll, heartbeat, inventory, report.
+The agent reports versions, pending patches, and hashes of a small file set. The console matches software against a local advisory catalog, tracks integrity drift, and runs snapshot policies. This is not FleetDM and it is not MDM.
 
-The in-app [Scope](/scope) page spells out what is easy, what is ordinary product work, and where MDM becomes the wall.
+The in-app [Scope](/scope) page maps what is easy, what is ordinary (OSV/NVD ingest, patch orchestration), and where vendor MDM becomes the wall.
 
 ## Run the console
 
@@ -13,7 +13,7 @@ npm install
 npm run dev
 ```
 
-Open [http://127.0.0.1:47261](http://127.0.0.1:47261). The first visit loads a sample fleet so the UI is populated. Remove those hosts anytime, then enroll real machines.
+Open [http://127.0.0.1:47261](http://127.0.0.1:47261). The first visit loads a sample fleet with advisories, patches, and integrity events. Remove those hosts anytime, then enroll real machines.
 
 Production:
 
@@ -22,34 +22,36 @@ npm run build
 npm start
 ```
 
-Host state is a JSON file at `data/keel.json`. Back it up with the rest of the server.
+Host state is `data/keel.json`. Back it up with the rest of the server.
 
 ## Enroll a host
-
-On a machine that can reach the server:
 
 ```bash
 python3 agent/keel-agent.py --server http://YOUR_SERVER:47261 --enroll-secret SECRET
 ```
 
-Copy the exact command from **Enroll**. The agent uses the Python 3 standard library only. It stores a node key beside the script and checks in every 30 seconds.
+Copy the exact command from **Enroll**. Python 3 standard library only. The agent stores a node key beside the script and checks in every 30 seconds.
+
+Optional extra integrity paths (OS path separator):
 
 ```bash
-python3 agent/keel-agent.py --server http://127.0.0.1:47261 --enroll-secret SECRET --once
+KEEL_FIM_PATHS=/etc/hostname python3 agent/keel-agent.py --server URL --enroll-secret SECRET --once
 ```
 
 ## What you get
 
 - Host list with online/offline (two-minute window)
-- Hardware, user, addresses, software snapshot
-- Policies: agent checking in, disk encryption, firewall, supported OS
-- Enroll secret rotate
+- Software version records across hosts
+- Pending patches (`apt list --upgradable` on Debian/Ubuntu)
+- Advisory matches from `lib/advisories.ts` with acknowledge / reopen
+- File integrity on `/etc/passwd`, `/etc/hosts`, `sshd_config`, and similar
+- Policies: check-in, encryption, firewall, supported OS, high/critical advisories, patches, FIM
 
 ## What you do not get
 
+- Live NVD/OSV synchronization (the catalog is local on purpose)
+- Remote patch install / reboot orchestration
 - Lock, wipe, DEP, configuration profiles, Windows CSP
-- Live osquery, packs, or differential query results
-- CVE feeds, CIS benchmarks, or automatic remediation
-- Multi-tenant SSO / teams (you can add those; they are not the expensive part)
+- Enterprise FIM (inotify, signed baselines, noisy-path tuning)
 
-If you need stolen-device wipe, keep a real MDM next to this inventory plane rather than trying to clone all of Fleet.
+If you need stolen-device wipe, keep a real MDM next to this plane.

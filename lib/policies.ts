@@ -1,5 +1,6 @@
-import type { Device, PolicyResult, PolicyStatus } from "./types";
+import type { Device, FindingTriage, FimEvent, PolicyResult, PolicyStatus } from "./types";
 import { ONLINE_WINDOW_MS } from "./types";
+import { findingsForDevice } from "./advisories";
 
 export function isOnline(device: Device, now = Date.now()) {
   return now - new Date(device.lastSeen).getTime() < ONLINE_WINDOW_MS;
@@ -31,6 +32,21 @@ export const POLICY_DEFS = [
     name: "Supported OS",
     description: "macOS 14+, Windows 11, or a current Ubuntu LTS.",
   },
+  {
+    id: "vulns",
+    name: "No high/critical advisories",
+    description: "Installed software is not older than the local advisory floor.",
+  },
+  {
+    id: "patches",
+    name: "No pending patches",
+    description: "Agent reported no outstanding OS or package updates.",
+  },
+  {
+    id: "fim",
+    name: "Watched files unchanged",
+    description: "Hashes of enrolled integrity paths match the last baseline.",
+  },
 ] as const;
 
 function supportedOs(device: Device): boolean | null {
@@ -55,8 +71,19 @@ function supportedOs(device: Device): boolean | null {
   return null;
 }
 
-export function evaluateDevice(device: Device): PolicyResult[] {
+export function evaluateDevice(
+  device: Device,
+  fimEvents: FimEvent[] = [],
+  triages: FindingTriage[] = [],
+): PolicyResult[] {
   const online = isOnline(device);
+  const serious = findingsForDevice(device, triages).filter(
+    (f) =>
+      f.status === "open" &&
+      (f.advisory.severity === "critical" || f.advisory.severity === "high"),
+  );
+  const drifted = fimEvents.filter((event) => event.deviceId === device.id);
+  const patchesUnknown = device.pendingUpdates.length === 0 && device.software.length === 0;
   return [
     {
       id: "online",
@@ -98,12 +125,54 @@ export function evaluateDevice(device: Device): PolicyResult[] {
       status: statusFrom(supportedOs(device)),
       detail: `${device.osName} ${device.osVersion}`.trim() || "Unknown OS",
     },
+    {
+      id: "vulns",
+      name: "No high/critical advisories",
+      description: POLICY_DEFS[4].description,
+      status: statusFrom(serious.length === 0),
+      detail:
+        serious.length === 0
+          ? "No high or critical matches in the local catalog"
+          : serious.map((f) => `${f.advisory.cve} (${f.packageName})`).join(", "),
+    },
+    {
+      id: "patches",
+      name: "No pending patches",
+      description: POLICY_DEFS[5].description,
+      status: patchesUnknown ? "unknown" : statusFrom(device.pendingUpdates.length === 0),
+      detail: patchesUnknown
+        ? "No patch inventory reported yet"
+        : device.pendingUpdates.length === 0
+          ? "No pending updates"
+          : `${device.pendingUpdates.length} pending`,
+    },
+    {
+      id: "fim",
+      name: "Watched files unchanged",
+      description: POLICY_DEFS[6].description,
+      status:
+        device.fim.length === 0 && drifted.length === 0
+          ? "unknown"
+          : statusFrom(drifted.length === 0),
+      detail:
+        drifted.length > 0
+          ? drifted.map((event) => event.path).join(", ")
+          : device.fim.length === 0
+            ? "No integrity paths reported"
+            : `${device.fim.length} paths on baseline`,
+    },
   ];
 }
 
-export function policySummary(devices: Device[]) {
+export function policySummary(
+  devices: Device[],
+  fimEvents: FimEvent[] = [],
+  triages: FindingTriage[] = [],
+) {
   return POLICY_DEFS.map((def) => {
-    const results = devices.map((d) => evaluateDevice(d).find((p) => p.id === def.id)!);
+    const results = devices.map(
+      (d) => evaluateDevice(d, fimEvents, triages).find((p) => p.id === def.id)!,
+    );
     return {
       ...def,
       passing: results.filter((r) => r.status === "pass").length,

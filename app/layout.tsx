@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Keel — self-hosted fleet",
-  description: "Open host inventory and policy checks. No premiums, no subscriptions.",
+  description: "Open host security inventory: versions, patches, advisories, file integrity.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -36,6 +36,15 @@ export function sampleFleet(): Device[] {
         { name: "1Password", version: "8.10.48" },
         { name: "Slack", version: "4.41.105" },
       ],
+      pendingUpdates: [{ name: "Google Chrome", current: "131.0.6778.86", available: "132.0.6834.83" }],
+      fim: [
+        {
+          path: "/etc/ssh/sshd_config",
+          sha256: "a".repeat(64),
+          size: 3200,
+          mtime: ago(12 * 24 * 60),
+        },
+      ],
       enrolledAt: ago(40 * 24 * 60),
       lastSeen: ago(0.4),
     }),
@@ -58,6 +67,18 @@ export function sampleFleet(): Device[] {
         { name: "Microsoft 365 Apps", version: "16.0.18227" },
         { name: "CrowdStrike Falcon", version: "7.18" },
       ],
+      pendingUpdates: [
+        { name: "Windows Security Update KB5048685", current: "installed", available: "pending" },
+        { name: "CrowdStrike Falcon", current: "7.18", available: "7.22" },
+      ],
+      fim: [
+        {
+          path: "C:\\Windows\\System32\\drivers\\etc\\hosts",
+          sha256: "b".repeat(64),
+          size: 824,
+          mtime: ago(3 * 24 * 60),
+        },
+      ],
       enrolledAt: ago(90 * 24 * 60),
       lastSeen: ago(0.8),
     }),
@@ -77,9 +98,29 @@ export function sampleFleet(): Device[] {
       username: "ci",
       uptimeSeconds: 86_400 * 41,
       software: [
-        { name: "docker", version: "27.3.1" },
+        { name: "docker", version: "24.0.7" },
         { name: "git", version: "2.34.1" },
         { name: "python3", version: "3.10.12" },
+        { name: "openssh-server", version: "8.9p1" },
+        { name: "openssl", version: "3.0.2" },
+      ],
+      pendingUpdates: [
+        { name: "git", current: "2.34.1", available: "2.34.1-1ubuntu1.12" },
+        { name: "openssh-server", current: "8.9p1", available: "1:8.9p1-3ubuntu0.11" },
+      ],
+      fim: [
+        {
+          path: "/etc/ssh/sshd_config",
+          sha256: "c".repeat(64),
+          size: 3288,
+          mtime: ago(40),
+        },
+        {
+          path: "/etc/passwd",
+          sha256: "d".repeat(64),
+          size: 2104,
+          mtime: ago(200 * 24 * 60),
+        },
       ],
       enrolledAt: ago(200 * 24 * 60),
       lastSeen: ago(0.2),
@@ -101,10 +142,50 @@ export function sampleFleet(): Device[] {
       uptimeSeconds: 86_400 * 2,
       software: [
         { name: "Figma", version: "124.0.2" },
-        { name: "Adobe Photoshop", version: "26.0" },
+        { name: "Adobe Photoshop", version: "25.0" },
+      ],
+      pendingUpdates: [{ name: "macOS", current: "12.7.6", available: "15.1" }],
+      fim: [
+        {
+          path: "/etc/hosts",
+          sha256: "e".repeat(64),
+          size: 236,
+          mtime: ago(8),
+        },
       ],
       enrolledAt: ago(400 * 24 * 60),
       lastSeen: ago(18),
     }),
   ];
+}
+
+export function sampleFimEvents(devices: Device[]) {
+  const linux = devices.find((d) => d.hostname === "build-linux-03");
+  const imac = devices.find((d) => d.hostname === "design-imac");
+  const events = [];
+  if (linux) {
+    events.push({
+      id: randomBytes(6).toString("hex"),
+      deviceId: linux.id,
+      hostname: linux.hostname,
+      path: "/etc/ssh/sshd_config",
+      previous: "9".repeat(64),
+      current: "c".repeat(64),
+      detectedAt: ago(40),
+      sample: true,
+    });
+  }
+  if (imac) {
+    events.push({
+      id: randomBytes(6).toString("hex"),
+      deviceId: imac.id,
+      hostname: imac.hostname,
+      path: "/etc/hosts",
+      previous: "8".repeat(64),
+      current: "e".repeat(64),
+      detectedAt: ago(8),
+      sample: true,
+    });
+  }
+  return events;
 }

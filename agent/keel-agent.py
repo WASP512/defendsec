@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -147,26 +148,112 @@ def ip_addresses() -> list[str]:
 
 def software_list() -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(name: str, version: str) -> None:
+        key = name.lower()
+        if key in seen or not name:
+            return
+        seen.add(key)
+        items.append({"name": name, "version": version})
+
     system = platform.system()
     if system == "Linux":
+        for pkg in (
+            "openssh-server",
+            "openssl",
+            "docker.io",
+            "docker-ce",
+            "containerd",
+            "git",
+            "python3",
+        ):
+            raw = run(["dpkg-query", "-W", "-f=${Package}\t${Version}", pkg])
+            if "\t" in raw:
+                name, version = raw.split("\t", 1)
+                add(name, version)
         raw = run(["dpkg-query", "-W", "-f=${Package}\t${Version}\n"])
-        for line in raw.splitlines()[:80]:
+        for line in raw.splitlines()[:60]:
             if "\t" in line:
                 name, version = line.split("\t", 1)
-                items.append({"name": name, "version": version})
-        if not items:
+                add(name, version)
+        if len(items) <= 7:
             raw = run(["rpm", "-qa", "--queryformat", "%{NAME}\t%{VERSION}\n"])
-            for line in raw.splitlines()[:80]:
+            for line in raw.splitlines()[:60]:
                 if "\t" in line:
                     name, version = line.split("\t", 1)
-                    items.append({"name": name, "version": version})
+                    add(name, version)
     elif system == "Darwin":
         apps = Path("/Applications")
         if apps.exists():
             for path in sorted(apps.iterdir())[:40]:
                 if path.suffix == ".app":
-                    items.append({"name": path.stem, "version": ""})
+                    add(path.stem, "")
     return items
+
+
+def pending_updates() -> list[dict[str, str]]:
+    updates: list[dict[str, str]] = []
+    if platform.system() == "Linux":
+        raw = run(["apt", "list", "--upgradable"])
+        for line in raw.splitlines():
+            if "/" not in line or "Listing" in line:
+                continue
+            # git/jammy-updates 1:2.34.1-1ubuntu1.12 amd64 [upgradable from: 1:2.34.1-1ubuntu1.11]
+            name = line.split("/", 1)[0]
+            available = ""
+            current = ""
+            parts = line.split()
+            if len(parts) > 1:
+                available = parts[1]
+            if "upgradable from:" in line:
+                current = line.split("upgradable from:", 1)[1].strip(" ]")
+            updates.append({"name": name, "current": current, "available": available})
+            if len(updates) >= 40:
+                break
+    return updates
+
+
+def hash_file(path: Path) -> dict | None:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    stat = path.stat()
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "size": stat.st_size,
+        "mtime": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stat.st_mtime)),
+    }
+
+
+def fim_files() -> list[dict]:
+    candidates: list[Path] = []
+    system = platform.system()
+    if system == "Linux":
+        candidates = [
+            Path("/etc/passwd"),
+            Path("/etc/group"),
+            Path("/etc/hosts"),
+            Path("/etc/ssh/sshd_config"),
+            Path("/etc/sudoers"),
+        ]
+    elif system == "Darwin":
+        candidates = [Path("/etc/hosts"), Path("/etc/ssh/sshd_config")]
+    elif system == "Windows":
+        root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        candidates = [root / "System32" / "drivers" / "etc" / "hosts"]
+    extra = os.environ.get("KEEL_FIM_PATHS", "")
+    for item in extra.split(os.pathsep):
+        if item.strip():
+            candidates.append(Path(item.strip()))
+    results = []
+    for path in candidates:
+        hashed = hash_file(path)
+        if hashed:
+            results.append(hashed)
+    return results
 
 
 def os_name_version() -> tuple[str, str]:
@@ -269,6 +356,8 @@ def inventory() -> dict:
         "username": os.environ.get("USER") or os.environ.get("USERNAME") or "",
         "uptimeSeconds": uptime_seconds(),
         "software": software_list(),
+        "pendingUpdates": pending_updates(),
+        "fim": fim_files(),
     }
 
 

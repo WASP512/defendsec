@@ -5,6 +5,59 @@ export type SoftwareItem = {
   version: string;
 };
 
+export type PendingUpdate = {
+  name: string;
+  current: string;
+  available: string;
+};
+
+export type FimFile = {
+  path: string;
+  sha256: string;
+  size: number;
+  mtime: string | null;
+};
+
+export type FimEvent = {
+  id: string;
+  deviceId: string;
+  hostname: string;
+  path: string;
+  previous: string;
+  current: string;
+  detectedAt: string;
+  sample: boolean;
+};
+
+export type Severity = "critical" | "high" | "medium" | "low";
+
+export type Advisory = {
+  id: string;
+  cve: string;
+  package: string;
+  below: string;
+  severity: Severity;
+  summary: string;
+};
+
+export type FindingStatus = "open" | "acknowledged";
+
+export type FindingTriage = {
+  key: string;
+  status: FindingStatus;
+  updatedAt: string;
+};
+
+export type Finding = {
+  key: string;
+  advisory: Advisory;
+  packageName: string;
+  version: string;
+  deviceId: string;
+  hostname: string;
+  status: FindingStatus;
+};
+
 export type Device = {
   id: string;
   hostname: string;
@@ -22,15 +75,12 @@ export type Device = {
   username: string;
   uptimeSeconds: number;
   software: SoftwareItem[];
+  pendingUpdates: PendingUpdate[];
+  fim: FimFile[];
   sample: boolean;
   enrolledAt: string;
   lastSeen: string;
   nodeKey: string;
-};
-
-export type EnrollPayload = {
-  enrollSecret: string;
-  hostname?: string;
 };
 
 export type CheckinPayload = {
@@ -50,6 +100,8 @@ export type CheckinPayload = {
   username?: string;
   uptimeSeconds?: number;
   software?: SoftwareItem[];
+  pendingUpdates?: PendingUpdate[];
+  fim?: FimFile[];
 };
 
 export type PolicyStatus = "pass" | "fail" | "unknown";
@@ -67,6 +119,8 @@ export type PublicDevice = Omit<Device, "nodeKey">;
 export type StoreData = {
   enrollSecret: string;
   devices: Device[];
+  fimEvents: FimEvent[];
+  triages: FindingTriage[];
 };
 
 export const ONLINE_WINDOW_MS = 2 * 60 * 1000;

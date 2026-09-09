@@ -64,9 +64,9 @@ export function EnrollPanel({
         <Button type="button" onClick={() => copy("cmd", command)}>
           {copied === "cmd" ? "Copied command" : "Copy command"}
         </Button>
-        <p className="text-sm text-muted-foreground">
+        <p className="mt-1 text-muted-foreground">
           Python 3 standard library only. The agent enrolls, then checks in every 30 seconds with
-          OS, hardware, encryption, firewall, and a short software list.
+          OS, software versions, pending patches, and hashes of watched system files.
         </p>
       </div>
     </div>

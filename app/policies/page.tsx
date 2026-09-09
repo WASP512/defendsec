@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default async function PoliciesPage() {
   const store = await ensureStore();
-  const policies = policySummary(store.devices);
+  const policies = policySummary(store.devices, store.fimEvents, store.triages);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">

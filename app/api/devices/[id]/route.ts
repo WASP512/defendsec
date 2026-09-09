@@ -16,6 +16,6 @@ export async function GET(
   }
   return NextResponse.json({
     device: publicDevice(device),
-    policies: evaluateDevice(device),
+    policies: evaluateDevice(device, store.fimEvents, store.triages),
   });
 }
