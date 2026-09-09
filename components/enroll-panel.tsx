@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,7 +12,6 @@ export function EnrollPanel({
   enrollSecret: string;
   serverUrl: string;
 }) {
-  const router = useRouter();
   const [secret, setSecret] = useState(enrollSecret);
   const [copied, setCopied] = useState<"secret" | "cmd" | null>(null);
 
@@ -23,7 +21,6 @@ export function EnrollPanel({
     const res = await fetch("/api/enroll-secret", { method: "POST" });
     const data = (await res.json()) as { enrollSecret: string };
     setSecret(data.enrollSecret);
-    router.refresh();
   }
 
   async function copy(kind: "secret" | "cmd", value: string) {

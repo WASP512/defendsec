@@ -1,29 +1,39 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { FindingStatus } from "@/lib/types";
 
 export function FindingActions({ findingKey, status }: { findingKey: string; status: FindingStatus }) {
-  const router = useRouter();
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
   const next = status === "open" ? "acknowledged" : "open";
 
   async function save() {
     setPending(true);
-    await fetch("/api/findings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: findingKey, status: next }),
-    });
-    setPending(false);
-    router.refresh();
+    setError("");
+    try {
+      const response = await fetch("/api/findings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: findingKey, status: next }),
+      });
+      if (!response.ok) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+      window.location.reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Request failed");
+      setPending(false);
+    }
   }
 
   return (
-    <Button variant="outline" size="sm" disabled={pending} onClick={save}>
-      {status === "open" ? "Acknowledge" : "Reopen"}
-    </Button>
+    <div className="flex flex-col items-start gap-1">
+      <Button variant="outline" size="sm" disabled={pending} onClick={save}>
+        {pending ? "Saving…" : status === "open" ? "Acknowledge" : "Reopen"}
+      </Button>
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+    </div>
   );
 }
