@@ -1,31 +1,44 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
 export function SampleToggle({ hasSamples }: { hasSamples: boolean }) {
-  const router = useRouter();
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
 
   async function run(method: "POST" | "DELETE") {
     setPending(true);
-    await fetch("/api/demo", { method });
-    setPending(false);
-    router.refresh();
+    setError("");
+    try {
+      const response = await fetch("/api/demo", { method });
+      if (!response.ok) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+      window.location.reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Request failed");
+      setPending(false);
+    }
   }
 
   if (hasSamples) {
     return (
-      <Button variant="outline" disabled={pending} onClick={() => run("DELETE")}>
-        Remove sample hosts
-      </Button>
+      <div className="flex flex-col items-start gap-1">
+        <Button variant="outline" disabled={pending} onClick={() => run("DELETE")}>
+          {pending ? "Removing…" : "Remove sample hosts"}
+        </Button>
+        {error ? <span className="text-xs text-destructive">{error}</span> : null}
+      </div>
     );
   }
 
   return (
-    <Button variant="outline" disabled={pending} onClick={() => run("POST")}>
-      Load sample fleet
-    </Button>
+    <div className="flex flex-col items-start gap-1">
+      <Button variant="outline" disabled={pending} onClick={() => run("POST")}>
+        {pending ? "Loading…" : "Load sample fleet"}
+      </Button>
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+    </div>
   );
 }
