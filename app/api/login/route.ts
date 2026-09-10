@@ -3,16 +3,34 @@ import { ADMIN_COOKIE, adminCookieOptions, getAdminToken, safeEqual } from "@/li
 
 export const runtime = "nodejs";
 
+async function readToken(request: Request) {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const body = (await request.json()) as { token?: string };
+    return { token: body.token ?? "", mode: "json" as const };
+  }
+  const form = await request.formData();
+  return { token: String(form.get("token") ?? ""), mode: "form" as const };
+}
+
 export async function POST(request: Request) {
-  let body: { token?: string };
+  let parsed: { token: string; mode: "json" | "form" };
   try {
-    body = await request.json();
+    parsed = await readToken(request);
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
   const expected = await getAdminToken();
-  if (!body.token || !safeEqual(body.token, expected)) {
+  if (!parsed.token || !safeEqual(parsed.token, expected)) {
+    if (parsed.mode === "form") {
+      return NextResponse.redirect(new URL("/login?error=1", request.url), 303);
+    }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (parsed.mode === "form") {
+    const response = NextResponse.redirect(new URL("/", request.url), 303);
+    response.cookies.set(ADMIN_COOKIE, expected, adminCookieOptions());
+    return response;
   }
   const response = NextResponse.json({ ok: true });
   response.cookies.set(ADMIN_COOKIE, expected, adminCookieOptions());

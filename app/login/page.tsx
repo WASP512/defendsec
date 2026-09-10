@@ -4,10 +4,15 @@ import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-export default async function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   if (await isAdminSession()) {
     redirect("/");
   }
+  const params = await searchParams;
   return (
     <div className="flex min-h-full items-center justify-center px-4">
       <div className="w-full max-w-md space-y-6 rounded-xl border p-8">
@@ -18,7 +23,7 @@ export default async function LoginPage() {
             only.
           </p>
         </div>
-        <LoginForm showDevHint={await isDevFallbackToken()} />
+        <LoginForm showDevHint={await isDevFallbackToken()} failed={params.error === "1"} />
       </div>
     </div>
   );
