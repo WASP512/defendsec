@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -74,26 +76,51 @@ func run(log *slog.Logger) error {
 
 	store := presence.New(filepath.Join(*dataDir, "defendsec-agents.json"))
 	commands := cmdlog.New(filepath.Join(*dataDir, "commands.json"))
-	svc := control.New(bundle, secretValue, adminToken, store, commands, signer, log)
+	svc := control.New(bundle, secretValue, adminToken, *dataDir, store, commands, signer, log)
+	if viewer := strings.TrimSpace(os.Getenv("DEFENDSEC_VIEWER_TOKEN")); viewer != "" {
+		svc.SetViewerToken(viewer)
+		log.Info("viewer token enabled (GET-only admin API)")
+	}
 
 	if url := db.ResolveURL(*dbURL); url != "" {
 		pool, err := db.Open(context.Background(), url)
 		if err != nil {
 			return fmt.Errorf("postgres: %w", err)
 		}
-		migSQL, err := os.ReadFile(filepath.Join("db", "migrations", "001_init.sql"))
-		if err != nil {
-			// try beside data dir / repo root via executable cwd already
-			migSQL, err = os.ReadFile(filepath.Join(*dataDir, "..", "db", "migrations", "001_init.sql"))
+		for _, name := range []string{"001_init.sql", "002_alerts.sql", "003_saved_queries.sql"} {
+			migSQL, err := os.ReadFile(filepath.Join("db", "migrations", name))
+			if err != nil {
+				migSQL, err = os.ReadFile(filepath.Join(*dataDir, "..", "db", "migrations", name))
+			}
+			if err != nil {
+				return fmt.Errorf("read migration %s: %w", name, err)
+			}
+			if err := db.Migrate(context.Background(), pool, string(migSQL)); err != nil {
+				return fmt.Errorf("migrate %s: %w", name, err)
+			}
 		}
-		if err != nil {
-			return fmt.Errorf("read migrations: %w", err)
-		}
-		if err := db.Migrate(context.Background(), pool, string(migSQL)); err != nil {
-			return fmt.Errorf("migrate: %w", err)
-		}
-		svc.SetPostgres(storepg.New(pool))
+		pg := storepg.New(pool)
+		svc.SetPostgres(pg)
 		log.Info("postgres enabled")
+		alertDays := 90
+		if v := strings.TrimSpace(os.Getenv("DEFENDSEC_ALERT_RETENTION_DAYS")); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				alertDays = n
+			}
+		}
+		liveDays := 30
+		if v := strings.TrimSpace(os.Getenv("DEFENDSEC_LIVE_QUERY_RETENTION_DAYS")); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				liveDays = n
+			}
+		}
+		pruneCtx, pruneCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if result, err := pg.PruneOld(pruneCtx, alertDays, liveDays); err != nil {
+			log.Warn("retention prune", "err", err)
+		} else if result.AlertsDeleted > 0 || result.LiveQueryDeleted > 0 {
+			log.Info("retention prune", "alerts", result.AlertsDeleted, "liveQueries", result.LiveQueryDeleted)
+		}
+		pruneCancel()
 		defer pool.Close()
 	}
 
@@ -119,8 +146,12 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/control-pub", svc.HandleControlPub)
 	adminMux.HandleFunc("/v1/audit", svc.HandleAudit)
 	adminMux.HandleFunc("/v1/revoke", svc.HandleRevoke)
+	adminMux.HandleFunc("/v1/meta", svc.HandleMeta)
 	adminMux.HandleFunc("/v1/advisories", svc.HandleAdvisories)
 	adminMux.HandleFunc("/v1/agent-releases", svc.HandleAgentReleases)
+	adminMux.HandleFunc("/v1/saved-queries", svc.HandleSavedQueries)
+	adminMux.HandleFunc("/v1/alerts", svc.HandleAlerts)
+	adminMux.HandleFunc("/v1/alerts/status", svc.HandleAlerts)
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
 		Handler:           adminMux,

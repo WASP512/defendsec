@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { unauthorizedIfNotAdmin } from "@/lib/api-auth";
+import { unauthorizedIfNotAuthenticated } from "@/lib/api-auth";
 import { databaseURL, listAudit } from "@/lib/pg";
-import { getAdminToken } from "@/lib/auth";
+import { getApidAuthToken } from "@/lib/auth";
 import { APID_ADMIN_URL } from "@/lib/commands";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
-  const denied = await unauthorizedIfNotAdmin(request);
+  const denied = await unauthorizedIfNotAuthenticated(request);
   if (denied) return denied;
 
   const limit = Number(new URL(request.url).searchParams.get("limit") || "100");
@@ -25,7 +25,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const token = await getAdminToken();
+    const token = await getApidAuthToken(request);
     const url = new URL("/v1/audit", APID_ADMIN_URL);
     url.searchParams.set("limit", String(limit || 100));
     const response = await fetch(url, {

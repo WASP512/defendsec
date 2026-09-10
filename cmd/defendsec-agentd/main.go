@@ -33,6 +33,7 @@ import (
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/agentfim"
 	"defendsec/internal/hostinv"
+	"defendsec/internal/sca"
 	"defendsec/internal/sign"
 )
 
@@ -327,7 +328,7 @@ func attachStream(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 			}
 			log.Info("pong", "server_time", body.Ping.GetServerTimeUnix())
 		case *defendsecv1.ServerToAgent_Command:
-			ack := executeCommand(log, pub, deviceID, stateDir, replay, body.Command)
+			ack, restart := executeCommand(log, pub, deviceID, stateDir, replay, body.Command)
 			if err := stream.Send(&defendsecv1.AgentToServer{
 				RequestId: msg.GetRequestId(),
 				Body:      &defendsecv1.AgentToServer_Ack{Ack: ack},
@@ -338,6 +339,12 @@ func attachStream(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 				log.Info("command accepted", "type", body.Command.GetType(), "id", body.Command.GetCommandId(), "msg", ack.Message)
 			} else {
 				log.Warn("command rejected", "type", body.Command.GetType(), "id", body.Command.GetCommandId(), "msg", ack.Message)
+			}
+			if restart {
+				go func() {
+					time.Sleep(500 * time.Millisecond)
+					os.Exit(0)
+				}()
 			}
 		}
 	}
@@ -465,6 +472,16 @@ func inventoryReport(snap hostinv.Snapshot, stateDir string) *defendsecv1.Invent
 	}
 	for _, item := range snap.Fim {
 		rep.Fim = append(rep.Fim, &defendsecv1.FimFile{Path: item.Path, Sha256: item.SHA256, Size: item.Size, Mtime: item.Mtime})
+	}
+	if snap.Platform == "linux" {
+		if pack, err := sca.LoadDefaultLinuxSSH(); err == nil {
+			for _, r := range sca.EvalFileRegexChecks(pack) {
+				rep.ScaResults = append(rep.ScaResults, &defendsecv1.ScaResult{
+					PackId: r.PackID, CheckId: r.CheckID, Title: r.Title,
+					Severity: r.Severity, Pass: r.Pass, Detail: r.Detail,
+				})
+			}
+		}
 	}
 	return rep
 }

@@ -43,6 +43,15 @@ message FimFile {
   string mtime = 4;
 }
 
+message ScaResult {
+  string pack_id = 1;
+  string check_id = 2;
+  string title = 3;
+  string severity = 4;
+  bool pass = 5;
+  string detail = 6;
+}
+
 message InventoryReport {
   HeartbeatRequest host = 1;
   string serial = 2;
@@ -58,6 +67,7 @@ message InventoryReport {
   repeated PendingUpdate pending_updates = 11;
   string patch_inventory = 12;
   repeated FimFile fim = 13;
+  repeated ScaResult sca_results = 14;
 }
 
 message Hello {

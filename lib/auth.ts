@@ -16,6 +16,7 @@ function digest(value: string) {
 }
 
 export function safeEqual(left: string, right: string) {
+  if (!left || !right) return false;
   const a = digest(left);
   const b = digest(right);
   return timingSafeEqual(a, b);
@@ -48,25 +49,78 @@ export async function getAdminToken() {
   return loadToken;
 }
 
+export function getViewerToken() {
+  return process.env.DEFENDSEC_VIEWER_TOKEN?.trim() ?? "";
+}
+
 export async function isDevFallbackToken() {
   if (process.env.DEFENDSEC_ADMIN_TOKEN) return false;
   return (await getAdminToken()) === DEV_ADMIN_TOKEN;
 }
 
-export async function isAdminRequest(request: Request) {
-  const token = await getAdminToken();
-  const header = request.headers.get("authorization");
-  if (header?.startsWith("Bearer ") && safeEqual(header.slice("Bearer ".length), token)) {
-    return true;
-  }
+async function sessionTokenValue() {
   const jar = await cookies();
-  return safeEqual(jar.get(ADMIN_COOKIE)?.value ?? "", token);
+  return jar.get(ADMIN_COOKIE)?.value ?? "";
 }
 
 export async function isAdminSession() {
   const token = await getAdminToken();
-  const jar = await cookies();
-  return safeEqual(jar.get(ADMIN_COOKIE)?.value ?? "", token);
+  return safeEqual(await sessionTokenValue(), token);
+}
+
+export async function isViewerSession() {
+  const viewer = getViewerToken();
+  if (!viewer) return false;
+  return safeEqual(await sessionTokenValue(), viewer);
+}
+
+export async function isAuthenticatedSession() {
+  return (await isAdminSession()) || (await isViewerSession());
+}
+
+export async function isReadOnlySession() {
+  return (await isViewerSession()) && !(await isAdminSession());
+}
+
+function tokenMatchesSession(token: string, admin: string, viewer: string) {
+  if (safeEqual(token, admin)) return "admin";
+  if (viewer && safeEqual(token, viewer)) return "viewer";
+  return "";
+}
+
+export async function isAdminRequest(request: Request) {
+  const admin = await getAdminToken();
+  const header = request.headers.get("authorization");
+  if (header?.startsWith("Bearer ")) {
+    return safeEqual(header.slice("Bearer ".length), admin);
+  }
+  return safeEqual(await sessionTokenValue(), admin);
+}
+
+export async function isAuthenticatedRequest(request: Request) {
+  const admin = await getAdminToken();
+  const viewer = getViewerToken();
+  const header = request.headers.get("authorization");
+  if (header?.startsWith("Bearer ")) {
+    return tokenMatchesSession(header.slice("Bearer ".length), admin, viewer) !== "";
+  }
+  return tokenMatchesSession(await sessionTokenValue(), admin, viewer) !== "";
+}
+
+export async function getApidAuthToken(request?: Request) {
+  const admin = await getAdminToken();
+  const viewer = getViewerToken();
+  if (request) {
+    const header = request.headers.get("authorization");
+    if (header?.startsWith("Bearer ")) {
+      const token = header.slice("Bearer ".length);
+      if (tokenMatchesSession(token, admin, viewer) !== "") return token;
+    }
+  }
+  const session = await sessionTokenValue();
+  const role = tokenMatchesSession(session, admin, viewer);
+  if (role !== "") return session;
+  return admin;
 }
 
 export function adminCookieOptions() {

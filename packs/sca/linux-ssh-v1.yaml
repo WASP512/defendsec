@@ -1,0 +1,58 @@
+id: sca-linux-ssh-v1
+name: Linux SSH baseline
+platform: linux
+checks:
+  - id: sshd-password-auth
+    title: PasswordAuthentication should be no
+    severity: high
+    type: file_regex
+    path: /etc/ssh/sshd_config
+    must_match: '(?i)^PasswordAuthentication\s+no'
+  - id: sshd-root-login
+    title: PermitRootLogin should be no or prohibit-password
+    severity: high
+    type: file_regex
+    path: /etc/ssh/sshd_config
+    must_match: '(?i)^PermitRootLogin\s+(no|prohibit-password|without-password)'
+  - id: sshd-pubkey-auth
+    title: PubkeyAuthentication should be enabled
+    severity: medium
+    type: file_regex
+    path: /etc/ssh/sshd_config
+    must_match: '(?i)^PubkeyAuthentication\s+yes'
+  - id: sshd-empty-passwords
+    title: PermitEmptyPasswords should be no
+    severity: high
+    type: file_regex
+    path: /etc/ssh/sshd_config
+    must_match: '(?i)^PermitEmptyPasswords\s+no'
+  - id: sshd-x11-forwarding
+    title: X11Forwarding should be disabled
+    severity: low
+    type: file_regex
+    path: /etc/ssh/sshd_config
+    must_match: '(?i)^X11Forwarding\s+no'
+  - id: sshd-max-auth-tries
+    title: MaxAuthTries should be 4 or less
+    severity: medium
+    type: file_regex
+    path: /etc/ssh/sshd_config
+    must_match: '(?i)^MaxAuthTries\s+([1-4])\s*$'
+  - id: sshd-protocol
+    title: Protocol 2 only (no legacy Protocol 1)
+    severity: medium
+    type: file_regex
+    path: /etc/ssh/sshd_config
+    must_match: '(?i)^Protocol\s+2'
+  - id: firewall-enabled
+    title: Host firewall reported enabled
+    severity: medium
+    type: inventory_field
+    field: firewall
+    expect: "true"
+  - id: disk-encryption
+    title: Disk encryption reported enabled
+    severity: high
+    type: inventory_field
+    field: diskEncryption
+    expect: "true"

@@ -1,17 +1,31 @@
 # DefendSec next phases (detailed plan)
 
+> **Status (implemented):** Phases 7–11 are implemented in-tree (alerts/SCA/FIM, live query + agent update apply, vuln pipeline, signed response pack, RBAC/ops docs). This document remains the design reference; treat unchecked historical wording below as the original plan, not open work.
+
+> **Status (implemented):** Phases 7–11 are implemented in-tree (alerts/SCA/FIM, live query + agent update apply, vuln pipeline, signed response pack, RBAC/ops docs). This document remains the design reference; treat unchecked historical wording below as the original plan, not open work.
+
+
+**Status (Phases 7–11 implemented):**
+- **7 — Detection:** Alerts inbox (FIM/SCA/vuln), dual-write Postgres + JSON, triage UI
+- **8 — Live query:** Expanded allowlist, saved queries, result persistence
+- **9 — Vuln matching:** OSV ingest, advisory catalog, vuln alerts on inventory
+- **10 — Active response:** `run_script`, `quarantine_path`, alert-suggested isolate/advisories (human confirm)
+- **11 — Production ops:** Viewer RBAC, `docs/OPERATIONS.md`, systemd sketches, retention prune on apid startup
+
 **Product intent:** Free, self-hosted **Fleet-like agent console** (inventory, policies, live query, enroll, agent lifecycle) with **Wazuh-like host detection/response** (FIM, SCA, vulns, alerts, signed active response).
 
 **Not in scope (the wall):** MDM wipe/lock/DEP/profiles/CSP, full kernel EDR, multi-tenant SaaS, replacing a SIEM log lake.
 
-**Current baseline (shipped through Phase 6):**
-- Console: Fleet, Hosts, Advisories, Patches, Versions, Integrity, Policies, Audit, Enroll, Scope
+**Current baseline (shipped through Phase 11):**
+- Console: Fleet, Hosts, Alerts, Advisories, Patches, Versions, Integrity, Policies, Audit, Enroll, Scope
 - Transport: Python HTTP agent + Go mTLS `defendsec-apid` / `defendsec-agentd`
-- Signed commands: `isolate`, `release`, `kill_process`, `live_query`, `agent_update` (stage only)
-- Optional Postgres dual-write (`db/migrations`, `internal/storepg`)
+- Signed commands: `isolate`, `release`, `kill_process`, `live_query`, `agent_update`, `run_script`, `quarantine_path`
+- Optional Postgres dual-write (`db/migrations`, `internal/storepg`), retention prune
+- RBAC: admin + optional viewer (`DEFENDSEC_VIEWER_TOKEN`)
 - Scripts: `scripts/ingest-osv.py`, `scripts/backup.sh`, `scripts/restore.sh`
+- Ops: `docs/OPERATIONS.md`, `packaging/systemd/*`
 
-**Suggested sequence:** Phase 7 → 8 → 9 → 10 → 11
+**Suggested sequence:** Phase 7 → 8 → 9 → 10 → 11 (complete)
 
 Each phase below is a shippable slice with acceptance criteria. Prefer extending existing packages (`internal/control`, `internal/agentcmd`, `lib/*`, `app/(console)/*`) over new platforms.
 

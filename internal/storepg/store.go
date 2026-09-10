@@ -72,11 +72,19 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 }
 
 func (s *Store) AppendFimEvent(ctx context.Context, ev presence.FimEvent) error {
+	action := ev.Action
+	if action == "" {
+		action = "modified"
+	}
+	severity := ev.Severity
+	if severity == "" {
+		severity = "medium"
+	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO fim_events (id, device_id, hostname, path, previous, current, detected_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7::timestamptz)
+		INSERT INTO fim_events (id, device_id, hostname, path, previous, current, detected_at, action, severity)
+		VALUES ($1,$2,$3,$4,$5,$6,$7::timestamptz,$8,$9)
 		ON CONFLICT (id) DO NOTHING
-	`, ev.ID, ev.DeviceID, ev.Hostname, ev.Path, ev.Previous, ev.Current, ev.DetectedAt)
+	`, ev.ID, ev.DeviceID, ev.Hostname, ev.Path, ev.Previous, ev.Current, ev.DetectedAt, action, severity)
 	return err
 }
 

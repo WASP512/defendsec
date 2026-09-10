@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Ingest a small OSV query set into DefendSec advisories (Postgres or admin API).
+"""Ingest OSV advisories into DefendSec (Postgres or admin API).
+
+When DEFENDSEC_DATABASE_URL is set and --packages is omitted, distinct package
+names are read from devices.software JSONB. Use --packages to override.
 
 Example:
   DEFENDSEC_DATABASE_URL=postgres://defendsec:defendsec@127.0.0.1:5432/defendsec \\
-    python3 scripts/ingest-osv.py --packages openssl,openssh-server,git
+    python3 scripts/ingest-osv.py
+
+  python3 scripts/ingest-osv.py --packages openssl,openssh-server,git
 """
 from __future__ import annotations
 
@@ -12,6 +17,10 @@ import json
 import os
 import sys
 import urllib.request
+from datetime import datetime, timezone
+
+DEFAULT_PACKAGES = "openssl,openssh-server,git,curl"
+
 
 def osv_query(package: str, ecosystem: str = "Debian") -> list[dict]:
     body = json.dumps({"package": {"name": package, "ecosystem": ecosystem}}).encode()
@@ -57,10 +66,52 @@ def osv_query(package: str, ecosystem: str = "Debian") -> list[dict]:
     return out
 
 
+def db_url() -> str | None:
+    return os.environ.get("DEFENDSEC_DATABASE_URL") or os.environ.get("DATABASE_URL")
+
+
+def distinct_packages_from_postgres() -> list[str]:
+    import psycopg  # type: ignore
+
+    url = db_url()
+    if not url:
+        return []
+    with psycopg.connect(url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT elem->>'name' AS name
+                FROM devices, jsonb_array_elements(software) AS elem
+                WHERE elem->>'name' IS NOT NULL AND elem->>'name' <> ''
+                ORDER BY name
+                """
+            )
+            rows = cur.fetchall()
+    return [row[0] for row in rows if row[0]]
+
+
+def set_meta_postgres(key: str, value: str) -> None:
+    import psycopg  # type: ignore
+
+    url = db_url()
+    if not url:
+        return
+    with psycopg.connect(url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO meta (key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                """,
+                (key, value),
+            )
+        conn.commit()
+
+
 def upsert_postgres(advisories: list[dict]) -> int:
     import psycopg  # type: ignore
 
-    url = os.environ.get("DEFENDSEC_DATABASE_URL") or os.environ.get("DATABASE_URL")
+    url = db_url()
     if not url:
         raise SystemExit("set DEFENDSEC_DATABASE_URL or DATABASE_URL")
     n = 0
@@ -97,15 +148,36 @@ def upsert_admin(advisories: list[dict]) -> int:
     return int(data.get("count") or 0)
 
 
+def resolve_packages(args: argparse.Namespace) -> list[str]:
+    if args.packages is not None:
+        return [p.strip() for p in args.packages.split(",") if p.strip()]
+    if db_url():
+        pkgs = distinct_packages_from_postgres()
+        if pkgs:
+            print(f"packages from devices.software: {len(pkgs)}", file=sys.stderr)
+            return pkgs
+    return [p.strip() for p in DEFAULT_PACKAGES.split(",") if p.strip()]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--packages", default="openssl,openssh-server,git,curl")
+    ap.add_argument(
+        "--packages",
+        default=None,
+        help="comma-separated package names (overrides DB discovery)",
+    )
     ap.add_argument("--ecosystem", default="Debian")
     ap.add_argument("--via", choices=["postgres", "admin"], default="postgres")
     ap.add_argument("--limit", type=int, default=20)
     args = ap.parse_args()
+
+    packages = resolve_packages(args)
+    if not packages:
+        print("no packages to query")
+        return
+
     advisories: list[dict] = []
-    for pkg in [p.strip() for p in args.packages.split(",") if p.strip()]:
+    for pkg in packages:
         try:
             found = osv_query(pkg, args.ecosystem)
         except Exception as exc:  # noqa: BLE001
@@ -117,9 +189,12 @@ def main() -> None:
         return
     if args.via == "postgres":
         n = upsert_postgres(advisories)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        set_meta_postgres("osv_last_ingest", ts)
+        print(f"upserted {n} advisories; osv_last_ingest={ts}")
     else:
         n = upsert_admin(advisories)
-    print(f"upserted {n} advisories")
+        print(f"upserted {n} advisories")
 
 
 if __name__ == "__main__":

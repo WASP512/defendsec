@@ -25,6 +25,7 @@ import (
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
 	"defendsec/internal/presence"
+	"defendsec/internal/sca"
 	"defendsec/internal/sign"
 	"defendsec/internal/storepg"
 )
@@ -33,7 +34,9 @@ type Server struct {
 	defendsecv1.UnimplementedAgentControlServer
 	bundle     *pki.Bundle
 	secret     string
-	adminToken string
+	adminToken  string
+	viewerToken string
+	dataDir     string
 	store      *presence.File
 	commands   *cmdlog.File
 	pg         *storepg.Store
@@ -42,14 +45,18 @@ type Server struct {
 	log        *slog.Logger
 }
 
-func New(bundle *pki.Bundle, secret, adminToken string, store *presence.File, commands *cmdlog.File, signer *sign.Key, log *slog.Logger) *Server {
+func New(bundle *pki.Bundle, secret, adminToken, dataDir string, store *presence.File, commands *cmdlog.File, signer *sign.Key, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
+	}
+	if dataDir == "" {
+		dataDir = "data"
 	}
 	return &Server{
 		bundle:     bundle,
 		secret:     secret,
 		adminToken: adminToken,
+		dataDir:    dataDir,
 		store:      store,
 		commands:   commands,
 		hub:        NewHub(),
@@ -60,6 +67,10 @@ func New(bundle *pki.Bundle, secret, adminToken string, store *presence.File, co
 
 func (s *Server) SetPostgres(pg *storepg.Store) {
 	s.pg = pg
+}
+
+func (s *Server) SetViewerToken(token string) {
+	s.viewerToken = strings.TrimSpace(token)
 }
 
 func (s *Server) syncDevice(dev presence.Device) {
@@ -257,16 +268,30 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 			Path: item.GetPath(), SHA256: item.GetSha256(), Size: item.GetSize(), Mtime: item.GetMtime(),
 		})
 	}
+	for _, item := range req.GetScaResults() {
+		dev.ScaResults = append(dev.ScaResults, presence.ScaResult{
+			PackID: item.GetPackId(), CheckID: item.GetCheckId(), Title: item.GetTitle(),
+			Severity: item.GetSeverity(), Pass: item.GetPass(), Detail: item.GetDetail(),
+		})
+	}
 	events, err := s.store.ApplyInventory(dev)
 	if err != nil {
 		s.log.Error("inventory", "err", err)
 		return nil, status.Error(codes.Internal, "inventory")
 	}
+	merged := dev
 	if got, ok := s.store.Get(id); ok {
-		s.syncDevice(got)
-	} else {
-		s.syncDevice(dev)
+		merged = got
 	}
+	merged.ScaResults = s.evaluateSca(merged, merged.ScaResults)
+	if err := s.store.Upsert(merged); err != nil {
+		s.log.Warn("sca merge upsert", "err", err)
+	}
+	s.syncDevice(merged)
+	s.processFimAlerts(events)
+	s.processDriftAlerts(merged)
+	s.processScaAlerts(merged, toScaResults(merged.ScaResults))
+	s.processVulnAlerts(merged)
 	if s.pg != nil {
 		ctx2, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -277,6 +302,17 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 		}
 	}
 	return &defendsecv1.HeartbeatResponse{Ok: true, ServerTimeUnix: time.Now().Unix()}, nil
+}
+
+func toScaResults(in []presence.ScaResult) []sca.Result {
+	out := make([]sca.Result, len(in))
+	for i, r := range in {
+		out[i] = sca.Result{
+			PackID: r.PackID, CheckID: r.CheckID, Title: r.Title,
+			Severity: r.Severity, Pass: r.Pass, Detail: r.Detail,
+		}
+	}
+	return out
 }
 
 func triBool(v int32) *bool {

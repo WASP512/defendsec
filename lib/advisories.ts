@@ -118,12 +118,13 @@ export function findingsForSoftware(
   software: SoftwareItem[],
   device: Pick<Device, "id" | "hostname">,
   triages: FindingTriage[] = [],
+  advisories: Advisory[] = ADVISORIES,
 ): Finding[] {
   const statusByKey = new Map(triages.map((item) => [item.key, item.status]));
   const findings: Finding[] = [];
   for (const item of software) {
     if (!item.version) continue;
-    for (const advisory of ADVISORIES) {
+    for (const advisory of advisories) {
       if (!packageMatches(advisory.package, item.name)) continue;
       if (!versionOlderThan(item.version, advisory.below)) continue;
       const key = findingKey(device.id, advisory.id, item.name);
@@ -141,12 +142,29 @@ export function findingsForSoftware(
   return findings;
 }
 
-export function findingsForDevice(device: Device, triages: FindingTriage[] = []) {
-  return findingsForSoftware(device.software, device, triages);
+export function findingsForDevice(
+  device: Device,
+  triages: FindingTriage[] = [],
+  advisories: Advisory[] = ADVISORIES,
+) {
+  return findingsForSoftware(device.software, device, triages, advisories);
 }
 
-export function allFindings(devices: Device[], triages: FindingTriage[] = []) {
-  return devices.flatMap((device) => findingsForDevice(device, triages));
+export function allFindings(
+  devices: Device[],
+  triages: FindingTriage[] = [],
+  advisories: Advisory[] = ADVISORIES,
+) {
+  return devices.flatMap((device) => findingsForSoftware(device.software, device, triages, advisories));
+}
+
+
+export function findingsForDeviceWithCatalog(
+  device: Device,
+  triages: FindingTriage[] = [],
+  advisories: Advisory[] = ADVISORIES,
+) {
+  return findingsForSoftware(device.software, device, triages, advisories);
 }
 
 export function severityRank(severity: Advisory["severity"]) {

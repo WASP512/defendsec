@@ -13,7 +13,7 @@ export function LoginForm({
   return (
     <form action="/api/login" method="post" className="space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="token">Admin token</Label>
+        <Label htmlFor="token">Admin or viewer token</Label>
         <Input
           id="token"
           name="token"

@@ -1,0 +1,10 @@
+[Unit]
+Description=DefendSec OSV advisory ingest (one-shot)
+After=network-online.target defendsec-apid.service
+
+[Service]
+Type=oneshot
+User=defendsec
+EnvironmentFile=-/etc/defendsec/ingest.env
+WorkingDirectory=/opt/defendsec
+ExecStart=/usr/bin/python3 /opt/defendsec/scripts/ingest-osv.py

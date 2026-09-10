@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { setTriage } from "@/lib/store";
-import { storeErrorResponse, unauthorizedIfNotAdmin } from "@/lib/api-auth";
+import { storeErrorResponse, unauthorizedIfNotAuthenticated } from "@/lib/api-auth";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const denied = await unauthorizedIfNotAdmin(request);
+  const denied = await unauthorizedIfNotAuthenticated(request);
   if (denied) return denied;
   let body: { key?: string; status?: "open" | "acknowledged" };
   try {

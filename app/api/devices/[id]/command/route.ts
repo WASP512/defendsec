@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getAdminToken } from "@/lib/auth";
+import { getApidAuthToken, getAdminToken } from "@/lib/auth";
 import { APID_ADMIN_URL } from "@/lib/commands";
-import { unauthorizedIfNotAdmin } from "@/lib/api-auth";
+import { unauthorizedIfNotAdmin, unauthorizedIfNotAuthenticated } from "@/lib/api-auth";
 
 export const runtime = "nodejs";
 
@@ -9,11 +9,11 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const denied = await unauthorizedIfNotAdmin(request);
+  const denied = await unauthorizedIfNotAuthenticated(request);
   if (denied) return denied;
   const { id } = await params;
   try {
-    const token = await getAdminToken();
+    const token = await getApidAuthToken(request);
     const url = new URL("/v1/commands", APID_ADMIN_URL);
     url.searchParams.set("deviceId", id);
     const response = await fetch(url, {

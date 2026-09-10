@@ -39,8 +39,8 @@ func (s *Server) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.adminOK(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !s.adminWriteOK(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if s.pg == nil {
@@ -90,6 +90,39 @@ func (s *Server) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
+func (s *Server) HandleMeta(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.adminOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if s.pg == nil {
+		http.Error(w, "postgres not configured", http.StatusServiceUnavailable)
+		return
+	}
+	key := r.URL.Query().Get("key")
+	if key != "" {
+		value, err := s.pg.GetMeta(r.Context(), key)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"key": key, "value": value})
+		return
+	}
+	value, err := s.pg.GetMeta(r.Context(), "osv_last_ingest")
+	resp := map[string]any{}
+	if err == nil {
+		resp["osvLastIngest"] = value
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 func (s *Server) HandleAdvisories(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -106,9 +139,17 @@ func (s *Server) HandleAdvisories(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		resp := map[string]any{"advisories": rows}
+		if ts, err := s.pg.GetMeta(r.Context(), "osv_last_ingest"); err == nil {
+			resp["osvLastIngest"] = ts
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"advisories": rows})
+		_ = json.NewEncoder(w).Encode(resp)
 	case http.MethodPost:
+		if !s.adminWriteOK(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		defer r.Body.Close()
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		if err != nil {
@@ -178,6 +219,10 @@ func (s *Server) HandleAgentReleases(w http.ResponseWriter, r *http.Request) {
 			"version": version, "channel": channel, "url": url, "sha256": sha256, "notes": notes,
 		})
 	case http.MethodPost:
+		if !s.adminWriteOK(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		defer r.Body.Close()
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
 		if err != nil {

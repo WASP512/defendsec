@@ -34,11 +34,11 @@ func (c *replayCache) remember(id string) bool {
 	return true
 }
 
-func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir string, replay *replayCache, cmd *defendsecv1.ControlCommand) *defendsecv1.CommandAck {
+func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir string, replay *replayCache, cmd *defendsecv1.ControlCommand) (*defendsecv1.CommandAck, bool) {
 	ack := &defendsecv1.CommandAck{CommandId: cmd.GetCommandId(), Accepted: false}
 	if cmd.GetDeviceId() != "" && cmd.GetDeviceId() != deviceID {
 		ack.Message = "command device_id does not match this agent"
-		return ack
+		return ack, false
 	}
 	env := sign.Envelope{
 		DeviceID:    cmd.GetDeviceId(),
@@ -54,18 +54,18 @@ func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir 
 	if err := sign.Verify(pub, env, cmd.GetSignature(), time.Now()); err != nil {
 		ack.Message = err.Error()
 		log.Warn("rejected command", "id", cmd.GetCommandId(), "err", err)
-		return ack
+		return ack, false
 	}
 	if !replay.remember(cmd.GetCommandId()) {
 		ack.Message = "replayed command id"
-		return ack
+		return ack, false
 	}
 	switch cmd.GetType() {
 	case agentcmd.TypeIsolate:
 		st, err := agentcmd.Isolate(stateDir)
 		if err != nil {
 			ack.Message = err.Error()
-			return ack
+			return ack, false
 		}
 		ack.Accepted = true
 		ack.Message = st.Message
@@ -76,7 +76,7 @@ func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir 
 		st, err := agentcmd.Release(stateDir)
 		if err != nil {
 			ack.Message = err.Error()
-			return ack
+			return ack, false
 		}
 		ack.Accepted = true
 		ack.Message = st.Message
@@ -84,12 +84,12 @@ func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir 
 		p, err := agentcmd.ParseKillPayload(cmd.GetPayload())
 		if err != nil {
 			ack.Message = err.Error()
-			return ack
+			return ack, false
 		}
 		n, err := agentcmd.KillByName(p.Name)
 		if err != nil {
 			ack.Message = err.Error()
-			return ack
+			return ack, false
 		}
 		ack.Accepted = true
 		ack.Message = fmt.Sprintf("signaled %d process(es) named %s", n, p.Name)
@@ -97,12 +97,12 @@ func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir 
 		p, err := agentcmd.ParseLiveQueryPayload(cmd.GetPayload())
 		if err != nil {
 			ack.Message = err.Error()
-			return ack
+			return ack, false
 		}
 		out, err := agentcmd.RunLiveQuery(p.Query)
 		if err != nil {
 			ack.Message = err.Error()
-			return ack
+			return ack, false
 		}
 		ack.Accepted = true
 		ack.Message = out
@@ -110,17 +110,44 @@ func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir 
 		p, err := agentcmd.ParseAgentUpdatePayload(cmd.GetPayload())
 		if err != nil {
 			ack.Message = err.Error()
-			return ack
+			return ack, false
 		}
-		msg, err := agentcmd.StageAgentUpdate(stateDir, p)
+		msg, restart, err := agentcmd.ApplyAgentUpdate(p)
 		if err != nil {
 			ack.Message = err.Error()
-			return ack
+			return ack, false
 		}
 		ack.Accepted = true
 		ack.Message = msg
+		return ack, restart
+	case agentcmd.TypeRunScript:
+		p, err := agentcmd.ParseRunScriptPayload(cmd.GetPayload())
+		if err != nil {
+			ack.Message = err.Error()
+			return ack, false
+		}
+		out, err := agentcmd.RunScript(p.ScriptID)
+		if err != nil {
+			ack.Message = err.Error()
+			return ack, false
+		}
+		ack.Accepted = true
+		ack.Message = out
+	case agentcmd.TypeQuarantinePath:
+		p, err := agentcmd.ParseQuarantinePayload(cmd.GetPayload())
+		if err != nil {
+			ack.Message = err.Error()
+			return ack, false
+		}
+		dest, err := agentcmd.QuarantinePath(stateDir, p.Path)
+		if err != nil {
+			ack.Message = err.Error()
+			return ack, false
+		}
+		ack.Accepted = true
+		ack.Message = "quarantined to " + dest
 	default:
 		ack.Message = "unknown command type"
 	}
-	return ack
+	return ack, false
 }

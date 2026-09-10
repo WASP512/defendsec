@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { ADMIN_COOKIE, adminCookieOptions, getAdminToken, safeEqual } from "@/lib/auth";
+import {
+  ADMIN_COOKIE,
+  adminCookieOptions,
+  getAdminToken,
+  getViewerToken,
+  safeEqual,
+} from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -20,8 +26,12 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
-  const expected = await getAdminToken();
-  if (!parsed.token || !safeEqual(parsed.token, expected)) {
+  const admin = await getAdminToken();
+  const viewer = getViewerToken();
+  const ok =
+    parsed.token &&
+    (safeEqual(parsed.token, admin) || (viewer !== "" && safeEqual(parsed.token, viewer)));
+  if (!ok) {
     if (parsed.mode === "form") {
       return NextResponse.redirect(new URL("/login?error=1", request.url), 303);
     }
@@ -29,10 +39,10 @@ export async function POST(request: Request) {
   }
   if (parsed.mode === "form") {
     const response = NextResponse.redirect(new URL("/", request.url), 303);
-    response.cookies.set(ADMIN_COOKIE, expected, adminCookieOptions());
+    response.cookies.set(ADMIN_COOKIE, parsed.token, adminCookieOptions());
     return response;
   }
   const response = NextResponse.json({ ok: true });
-  response.cookies.set(ADMIN_COOKIE, expected, adminCookieOptions());
+  response.cookies.set(ADMIN_COOKIE, parsed.token, adminCookieOptions());
   return response;
 }

@@ -36,6 +36,33 @@ type FimEvent struct {
 	Previous   string `json:"previous"`
 	Current    string `json:"current"`
 	DetectedAt string `json:"detectedAt"`
+	Action     string `json:"action,omitempty"`
+	Severity   string `json:"severity,omitempty"`
+}
+
+type ScaResult struct {
+	PackID   string `json:"packId"`
+	CheckID  string `json:"checkId"`
+	Title    string `json:"title"`
+	Severity string `json:"severity"`
+	Pass     bool   `json:"pass"`
+	Detail   string `json:"detail"`
+}
+
+type Alert struct {
+	ID         string         `json:"id"`
+	CreatedAt  string         `json:"createdAt"`
+	UpdatedAt  string         `json:"updatedAt"`
+	DeviceID   string         `json:"deviceId"`
+	Hostname   string         `json:"hostname"`
+	Kind       string         `json:"kind"`
+	Severity   string         `json:"severity"`
+	Title      string         `json:"title"`
+	Summary    string         `json:"summary"`
+	Status     string         `json:"status"`
+	SourceType string         `json:"sourceType"`
+	SourceID   string         `json:"sourceId"`
+	Detail     map[string]any `json:"detail,omitempty"`
 }
 
 type Device struct {
@@ -62,8 +89,9 @@ type Device struct {
 	Software        []Software `json:"software,omitempty"`
 	PendingUpdates  []Update   `json:"pendingUpdates,omitempty"`
 	PatchInventory  string     `json:"patchInventory,omitempty"`
-	Fim             []FimFile  `json:"fim,omitempty"`
-	FimBaseline     []FimFile  `json:"fimBaseline,omitempty"`
+	Fim             []FimFile    `json:"fim,omitempty"`
+	FimBaseline     []FimFile    `json:"fimBaseline,omitempty"`
+	ScaResults      []ScaResult  `json:"scaResults,omitempty"`
 }
 
 type File struct {
@@ -75,6 +103,7 @@ type snapshot struct {
 	UpdatedAt string     `json:"updatedAt"`
 	Devices   []Device   `json:"devices"`
 	FimEvents []FimEvent `json:"fimEvents"`
+	Alerts    []Alert    `json:"alerts"`
 }
 
 func New(path string) *File {
@@ -165,6 +194,11 @@ func (f *File) ApplyInventory(dev Device) ([]FimEvent, error) {
 	merged.Software = dev.Software
 	merged.PendingUpdates = dev.PendingUpdates
 	merged.PatchInventory = dev.PatchInventory
+	if len(dev.ScaResults) > 0 {
+		merged.ScaResults = dev.ScaResults
+	} else {
+		merged.ScaResults = old.ScaResults
+	}
 	if len(old.FimBaseline) == 0 && len(dev.Fim) > 0 {
 		merged.FimBaseline = copyFim(dev.Fim)
 	} else {
@@ -257,6 +291,123 @@ func (f *File) SetConnected(id string, connected bool) error {
 	return f.write(doc)
 }
 
+func (f *File) InsertAlert(alert Alert) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return err
+	}
+	for _, existing := range doc.Alerts {
+		if existing.ID == alert.ID {
+			return nil
+		}
+	}
+	if alert.CreatedAt == "" {
+		alert.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	if alert.UpdatedAt == "" {
+		alert.UpdatedAt = alert.CreatedAt
+	}
+	if alert.Status == "" {
+		alert.Status = "open"
+	}
+	doc.Alerts = append([]Alert{alert}, doc.Alerts...)
+	if len(doc.Alerts) > 5000 {
+		doc.Alerts = doc.Alerts[:5000]
+	}
+	doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	return f.write(doc)
+}
+
+func (f *File) ListAlerts(status, kind, deviceID string, limit int) []Alert {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return nil
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	var out []Alert
+	for _, a := range doc.Alerts {
+		if status != "" && a.Status != status {
+			continue
+		}
+		if kind != "" && a.Kind != kind {
+			continue
+		}
+		if deviceID != "" && a.DeviceID != deviceID {
+			continue
+		}
+		out = append(out, a)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func (f *File) UpdateAlertStatus(id, status string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return false
+	}
+	for i, a := range doc.Alerts {
+		if a.ID == id {
+			doc.Alerts[i].Status = status
+			doc.Alerts[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			doc.UpdatedAt = doc.Alerts[i].UpdatedAt
+			_ = f.write(doc)
+			return true
+		}
+	}
+	return false
+}
+
+func (f *File) HasOpenAlert(deviceID, kind, sourceID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return false
+	}
+	for _, a := range doc.Alerts {
+		if a.DeviceID == deviceID && a.Kind == kind && a.SourceID == sourceID &&
+			(a.Status == "open" || a.Status == "acknowledged") {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *File) ResolveOpenAlerts(deviceID, kind, sourceID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return false
+	}
+	changed := false
+	now := time.Now().UTC().Format(time.RFC3339)
+	for i, a := range doc.Alerts {
+		if a.DeviceID == deviceID && a.Kind == kind && a.SourceID == sourceID &&
+			(a.Status == "open" || a.Status == "acknowledged") {
+			doc.Alerts[i].Status = "resolved"
+			doc.Alerts[i].UpdatedAt = now
+			changed = true
+		}
+	}
+	if changed {
+		doc.UpdatedAt = now
+		_ = f.write(doc)
+	}
+	return changed
+}
+
 func (f *File) SetIsolated(id string, isolated bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -290,7 +441,7 @@ func (f *File) read() (snapshot, error) {
 	raw, err := os.ReadFile(f.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return snapshot{Devices: []Device{}, FimEvents: []FimEvent{}}, nil
+			return snapshot{Devices: []Device{}, FimEvents: []FimEvent{}, Alerts: []Alert{}}, nil
 		}
 		return snapshot{}, err
 	}
@@ -303,6 +454,9 @@ func (f *File) read() (snapshot, error) {
 	}
 	if doc.FimEvents == nil {
 		doc.FimEvents = []FimEvent{}
+	}
+	if doc.Alerts == nil {
+		doc.Alerts = []Alert{}
 	}
 	return doc, nil
 }

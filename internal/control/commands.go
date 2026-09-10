@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"defendsec/internal/agentcmd"
 	"defendsec/internal/cmdlog"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/sign"
@@ -26,8 +27,8 @@ func (s *Server) HandleBaseline(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.adminOK(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !s.adminWriteOK(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	defer r.Body.Close()
@@ -67,30 +68,73 @@ func (s *Server) HandleControlPub(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) HandleAdminCommands(w http.ResponseWriter, r *http.Request) {
-	if !s.adminOK(r) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
 	switch r.Method {
 	case http.MethodGet:
+		if !s.adminOK(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		deviceID := r.URL.Query().Get("deviceId")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"commands": s.commands.List(deviceID)})
 	case http.MethodPost:
+		if !s.adminWriteOK(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		s.issueCommand(w, r)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *Server) adminOK(r *http.Request) bool {
+func (s *Server) bearerToken(r *http.Request) string {
 	got := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	if got == "" {
 		got = strings.TrimSpace(r.Header.Get("X-DefendSec-Admin"))
 	}
+	return got
+}
+
+func (s *Server) tokenRole(got string) string {
+	if got == "" || s.adminToken == "" {
+		return ""
+	}
 	a := sha256.Sum256([]byte(got))
-	b := sha256.Sum256([]byte(s.adminToken))
-	return subtle.ConstantTimeCompare(a[:], b[:]) == 1 && s.adminToken != ""
+	admin := sha256.Sum256([]byte(s.adminToken))
+	if subtle.ConstantTimeCompare(a[:], admin[:]) == 1 {
+		return "admin"
+	}
+	if s.viewerToken != "" {
+		v := sha256.Sum256([]byte(s.viewerToken))
+		if subtle.ConstantTimeCompare(a[:], v[:]) == 1 {
+			return "viewer"
+		}
+	}
+	return ""
+}
+
+func (s *Server) adminOK(r *http.Request) bool {
+	role := s.tokenRole(s.bearerToken(r))
+	return role == "admin" || role == "viewer"
+}
+
+func (s *Server) adminWriteOK(r *http.Request) bool {
+	return s.tokenRole(s.bearerToken(r)) == "admin"
+}
+
+func validateCommandPayload(cmdType string, payload []byte) error {
+	switch cmdType {
+	case "run_script":
+		if _, err := agentcmd.ParseRunScriptPayload(payload); err != nil {
+			return err
+		}
+	case "quarantine_path":
+		if _, err := agentcmd.ParseQuarantinePayload(payload); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
@@ -108,19 +152,23 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 	req.Type = strings.TrimSpace(req.Type)
 	req.DeviceID = strings.TrimSpace(req.DeviceID)
 	switch req.Type {
-	case "isolate", "release", "kill_process", "live_query", "agent_update":
+	case "isolate", "release", "kill_process", "live_query", "agent_update", "run_script", "quarantine_path":
 	default:
 		http.Error(w, "unknown command type", http.StatusBadRequest)
+		return
+	}
+	payload := req.Payload
+	if len(payload) == 0 {
+		payload = []byte("{}")
+	}
+	if err := validateCommandPayload(req.Type, payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	dev, ok := s.store.Get(req.DeviceID)
 	if !ok {
 		http.Error(w, "unknown mTLS device", http.StatusNotFound)
 		return
-	}
-	payload := req.Payload
-	if len(payload) == 0 {
-		payload = []byte("{}")
 	}
 	id, err := newDeviceID()
 	if err != nil {
@@ -210,7 +258,10 @@ func (s *Server) flushQueued(deviceID string) {
 }
 
 func (s *Server) noteAck(deviceID string, accepted bool, commandID, message string) {
+	var cmdType, cmdPayload string
 	_ = s.commands.Update(commandID, func(r *cmdlog.Record) {
+		cmdType = r.Type
+		cmdPayload = r.Payload
 		r.Status = "acked"
 		r.Accepted = accepted
 		r.Message = message
@@ -218,6 +269,14 @@ func (s *Server) noteAck(deviceID string, accepted bool, commandID, message stri
 	if s.pg != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = s.pg.UpdateCommand(ctx, commandID, "acked", accepted, message)
+		if cmdType == "live_query" {
+			queryID := liveQueryID(cmdPayload)
+			status := "error"
+			if accepted {
+				status = "ok"
+			}
+			_ = s.pg.SaveLiveQueryResult(ctx, commandID, deviceID, queryID, status, message)
+		}
 		cancel()
 	}
 	lower := strings.ToLower(message)
@@ -238,4 +297,14 @@ func (s *Server) noteAck(deviceID string, accepted bool, commandID, message stri
 		}
 	}
 	s.audit("agent", "command_ack", deviceID, map[string]any{"commandId": commandID, "accepted": accepted, "message": message})
+}
+
+func liveQueryID(payload string) string {
+	var p struct {
+		Query string `json:"query"`
+	}
+	if json.Unmarshal([]byte(payload), &p) == nil && strings.TrimSpace(p.Query) != "" {
+		return strings.TrimSpace(strings.ToLower(p.Query))
+	}
+	return "unknown"
 }

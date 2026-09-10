@@ -13,6 +13,7 @@ import {
   ScrollText,
   ShieldAlert,
   ShieldCheck,
+  Siren,
   Terminal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,7 @@ import { cn } from "@/lib/utils";
 const nav = [
   { href: "/", label: "Fleet", icon: LayoutDashboard },
   { href: "/devices", label: "Hosts", icon: Monitor },
+  { href: "/alerts", label: "Alerts", icon: Siren },
   { href: "/advisories", label: "Advisories", icon: ShieldAlert },
   { href: "/patches", label: "Patches", icon: Package },
   { href: "/versions", label: "Versions", icon: History },
@@ -30,7 +32,13 @@ const nav = [
   { href: "/scope", label: "Scope", icon: Scale },
 ];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  readOnly,
+}: {
+  children: React.ReactNode;
+  readOnly?: boolean;
+}) {
   const pathname = usePathname();
 
   return (
@@ -96,7 +104,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
         </form>
       </aside>
-      <main className="min-w-0 flex-1 px-4 py-6 sm:px-8">{children}</main>
+      <main className="min-w-0 flex-1 px-4 py-6 sm:px-8">
+        {readOnly ? (
+          <p className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-950 dark:text-amber-100">
+            Viewer session — read-only. Signed commands, revoke, and alert status changes require an
+            admin token.
+          </p>
+        ) : null}
+        {children}
+      </main>
     </div>
   );
 }

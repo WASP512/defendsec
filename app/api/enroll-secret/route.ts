@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { ensureStore, rotateEnrollSecret } from "@/lib/store";
-import { storeErrorResponse, unauthorizedIfNotAdmin } from "@/lib/api-auth";
+import {
+  storeErrorResponse,
+  unauthorizedIfNotAdmin,
+  unauthorizedIfNotAuthenticated,
+} from "@/lib/api-auth";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
-  const denied = await unauthorizedIfNotAdmin(request);
+  const denied = await unauthorizedIfNotAuthenticated(request);
   if (denied) return denied;
   try {
     const store = await ensureStore();

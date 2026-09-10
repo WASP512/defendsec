@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { databaseURL } from "@/lib/pg";
+import { listAlerts } from "@/lib/alerts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PolicyBadge, OnlineBadge, SeverityBadge } from "@/components/status-badge";
@@ -17,6 +19,7 @@ import {
 import { AcceptBaseline } from "@/components/accept-baseline";
 import { ResponsePanel } from "@/components/response-panel";
 import { loadCommands } from "@/lib/commands";
+import { isReadOnlySession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +41,17 @@ export default async function DeviceDetailPage({
     (event) => event.deviceId === device.id || (mtlsId && event.deviceId === mtlsId),
   );
   const commandLog = mtlsId ? await loadCommands(mtlsId) : [];
+  const readOnly = await isReadOnlySession();
+  const alertDeviceId = mtlsId || device.id;
+  let openAlertCount = 0;
+  if (databaseURL()) {
+    try {
+      const alerts = await listAlerts({ deviceId: alertDeviceId, status: "open", limit: 50 });
+      openAlertCount = alerts.length;
+    } catch {
+      openAlertCount = 0;
+    }
+  }
 
   const facts = [
     ["Platform", `${platformLabel(device.platform)} ${device.osVersion}`.trim()],
@@ -70,6 +84,22 @@ export default async function DeviceDetailPage({
         <p className="mt-1 text-muted-foreground">
           {device.osName} {device.osVersion} · {device.arch || "unknown arch"}
         </p>
+        {openAlertCount > 0 ? (
+          <p className="mt-2 text-sm">
+            <Link
+              href={`/alerts?deviceId=${encodeURIComponent(alertDeviceId)}&status=open`}
+              className="font-medium text-destructive underline"
+            >
+              {openAlertCount} open alert{openAlertCount === 1 ? "" : "s"}
+            </Link>
+          </p>
+        ) : (
+          <p className="mt-2 text-sm">
+            <Link href={`/alerts?deviceId=${encodeURIComponent(alertDeviceId)}`} className="text-muted-foreground underline">
+              View alerts
+            </Link>
+          </p>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -91,6 +121,7 @@ export default async function DeviceDetailPage({
           mtlsDeviceId={mtlsId}
           isolated={Boolean(device.isolated)}
           commands={commandLog}
+          readOnly={readOnly}
         />
       </section>
 
