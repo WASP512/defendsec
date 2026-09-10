@@ -16,7 +16,7 @@ export default async function PatchesPage() {
         <h1 className="text-3xl font-semibold tracking-tight">Patches</h1>
         <p className="mt-1 max-w-2xl text-muted-foreground">
           Outstanding updates the agent reported (apt upgradable on Debian/Ubuntu, plus sample
-          fleet stubs). Keel records the gap; it does not push patches to the host.
+          fleet stubs). DefendSec records the gap; it does not push patches to the host.
         </p>
       </div>
       {rows.length === 0 ? (

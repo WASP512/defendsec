@@ -3,26 +3,26 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.keel.agentd</string>
+  <string>com.defendsec.agentd</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/keel-agentd</string>
+    <string>/usr/local/bin/defendsec-agentd</string>
     <string>--server-http</string>
     <string>https://CONTROL_PLANE:47262</string>
     <string>--server-grpc</string>
     <string>CONTROL_PLANE:47263</string>
     <string>--enroll-secret-file</string>
-    <string>/etc/keel/enroll-secret</string>
+    <string>/etc/defendsec/enroll-secret</string>
     <string>--state-dir</string>
-    <string>/usr/local/var/keel-agent</string>
+    <string>/usr/local/var/defendsec-agent</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/usr/local/var/log/keel-agentd.log</string>
+  <string>/usr/local/var/log/defendsec-agentd.log</string>
   <key>StandardErrorPath</key>
-  <string>/usr/local/var/log/keel-agentd.err</string>
+  <string>/usr/local/var/log/defendsec-agentd.err</string>
 </dict>
 </plist>

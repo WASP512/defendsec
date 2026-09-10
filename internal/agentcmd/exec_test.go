@@ -35,7 +35,7 @@ func TestKillRejectsBadAndProtectedNames(t *testing.T) {
 	if _, err := KillByName("../etc"); err == nil {
 		t.Fatal("expected reject")
 	}
-	if _, err := KillByName("keel-agentd"); err == nil {
+	if _, err := KillByName("defendsec-agentd"); err == nil {
 		t.Fatal("expected protected")
 	}
 	if _, err := ParseKillPayload([]byte(`{}`)); err == nil {
@@ -48,7 +48,8 @@ func TestKillByNameSignalsSleep(t *testing.T) {
 	if err != nil {
 		t.Skip("sleep not on PATH")
 	}
-	dst := filepath.Join(t.TempDir(), "keeltestsleep")
+	// Linux /proc/pid/comm is capped at 15 bytes.
+	dst := filepath.Join(t.TempDir(), "dsctestsleep")
 	in, err := os.Open(src)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +69,7 @@ func TestKillByNameSignalsSleep(t *testing.T) {
 	}
 	defer func() { _ = cmd.Process.Kill() }()
 	time.Sleep(80 * time.Millisecond)
-	n, err := KillByName("keeltestsleep")
+	n, err := KillByName("dsctestsleep")
 	if err != nil {
 		t.Fatal(err)
 	}

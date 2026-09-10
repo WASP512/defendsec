@@ -29,10 +29,10 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
-	"keel/internal/agentcmd"
-	keelv1 "keel/internal/gen/keel/v1"
-	"keel/internal/hostinv"
-	"keel/internal/sign"
+	"defendsec/internal/agentcmd"
+	defendsecv1 "defendsec/internal/gen/defendsec/v1"
+	"defendsec/internal/hostinv"
+	"defendsec/internal/sign"
 )
 
 const agentVersion = "0.3.0-phase3"
@@ -40,7 +40,7 @@ const agentVersion = "0.3.0-phase3"
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(log); err != nil {
-		log.Error("keel-agentd", "err", err)
+		log.Error("defendsec-agentd", "err", err)
 		os.Exit(1)
 	}
 }
@@ -48,7 +48,7 @@ func main() {
 func run(log *slog.Logger) error {
 	serverHTTP := flag.String("server-http", "https://127.0.0.1:47262", "control plane HTTPS base URL")
 	serverGRPC := flag.String("server-grpc", "127.0.0.1:47263", "control plane gRPC host:port")
-	enrollSecret := flag.String("enroll-secret", os.Getenv("KEEL_ENROLL_SECRET"), "enroll secret")
+	enrollSecret := flag.String("enroll-secret", os.Getenv("DEFENDSEC_ENROLL_SECRET"), "enroll secret")
 	enrollFile := flag.String("enroll-secret-file", "", "file containing the enroll secret")
 	stateDir := flag.String("state-dir", "data/agent-mtls", "where to store CA, client cert, and key")
 	tlsServerName := flag.String("tls-server-name", "localhost", "SNI / hostname to verify on the server certificate")
@@ -94,7 +94,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("grpc dial: %w", err)
 	}
 	defer conn.Close()
-	client := keelv1.NewAgentControlClient(conn)
+	client := defendsecv1.NewAgentControlClient(conn)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -129,7 +129,7 @@ func ensureEnrolled(log *slog.Logger, httpBase, serverName, stateDir, secret str
 	}
 	host, _ := os.Hostname()
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		Subject: pkix.Name{CommonName: host, Organization: []string{"Keel agent"}},
+		Subject: pkix.Name{CommonName: host, Organization: []string{"DefendSec agent"}},
 	}, key)
 	if err != nil {
 		return err
@@ -248,7 +248,7 @@ func clientTLS(stateDir, serverName string) (*tls.Config, error) {
 	}, nil
 }
 
-func runHeartbeats(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient, every time.Duration, stateDir string) {
+func runHeartbeats(ctx context.Context, log *slog.Logger, client defendsecv1.AgentControlClient, every time.Duration, stateDir string) {
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	send := func() {
@@ -272,7 +272,7 @@ func runHeartbeats(ctx context.Context, log *slog.Logger, client keelv1.AgentCon
 	}
 }
 
-func runStream(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient, pub ed25519.PublicKey, deviceID, stateDir string) {
+func runStream(ctx context.Context, log *slog.Logger, client defendsecv1.AgentControlClient, pub ed25519.PublicKey, deviceID, stateDir string) {
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {
@@ -296,14 +296,14 @@ func runStream(ctx context.Context, log *slog.Logger, client keelv1.AgentControl
 	}
 }
 
-func attachStream(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient, pub ed25519.PublicKey, deviceID, stateDir string) error {
+func attachStream(ctx context.Context, log *slog.Logger, client defendsecv1.AgentControlClient, pub ed25519.PublicKey, deviceID, stateDir string) error {
 	stream, err := client.Connect(ctx)
 	if err != nil {
 		return err
 	}
 	host, _ := os.Hostname()
-	if err := stream.Send(&keelv1.AgentToServer{
-		Body: &keelv1.AgentToServer_Hello{Hello: &keelv1.Hello{Hostname: host, AgentVersion: agentVersion}},
+	if err := stream.Send(&defendsecv1.AgentToServer{
+		Body: &defendsecv1.AgentToServer_Hello{Hello: &defendsecv1.Hello{Hostname: host, AgentVersion: agentVersion}},
 	}); err != nil {
 		return err
 	}
@@ -315,20 +315,20 @@ func attachStream(ctx context.Context, log *slog.Logger, client keelv1.AgentCont
 			return err
 		}
 		switch body := msg.GetBody().(type) {
-		case *keelv1.ServerToAgent_Ping:
-			ack := &keelv1.CommandAck{CommandId: msg.GetRequestId(), Accepted: true, Message: "pong"}
-			if err := stream.Send(&keelv1.AgentToServer{
+		case *defendsecv1.ServerToAgent_Ping:
+			ack := &defendsecv1.CommandAck{CommandId: msg.GetRequestId(), Accepted: true, Message: "pong"}
+			if err := stream.Send(&defendsecv1.AgentToServer{
 				RequestId: msg.GetRequestId(),
-				Body:      &keelv1.AgentToServer_Ack{Ack: ack},
+				Body:      &defendsecv1.AgentToServer_Ack{Ack: ack},
 			}); err != nil {
 				return err
 			}
 			log.Info("pong", "server_time", body.Ping.GetServerTimeUnix())
-		case *keelv1.ServerToAgent_Command:
+		case *defendsecv1.ServerToAgent_Command:
 			ack := executeCommand(log, pub, deviceID, stateDir, replay, body.Command)
-			if err := stream.Send(&keelv1.AgentToServer{
+			if err := stream.Send(&defendsecv1.AgentToServer{
 				RequestId: msg.GetRequestId(),
-				Body:      &keelv1.AgentToServer_Ack{Ack: ack},
+				Body:      &defendsecv1.AgentToServer_Ack{Ack: ack},
 			}); err != nil {
 				return err
 			}
@@ -341,7 +341,7 @@ func attachStream(ctx context.Context, log *slog.Logger, client keelv1.AgentCont
 	}
 }
 
-func heartbeat(stateDir string) *keelv1.HeartbeatRequest {
+func heartbeat(stateDir string) *defendsecv1.HeartbeatRequest {
 	host, _ := os.Hostname()
 	platform := runtime.GOOS
 	osName := runtime.GOOS
@@ -353,7 +353,7 @@ func heartbeat(stateDir string) *keelv1.HeartbeatRequest {
 	case "windows":
 		osName = "Windows"
 	}
-	return &keelv1.HeartbeatRequest{
+	return &defendsecv1.HeartbeatRequest{
 		Hostname:      host,
 		OsName:        osName,
 		OsVersion:     runtime.Version(),
@@ -364,7 +364,7 @@ func heartbeat(stateDir string) *keelv1.HeartbeatRequest {
 	}
 }
 
-func runInventory(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient, stateDir string) {
+func runInventory(ctx context.Context, log *slog.Logger, client defendsecv1.AgentControlClient, stateDir string) {
 	send := func() {
 		snap := hostinv.Collect()
 		hctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -389,7 +389,7 @@ func runInventory(ctx context.Context, log *slog.Logger, client keelv1.AgentCont
 	}
 }
 
-func inventoryReport(snap hostinv.Snapshot, stateDir string) *keelv1.InventoryReport {
+func inventoryReport(snap hostinv.Snapshot, stateDir string) *defendsecv1.InventoryReport {
 	enc, fw := int32(0), int32(0)
 	if snap.DiskEncryption != nil {
 		if *snap.DiskEncryption {
@@ -405,7 +405,7 @@ func inventoryReport(snap hostinv.Snapshot, stateDir string) *keelv1.InventoryRe
 			fw = 1
 		}
 	}
-	rep := &keelv1.InventoryReport{
+	rep := &defendsecv1.InventoryReport{
 		Host:           heartbeat(stateDir),
 		Serial:         snap.Serial,
 		HardwareModel:  snap.HardwareModel,
@@ -424,13 +424,13 @@ func inventoryReport(snap hostinv.Snapshot, stateDir string) *keelv1.InventoryRe
 	rep.Host.Platform = snap.Platform
 	rep.Host.UptimeSeconds = snap.UptimeSeconds
 	for _, item := range snap.Software {
-		rep.Software = append(rep.Software, &keelv1.SoftwareItem{Name: item.Name, Version: item.Version})
+		rep.Software = append(rep.Software, &defendsecv1.SoftwareItem{Name: item.Name, Version: item.Version})
 	}
 	for _, item := range snap.PendingUpdates {
-		rep.PendingUpdates = append(rep.PendingUpdates, &keelv1.PendingUpdate{Name: item.Name, Current: item.Current, Available: item.Available})
+		rep.PendingUpdates = append(rep.PendingUpdates, &defendsecv1.PendingUpdate{Name: item.Name, Current: item.Current, Available: item.Available})
 	}
 	for _, item := range snap.Fim {
-		rep.Fim = append(rep.Fim, &keelv1.FimFile{Path: item.Path, Sha256: item.SHA256, Size: item.Size, Mtime: item.Mtime})
+		rep.Fim = append(rep.Fim, &defendsecv1.FimFile{Path: item.Path, Sha256: item.SHA256, Size: item.Size, Mtime: item.Mtime})
 	}
 	return rep
 }

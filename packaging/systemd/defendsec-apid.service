@@ -1,0 +1,21 @@
+# defendsec-apid — control plane (agent transport)
+[Unit]
+Description=DefendSec agent control plane (mTLS gRPC + enroll)
+After=network.target
+
+[Service]
+Type=simple
+User=defendsec
+Group=defendsec
+WorkingDirectory=/var/lib/defendsec
+ExecStart=/usr/local/bin/defendsec-apid --data-dir /var/lib/defendsec --http-addr 0.0.0.0:47262 --grpc-addr 0.0.0.0:47263
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/defendsec
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

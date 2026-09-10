@@ -2,9 +2,9 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v5.28.3
-// source: keel/v1/agent.proto
+// source: defendsec/v1/agent.proto
 
-package keelv1
+package defendsecv1
 
 import (
 	context "context"
@@ -19,9 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentControl_Heartbeat_FullMethodName       = "/keel.v1.AgentControl/Heartbeat"
-	AgentControl_ReportInventory_FullMethodName = "/keel.v1.AgentControl/ReportInventory"
-	AgentControl_Connect_FullMethodName         = "/keel.v1.AgentControl/Connect"
+	AgentControl_Heartbeat_FullMethodName       = "/defendsec.v1.AgentControl/Heartbeat"
+	AgentControl_ReportInventory_FullMethodName = "/defendsec.v1.AgentControl/ReportInventory"
+	AgentControl_Connect_FullMethodName         = "/defendsec.v1.AgentControl/Connect"
 )
 
 // AgentControlClient is the client API for AgentControl service.
@@ -168,7 +168,7 @@ type AgentControl_ConnectServer = grpc.BidiStreamingServer[AgentToServer, Server
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var AgentControl_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "keel.v1.AgentControl",
+	ServiceName: "defendsec.v1.AgentControl",
 	HandlerType: (*AgentControlServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -188,5 +188,5 @@ var AgentControl_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "keel/v1/agent.proto",
+	Metadata: "defendsec/v1/agent.proto",
 }

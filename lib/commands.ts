@@ -26,4 +26,4 @@ export async function loadCommands(deviceId?: string): Promise<CommandRecord[]> 
   }
 }
 
-export const APID_ADMIN_URL = process.env.KEEL_APID_ADMIN ?? "http://127.0.0.1:47264";
+export const APID_ADMIN_URL = process.env.DEFENDSEC_APID_ADMIN ?? "http://127.0.0.1:47264";

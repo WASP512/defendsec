@@ -25,7 +25,7 @@ export function ResponsePanel({
       <div className="rounded-xl border border-dashed p-6">
         <p className="font-medium">No mTLS agent on this host</p>
         <p className="mt-1 text-sm text-muted-foreground">
-          Signed isolate / kill requires <code className="text-foreground">keel-agentd</code>. The
+          Signed isolate / kill requires <code className="text-foreground">defendsec-agentd</code>. The
           Python inventory agent cannot receive control commands.
         </p>
       </div>
@@ -55,11 +55,11 @@ export function ResponsePanel({
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Commands are Ed25519-signed by keel-apid and verified on the agent. Unsigned payloads are
+        Commands are Ed25519-signed by defendsec-apid and verified on the agent. Unsigned payloads are
         rejected. Isolation is a host flag (network drop only if the agent is root with{" "}
-        <code className="text-foreground">KEEL_ISOLATE_NET=1</code>). Kill matches{" "}
+        <code className="text-foreground">DEFENDSEC_ISOLATE_NET=1</code>). Kill matches{" "}
         <code className="text-foreground">/proc/*/comm</code> and will not signal protected names
-        such as systemd, sshd, or keel-agentd.
+        such as systemd, sshd, or defendsec-agentd.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button

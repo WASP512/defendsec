@@ -4,7 +4,7 @@ export default function ScopePage() {
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">How hard is “our own Fleet”?</h1>
         <p className="mt-2 text-muted-foreground">
-          A security-focused, self-hosted console without subscriptions is several products. Keel
+          A security-focused, self-hosted console without subscriptions is several products. DefendSec
           is the layer you can own immediately: agent inventory, versions, patch gaps, a local
           advisory catalog, and file integrity. It is not Apple/Windows MDM.
         </p>

@@ -12,8 +12,8 @@ export class StoreCorruptError extends Error {
   }
 }
 
-const DATA_PATH = join(process.cwd(), "data", "keel.json");
-const BACKUP_PATH = join(process.cwd(), "data", "keel.json.bak");
+const DATA_PATH = join(process.cwd(), "data", "defendsec.json");
+const BACKUP_PATH = join(process.cwd(), "data", "defendsec.json.bak");
 
 let queue: Promise<void> = Promise.resolve();
 
@@ -76,7 +76,7 @@ async function readStore(): Promise<StoreData | null> {
     );
   }
   if (!raw.trim()) {
-    throw new StoreCorruptError(`${DATA_PATH} is empty. Restore data/keel.json.bak if you have one.`);
+    throw new StoreCorruptError(`${DATA_PATH} is empty. Restore data/defendsec.json.bak if you have one.`);
   }
   try {
     const parsed = JSON.parse(raw) as StoreData;
@@ -86,7 +86,7 @@ async function readStore(): Promise<StoreData | null> {
     return normalizeStore(parsed);
   } catch (error) {
     throw new StoreCorruptError(
-      `${DATA_PATH} is not valid Keel data (${error instanceof Error ? error.message : "parse error"}). Restore data/keel.json.bak; the server will not overwrite this file.`,
+      `${DATA_PATH} is not valid DefendSec data (${error instanceof Error ? error.message : "parse error"}). Restore data/defendsec.json.bak; the server will not overwrite this file.`,
     );
   }
 }

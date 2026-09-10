@@ -373,7 +373,7 @@ func fimFiles() []FimFile {
 	case "darwin":
 		paths = []string{"/etc/hosts", "/etc/ssh/sshd_config"}
 	}
-	extra := os.Getenv("KEEL_FIM_PATHS")
+	extra := os.Getenv("DEFENDSEC_FIM_PATHS")
 	if extra != "" {
 		for _, item := range strings.Split(extra, string(os.PathListSeparator)) {
 			if strings.TrimSpace(item) != "" {

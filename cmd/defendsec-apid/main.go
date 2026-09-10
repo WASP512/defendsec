@@ -18,19 +18,19 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
-	"keel/internal/cmdlog"
-	"keel/internal/control"
-	keelv1 "keel/internal/gen/keel/v1"
-	"keel/internal/pki"
-	"keel/internal/presence"
-	"keel/internal/secret"
-	"keel/internal/sign"
+	"defendsec/internal/cmdlog"
+	"defendsec/internal/control"
+	defendsecv1 "defendsec/internal/gen/defendsec/v1"
+	"defendsec/internal/pki"
+	"defendsec/internal/presence"
+	"defendsec/internal/secret"
+	"defendsec/internal/sign"
 )
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(log); err != nil {
-		log.Error("keel-apid", "err", err)
+		log.Error("defendsec-apid", "err", err)
 		os.Exit(1)
 	}
 }
@@ -40,8 +40,8 @@ func run(log *slog.Logger) error {
 	httpAddr := flag.String("http-addr", "0.0.0.0:47262", "HTTPS enroll/health listen address")
 	grpcAddr := flag.String("grpc-addr", "0.0.0.0:47263", "mTLS gRPC listen address")
 	adminAddr := flag.String("admin-addr", "127.0.0.1:47264", "loopback HTTP for signed commands (admin token)")
-	enrollSecret := flag.String("enroll-secret", "", "override enroll secret (default: KEEL_ENROLL_SECRET or data/keel.json)")
-	adminTokenFlag := flag.String("admin-token", "", "override admin token (default: KEEL_ADMIN_TOKEN or data/admin-token.txt)")
+	enrollSecret := flag.String("enroll-secret", "", "override enroll secret (default: DEFENDSEC_ENROLL_SECRET or data/defendsec.json)")
+	adminTokenFlag := flag.String("admin-token", "", "override admin token (default: DEFENDSEC_ADMIN_TOKEN or data/admin-token.txt)")
 	advertise := flag.String("tls-hostname", "", "extra hostname/IP SAN for the server certificate")
 	flag.Parse()
 
@@ -55,7 +55,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("pki: %w", err)
 	}
 
-	secretValue, err := secret.Resolve(*enrollSecret, filepath.Join(*dataDir, "keel.json"))
+	secretValue, err := secret.Resolve(*enrollSecret, filepath.Join(*dataDir, "defendsec.json"))
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("admin token (start the console once so data/admin-token.txt exists): %w", err)
 	}
 
-	store := presence.New(filepath.Join(*dataDir, "mtls-agents.json"))
+	store := presence.New(filepath.Join(*dataDir, "defendsec-agents.json"))
 	commands := cmdlog.New(filepath.Join(*dataDir, "commands.json"))
 	svc := control.New(bundle, secretValue, adminToken, store, commands, signer, log)
 
@@ -110,7 +110,7 @@ func run(log *slog.Logger) error {
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 30 * time.Second, Timeout: 10 * time.Second}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 10 * time.Second, PermitWithoutStream: true}),
 	)
-	keelv1.RegisterAgentControlServer(grpcSrv, svc)
+	defendsecv1.RegisterAgentControlServer(grpcSrv, svc)
 
 	httpLn, err := net.Listen("tcp", *httpAddr)
 	if err != nil {

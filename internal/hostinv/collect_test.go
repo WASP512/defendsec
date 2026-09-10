@@ -28,7 +28,7 @@ func TestCollectHasHostnameAndFIM(t *testing.T) {
 func TestHashFile(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "a.txt")
-	if err := os.WriteFile(p, []byte("keel"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("test"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	f, err := HashPathForTest(p)

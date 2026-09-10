@@ -39,7 +39,7 @@ function asPlatform(value: string | undefined): Platform {
 
 export async function loadMtlsFile(): Promise<MtlsFile> {
   try {
-    const raw = await readFile(join(process.cwd(), "data", "mtls-agents.json"), "utf8");
+    const raw = await readFile(join(process.cwd(), "data", "defendsec-agents.json"), "utf8");
     return JSON.parse(raw) as MtlsFile;
   } catch {
     return {};

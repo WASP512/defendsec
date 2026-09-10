@@ -21,13 +21,14 @@ const (
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 var protected = map[string]struct{}{
-	"keel-agentd": {},
-	"keel-apid":   {},
-	"systemd":     {},
-	"init":        {},
-	"sshd":        {},
-	"ssh":         {},
-	"next-server": {},
+	"defendsec-agentd": {},
+	"defendsec-agent":  {}, // Linux /proc/pid/comm truncates to 15 bytes
+	"defendsec-apid":   {},
+	"systemd":          {},
+	"init":             {},
+	"sshd":             {},
+	"ssh":              {},
+	"next-server":      {},
 }
 
 type State struct {
@@ -68,10 +69,10 @@ func SaveState(dir string, st State) error {
 }
 
 func Isolate(dir string) (State, error) {
-	st := State{Isolated: true, Mode: "flag", Message: "host marked isolated; network drop requires root and KEEL_ISOLATE_NET=1"}
-	if os.Geteuid() == 0 && os.Getenv("KEEL_ISOLATE_NET") == "1" {
+	st := State{Isolated: true, Mode: "flag", Message: "host marked isolated; network drop requires root and DEFENDSEC_ISOLATE_NET=1"}
+	if os.Geteuid() == 0 && os.Getenv("DEFENDSEC_ISOLATE_NET") == "1" {
 		st.Mode = "net"
-		st.Message = "network isolate requested (iptables not applied in this build without KEEL_ISOLATE_NET tooling)"
+		st.Message = "network isolate requested (iptables not applied in this build without DEFENDSEC_ISOLATE_NET tooling)"
 	}
 	return st, SaveState(dir, st)
 }

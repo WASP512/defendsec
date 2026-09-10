@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keel host agent: enroll + inventory check-in. Python 3 stdlib only."""
+"""DefendSec host agent: enroll + inventory check-in. Python 3 stdlib only."""
 
 from __future__ import annotations
 
@@ -277,7 +277,7 @@ def fim_files() -> list[dict]:
     elif system == "Windows":
         root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
         candidates = [root / "System32" / "drivers" / "etc" / "hosts"]
-    extra = os.environ.get("KEEL_FIM_PATHS", "")
+    extra = os.environ.get("DEFENDSEC_FIM_PATHS", "")
     for item in extra.split(os.pathsep):
         if item.strip():
             candidates.append(Path(item.strip()))
@@ -397,14 +397,14 @@ def inventory() -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Keel host agent")
-    parser.add_argument("--server", required=True, help="Keel server base URL")
-    parser.add_argument("--enroll-secret", default=os.environ.get("KEEL_ENROLL_SECRET", ""))
+    parser = argparse.ArgumentParser(description="DefendSec host agent")
+    parser.add_argument("--server", required=True, help="DefendSec server base URL")
+    parser.add_argument("--enroll-secret", default=os.environ.get("DEFENDSEC_ENROLL_SECRET", ""))
     parser.add_argument("--interval", type=int, default=30)
     parser.add_argument("--once", action="store_true")
     parser.add_argument(
         "--state-file",
-        default=str(Path(__file__).resolve().parent / ".keel-node-key"),
+        default=str(Path(__file__).resolve().parent / ".defendsec-node-key"),
     )
     args = parser.parse_args()
     server = args.server.rstrip("/")
@@ -431,14 +431,14 @@ def enroll(server: str, secret: str, state: Path) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Keel host agent")
-    parser.add_argument("--server", required=True, help="Keel server base URL")
-    parser.add_argument("--enroll-secret", default=os.environ.get("KEEL_ENROLL_SECRET", ""))
+    parser = argparse.ArgumentParser(description="DefendSec host agent")
+    parser.add_argument("--server", required=True, help="DefendSec server base URL")
+    parser.add_argument("--enroll-secret", default=os.environ.get("DEFENDSEC_ENROLL_SECRET", ""))
     parser.add_argument("--interval", type=int, default=30)
     parser.add_argument("--once", action="store_true")
     parser.add_argument(
         "--state-file",
-        default=str(Path(__file__).resolve().parent / ".keel-node-key"),
+        default=str(Path(__file__).resolve().parent / ".defendsec-node-key"),
     )
     args = parser.parse_args()
     server = args.server.rstrip("/")
@@ -452,7 +452,7 @@ def main() -> int:
             pass
     if not node_key:
         if not args.enroll_secret:
-            print("Missing --enroll-secret (or KEEL_ENROLL_SECRET)", file=sys.stderr)
+            print("Missing --enroll-secret (or DEFENDSEC_ENROLL_SECRET)", file=sys.stderr)
             return 2
         try:
             node_key = enroll(server, args.enroll_secret, state)

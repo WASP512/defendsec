@@ -91,7 +91,7 @@ func (b *Bundle) SignCSR(csrDER []byte, deviceID, hostname string, valid time.Du
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   deviceID,
-			Organization: []string{"Keel"},
+			Organization: []string{"DefendSec"},
 			OrganizationalUnit: []string{
 				"agent",
 			},
@@ -142,7 +142,7 @@ func loadOrCreateCA(dir string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	now := time.Now().Add(-time.Minute)
 	template := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "Keel CA", Organization: []string{"Keel"}},
+		Subject:               pkix.Name{CommonName: "DefendSec CA", Organization: []string{"DefendSec"}},
 		NotBefore:             now,
 		NotAfter:              now.Add(10 * 365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
@@ -192,7 +192,7 @@ func loadOrCreateServer(dir string, ca *x509.Certificate, caKey *ecdsa.PrivateKe
 	}
 	template := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "Keel apid", Organization: []string{"Keel"}},
+		Subject:               pkix.Name{CommonName: "DefendSec apid", Organization: []string{"DefendSec"}},
 		NotBefore:             now,
 		NotAfter:              now.Add(365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature,

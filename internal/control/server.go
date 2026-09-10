@@ -21,15 +21,15 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"keel/internal/cmdlog"
-	keelv1 "keel/internal/gen/keel/v1"
-	"keel/internal/pki"
-	"keel/internal/presence"
-	"keel/internal/sign"
+	"defendsec/internal/cmdlog"
+	defendsecv1 "defendsec/internal/gen/defendsec/v1"
+	"defendsec/internal/pki"
+	"defendsec/internal/presence"
+	"defendsec/internal/sign"
 )
 
 type Server struct {
-	keelv1.UnimplementedAgentControlServer
+	defendsecv1.UnimplementedAgentControlServer
 	bundle     *pki.Bundle
 	secret     string
 	adminToken string
@@ -138,7 +138,7 @@ func (s *Server) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) Heartbeat(ctx context.Context, req *keelv1.HeartbeatRequest) (*keelv1.HeartbeatResponse, error) {
+func (s *Server) Heartbeat(ctx context.Context, req *defendsecv1.HeartbeatRequest) (*defendsecv1.HeartbeatResponse, error) {
 	id, fp, err := peerIdentity(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, err.Error())
@@ -161,10 +161,10 @@ func (s *Server) Heartbeat(ctx context.Context, req *keelv1.HeartbeatRequest) (*
 		s.log.Error("presence upsert", "err", err)
 		return nil, status.Error(codes.Internal, "presence")
 	}
-	return &keelv1.HeartbeatResponse{Ok: true, ServerTimeUnix: time.Now().Unix()}, nil
+	return &defendsecv1.HeartbeatResponse{Ok: true, ServerTimeUnix: time.Now().Unix()}, nil
 }
 
-func (s *Server) ReportInventory(ctx context.Context, req *keelv1.InventoryReport) (*keelv1.HeartbeatResponse, error) {
+func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.InventoryReport) (*defendsecv1.HeartbeatResponse, error) {
 	id, fp, err := peerIdentity(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, err.Error())
@@ -210,7 +210,7 @@ func (s *Server) ReportInventory(ctx context.Context, req *keelv1.InventoryRepor
 		s.log.Error("inventory", "err", err)
 		return nil, status.Error(codes.Internal, "inventory")
 	}
-	return &keelv1.HeartbeatResponse{Ok: true, ServerTimeUnix: time.Now().Unix()}, nil
+	return &defendsecv1.HeartbeatResponse{Ok: true, ServerTimeUnix: time.Now().Unix()}, nil
 }
 
 func triBool(v int32) *bool {
@@ -226,7 +226,7 @@ func triBool(v int32) *bool {
 	}
 }
 
-func (s *Server) Connect(stream keelv1.AgentControl_ConnectServer) error {
+func (s *Server) Connect(stream defendsecv1.AgentControl_ConnectServer) error {
 	id, fp, err := peerIdentity(stream.Context())
 	if err != nil {
 		return status.Error(codes.Unauthenticated, err.Error())
@@ -251,15 +251,15 @@ func (s *Server) Connect(stream keelv1.AgentControl_ConnectServer) error {
 				return
 			}
 			switch body := msg.GetBody().(type) {
-			case *keelv1.AgentToServer_Hello:
+			case *defendsecv1.AgentToServer_Hello:
 				s.log.Info("hello", "device", id, "host", body.Hello.GetHostname(), "ver", body.Hello.GetAgentVersion())
-			case *keelv1.AgentToServer_Heartbeat:
+			case *defendsecv1.AgentToServer_Heartbeat:
 				_, err := s.Heartbeat(stream.Context(), body.Heartbeat)
 				if err != nil {
 					errCh <- err
 					return
 				}
-			case *keelv1.AgentToServer_Ack:
+			case *defendsecv1.AgentToServer_Ack:
 				s.log.Info("ack", "device", id, "command", body.Ack.GetCommandId(), "ok", body.Ack.GetAccepted(), "msg", body.Ack.GetMessage())
 				s.noteAck(id, body.Ack.GetAccepted(), body.Ack.GetCommandId(), body.Ack.GetMessage())
 			}
@@ -286,9 +286,9 @@ func (s *Server) Connect(stream keelv1.AgentControl_ConnectServer) error {
 			if err != nil {
 				return err
 			}
-			if err := stream.Send(&keelv1.ServerToAgent{
+			if err := stream.Send(&defendsecv1.ServerToAgent{
 				RequestId: reqID,
-				Body:      &keelv1.ServerToAgent_Ping{Ping: &keelv1.Ping{ServerTimeUnix: time.Now().Unix()}},
+				Body:      &defendsecv1.ServerToAgent_Ping{Ping: &defendsecv1.Ping{ServerTimeUnix: time.Now().Unix()}},
 			}); err != nil {
 				return err
 			}

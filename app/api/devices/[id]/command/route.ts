@@ -27,7 +27,7 @@ export async function GET(
     });
   } catch {
     return NextResponse.json(
-      { error: "Control plane is not reachable on 127.0.0.1:47264. Start keel-apid." },
+      { error: "Control plane is not reachable on 127.0.0.1:47264. Start defendsec-apid." },
       { status: 503 },
     );
   }
@@ -65,7 +65,7 @@ export async function POST(
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
     return NextResponse.json(
-      { error: "Control plane is not reachable on 127.0.0.1:47264. Start keel-apid." },
+      { error: "Control plane is not reachable on 127.0.0.1:47264. Start defendsec-apid." },
       { status: 503 },
     );
   }

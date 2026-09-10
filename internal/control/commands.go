@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"keel/internal/cmdlog"
-	keelv1 "keel/internal/gen/keel/v1"
-	"keel/internal/sign"
+	"defendsec/internal/cmdlog"
+	defendsecv1 "defendsec/internal/gen/defendsec/v1"
+	"defendsec/internal/sign"
 )
 
 type issueRequest struct {
@@ -75,7 +75,7 @@ func (s *Server) HandleAdminCommands(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminOK(r *http.Request) bool {
 	got := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	if got == "" {
-		got = strings.TrimSpace(r.Header.Get("X-Keel-Admin"))
+		got = strings.TrimSpace(r.Header.Get("X-DefendSec-Admin"))
 	}
 	a := sha256.Sum256([]byte(got))
 	b := sha256.Sum256([]byte(s.adminToken))
@@ -154,7 +154,7 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pushSigned(env sign.Envelope) bool {
-	cmd := &keelv1.ControlCommand{
+	cmd := &defendsecv1.ControlCommand{
 		CommandId:   env.CommandID,
 		Type:        env.Type,
 		Payload:     env.Payload,
@@ -163,9 +163,9 @@ func (s *Server) pushSigned(env sign.Envelope) bool {
 		ExpiresUnix: env.ExpiresUnix,
 		DeviceId:    env.DeviceID,
 	}
-	return s.hub.Send(env.DeviceID, &keelv1.ServerToAgent{
+	return s.hub.Send(env.DeviceID, &defendsecv1.ServerToAgent{
 		RequestId: env.CommandID,
-		Body:      &keelv1.ServerToAgent_Command{Command: cmd},
+		Body:      &defendsecv1.ServerToAgent_Command{Command: cmd},
 	})
 }
 

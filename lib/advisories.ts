@@ -53,7 +53,7 @@ export function packageMatches(advisoryPackage: string, installedName: string) {
 
 export const ADVISORIES: Advisory[] = [
   {
-    id: "KEEL-CHROME-131",
+    id: "DEFENDSEC-CHROME-131",
     cve: "CVE-2024-4947",
     package: "google chrome",
     below: "132.0",
@@ -61,7 +61,7 @@ export const ADVISORIES: Advisory[] = [
     summary: "Chrome before 132: type confusion in V8. Update to the current stable channel.",
   },
   {
-    id: "KEEL-DOCKER-27",
+    id: "DEFENDSEC-DOCKER-27",
     cve: "CVE-2024-41110",
     package: "docker",
     below: "26.1.4",
@@ -69,7 +69,7 @@ export const ADVISORIES: Advisory[] = [
     summary: "Authz plugin bypass in some Docker Engine builds. Upgrade the engine package.",
   },
   {
-    id: "KEEL-GIT-234",
+    id: "DEFENDSEC-GIT-234",
     cve: "CVE-2024-32002",
     package: "git",
     below: "2.45.1",
@@ -77,7 +77,7 @@ export const ADVISORIES: Advisory[] = [
     summary: "Recursive clone can execute hooks from untrusted repos. Update Git.",
   },
   {
-    id: "KEEL-OPENSSL",
+    id: "DEFENDSEC-OPENSSL",
     cve: "CVE-2024-5535",
     package: "openssl",
     below: "3.0.14",
@@ -85,7 +85,7 @@ export const ADVISORIES: Advisory[] = [
     summary: "SSL_select_next_proto use-after-free in older OpenSSL 3.0 builds.",
   },
   {
-    id: "KEEL-OPENSSH",
+    id: "DEFENDSEC-OPENSSH",
     cve: "CVE-2024-6387",
     package: "openssh-server",
     below: "9.8p1",
@@ -93,7 +93,7 @@ export const ADVISORIES: Advisory[] = [
     summary: "regreSSHion: signal handler race in sshd. Patch OpenSSH.",
   },
   {
-    id: "KEEL-SLACK",
+    id: "DEFENDSEC-SLACK",
     cve: "CVE-2024-32300",
     package: "slack",
     below: "4.42.0",
@@ -101,7 +101,7 @@ export const ADVISORIES: Advisory[] = [
     summary: "Desktop client below 4.42 ships an outdated Electron. Update Slack.",
   },
   {
-    id: "KEEL-PHOTOSHOP",
+    id: "DEFENDSEC-PHOTOSHOP",
     cve: "CVE-2024-20767",
     package: "adobe photoshop",
     below: "25.9.1",

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"keel/internal/agentcmd"
-	keelv1 "keel/internal/gen/keel/v1"
-	"keel/internal/sign"
+	"defendsec/internal/agentcmd"
+	defendsecv1 "defendsec/internal/gen/defendsec/v1"
+	"defendsec/internal/sign"
 )
 
 type replayCache struct {
@@ -34,8 +34,8 @@ func (c *replayCache) remember(id string) bool {
 	return true
 }
 
-func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir string, replay *replayCache, cmd *keelv1.ControlCommand) *keelv1.CommandAck {
-	ack := &keelv1.CommandAck{CommandId: cmd.GetCommandId(), Accepted: false}
+func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir string, replay *replayCache, cmd *defendsecv1.ControlCommand) *defendsecv1.CommandAck {
+	ack := &defendsecv1.CommandAck{CommandId: cmd.GetCommandId(), Accepted: false}
 	if cmd.GetDeviceId() != "" && cmd.GetDeviceId() != deviceID {
 		ack.Message = "command device_id does not match this agent"
 		return ack

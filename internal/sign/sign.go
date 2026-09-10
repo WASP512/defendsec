@@ -15,7 +15,7 @@ import (
 const (
 	privateType = "PRIVATE KEY"
 	publicType  = "PUBLIC KEY"
-	domain      = "keel-cmd-v1"
+	domain      = "defendsec-cmd-v1"
 )
 
 type Key struct {

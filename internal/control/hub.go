@@ -3,27 +3,27 @@ package control
 import (
 	"sync"
 
-	keelv1 "keel/internal/gen/keel/v1"
+	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 )
 
 type Hub struct {
 	mu      sync.Mutex
-	streams map[string]chan *keelv1.ServerToAgent
+	streams map[string]chan *defendsecv1.ServerToAgent
 }
 
 func NewHub() *Hub {
-	return &Hub{streams: map[string]chan *keelv1.ServerToAgent{}}
+	return &Hub{streams: map[string]chan *defendsecv1.ServerToAgent{}}
 }
 
-func (h *Hub) Register(id string) chan *keelv1.ServerToAgent {
-	ch := make(chan *keelv1.ServerToAgent, 16)
+func (h *Hub) Register(id string) chan *defendsecv1.ServerToAgent {
+	ch := make(chan *defendsecv1.ServerToAgent, 16)
 	h.mu.Lock()
 	h.streams[id] = ch
 	h.mu.Unlock()
 	return ch
 }
 
-func (h *Hub) Unregister(id string, ch chan *keelv1.ServerToAgent) {
+func (h *Hub) Unregister(id string, ch chan *defendsecv1.ServerToAgent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.streams[id] == ch {
@@ -31,7 +31,7 @@ func (h *Hub) Unregister(id string, ch chan *keelv1.ServerToAgent) {
 	}
 }
 
-func (h *Hub) Send(id string, msg *keelv1.ServerToAgent) bool {
+func (h *Hub) Send(id string, msg *defendsecv1.ServerToAgent) bool {
 	h.mu.Lock()
 	ch, ok := h.streams[id]
 	h.mu.Unlock()

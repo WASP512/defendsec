@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Keel — self-hosted fleet",
+  title: "DefendSec — self-hosted fleet",
   description: "Open host security inventory: versions, patches, advisories, file integrity.",
 };
 

@@ -1,4 +1,4 @@
-module keel
+module defendsec
 
 go 1.22
 

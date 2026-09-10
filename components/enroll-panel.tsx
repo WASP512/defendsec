@@ -15,7 +15,7 @@ export function EnrollPanel({
   const [secret, setSecret] = useState(enrollSecret);
   const [copied, setCopied] = useState<"secret" | "cmd" | null>(null);
 
-  const command = `python3 agent/keel-agent.py --server ${serverUrl} --enroll-secret ${secret}`;
+  const command = `python3 agent/defendsec-agent.py --server ${serverUrl} --enroll-secret ${secret}`;
 
   async function rotate() {
     const res = await fetch("/api/enroll-secret", { method: "POST" });

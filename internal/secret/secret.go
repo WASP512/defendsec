@@ -7,14 +7,14 @@ import (
 	"strings"
 )
 
-func Resolve(explicit, keelJSONPath string) (string, error) {
+func Resolve(explicit, storeJSONPath string) (string, error) {
 	if s := strings.TrimSpace(explicit); s != "" {
 		return s, nil
 	}
-	if s := strings.TrimSpace(os.Getenv("KEEL_ENROLL_SECRET")); s != "" {
+	if s := strings.TrimSpace(os.Getenv("DEFENDSEC_ENROLL_SECRET")); s != "" {
 		return s, nil
 	}
-	raw, err := os.ReadFile(keelJSONPath)
+	raw, err := os.ReadFile(storeJSONPath)
 	if err != nil {
 		return "", fmt.Errorf("read enroll secret: %w", err)
 	}
@@ -22,10 +22,10 @@ func Resolve(explicit, keelJSONPath string) (string, error) {
 		EnrollSecret string `json:"enrollSecret"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		return "", fmt.Errorf("parse keel.json: %w", err)
+		return "", fmt.Errorf("parse defendsec.json: %w", err)
 	}
 	if strings.TrimSpace(doc.EnrollSecret) == "" {
-		return "", fmt.Errorf("enroll secret missing in %s", keelJSONPath)
+		return "", fmt.Errorf("enroll secret missing in %s", storeJSONPath)
 	}
 	return doc.EnrollSecret, nil
 }

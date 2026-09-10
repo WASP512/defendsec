@@ -5,14 +5,14 @@ import { cookies } from "next/headers";
 
 import { DEV_ADMIN_TOKEN } from "./auth-public";
 
-export const ADMIN_COOKIE = "keel_admin";
+export const ADMIN_COOKIE = "defendsec_admin";
 const TOKEN_PATH = join(process.cwd(), "data", "admin-token.txt");
 
 let cachedToken: string | null = null;
 let loadToken: Promise<string> | null = null;
 
 function digest(value: string) {
-  return createHmac("sha256", "keel-admin").update(value).digest();
+  return createHmac("sha256", "defendsec-admin").update(value).digest();
 }
 
 export function safeEqual(left: string, right: string) {
@@ -22,7 +22,7 @@ export function safeEqual(left: string, right: string) {
 }
 
 async function loadOrCreateToken() {
-  const fromEnv = process.env.KEEL_ADMIN_TOKEN?.trim();
+  const fromEnv = process.env.DEFENDSEC_ADMIN_TOKEN?.trim();
   if (fromEnv) return fromEnv;
   try {
     const fromFile = (await readFile(TOKEN_PATH, "utf8")).trim();
@@ -49,7 +49,7 @@ export async function getAdminToken() {
 }
 
 export async function isDevFallbackToken() {
-  if (process.env.KEEL_ADMIN_TOKEN) return false;
+  if (process.env.DEFENDSEC_ADMIN_TOKEN) return false;
   return (await getAdminToken()) === DEV_ADMIN_TOKEN;
 }
 

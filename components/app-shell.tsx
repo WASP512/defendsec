@@ -36,7 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <header className="flex items-center justify-between border-b px-4 py-3 lg:hidden">
         <Link href="/" className="flex items-center gap-2 font-semibold">
           <Anchor className="size-5" />
-          Keel
+          DefendSec
         </Link>
         <nav className="flex gap-1 overflow-x-auto">
           {nav.map((item) => (
@@ -58,7 +58,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="hidden w-56 shrink-0 border-r lg:flex lg:flex-col">
         <Link href="/" className="flex items-center gap-2 px-5 py-6 text-lg font-semibold">
           <Anchor className="size-5" />
-          Keel
+          DefendSec
         </Link>
         <nav className="flex flex-col gap-1 px-3">
           {nav.map((item) => {

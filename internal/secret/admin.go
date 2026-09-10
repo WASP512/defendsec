@@ -10,7 +10,7 @@ func ResolveAdmin(explicit, tokenPath string) (string, error) {
 	if s := strings.TrimSpace(explicit); s != "" {
 		return s, nil
 	}
-	if s := strings.TrimSpace(os.Getenv("KEEL_ADMIN_TOKEN")); s != "" {
+	if s := strings.TrimSpace(os.Getenv("DEFENDSEC_ADMIN_TOKEN")); s != "" {
 		return s, nil
 	}
 	raw, err := os.ReadFile(tokenPath)

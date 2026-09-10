@@ -24,13 +24,13 @@ export default async function EnrollPage() {
       <div className="space-y-2 text-sm text-muted-foreground">
         <p className="font-medium text-foreground">Go agent (mTLS + signed commands)</p>
         <p>
-          Start <code className="text-foreground">keel-apid</code>, then enroll with the same secret.
+          Start <code className="text-foreground">defendsec-apid</code>, then enroll with the same secret.
           First HTTPS call trust-on-first-use pins the CA; after that all gRPC is mTLS.
         </p>
         <pre className="overflow-x-auto rounded-lg border bg-muted/40 p-3 font-mono text-xs text-foreground">
 {`make apid agent
-./bin/keel-apid --data-dir data
-./bin/keel-agentd \\
+./bin/defendsec-apid --data-dir data
+./bin/defendsec-agentd \\
   --server-http https://127.0.0.1:47262 \\
   --server-grpc 127.0.0.1:47263 \\
   --tls-server-name localhost \\
@@ -43,7 +43,7 @@ export default async function EnrollPage() {
         </p>
       </div>
       <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
-        <li>Copy <code className="text-foreground">agent/keel-agent.py</code> to the host.</li>
+        <li>Copy <code className="text-foreground">agent/defendsec-agent.py</code> to the host.</li>
         <li>Run the command above. The agent writes a node key next to the script.</li>
         <li>Leave it running (or install as a service yourself). The host appears on Fleet.</li>
       </ol>

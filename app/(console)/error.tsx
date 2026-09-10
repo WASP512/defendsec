@@ -5,7 +5,8 @@ export default function ConsoleError({
 }: {
   error: Error & { digest?: string };
 }) {
-  const corrupt = error.name === "StoreCorruptError" || /keel\.json/i.test(error.message);
+  const corrupt =
+    error.name === "StoreCorruptError" || /defendsec\.json/i.test(error.message);
 
   return (
     <div className="mx-auto max-w-xl space-y-3 py-10">
@@ -14,7 +15,7 @@ export default function ConsoleError({
       </h1>
       <p className="text-sm text-muted-foreground">
         {corrupt
-          ? "Keel will not overwrite a corrupt data/keel.json. Restore data/keel.json.bak over that file and reload."
+          ? "DefendSec will not overwrite a corrupt data/defendsec.json. Restore data/defendsec.json.bak over that file and reload."
           : error.message}
       </p>
     </div>
