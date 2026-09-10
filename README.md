@@ -6,6 +6,8 @@ The agent reports versions, pending patches, and hashes of a small file set. The
 
 The in-app [Scope](/scope) page maps what is easy, what is ordinary (OSV/NVD ingest, patch orchestration), and where vendor MDM becomes the wall.
 
+The detailed post–Phase-6 roadmap (Fleet-like ops + Wazuh-like detection, still not MDM) lives in [`docs/NEXT-PHASES.md`](docs/NEXT-PHASES.md).
+
 ## Run the console
 
 ```bash
