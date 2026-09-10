@@ -65,6 +65,11 @@ export function AppShell({
             </Link>
           ))}
         </nav>
+        <form action="/api/logout" method="post">
+          <button type="submit" className="whitespace-nowrap text-xs text-muted-foreground underline">
+            Sign out
+          </button>
+        </form>
       </header>
       <aside className="hidden w-56 shrink-0 border-r lg:flex lg:flex-col">
         <Link href="/" className="flex items-center gap-2 px-5 py-6 text-lg font-semibold">

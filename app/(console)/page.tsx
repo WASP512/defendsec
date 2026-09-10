@@ -5,12 +5,14 @@ import { ensureStore, publicDevice } from "@/lib/store";
 import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 import { isOnline, policySummary } from "@/lib/policies";
 import { allFindings } from "@/lib/advisories";
+import { isReadOnlySession } from "@/lib/auth";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const store = await ensureStore();
+  const readOnly = await isReadOnlySession();
   const fleet = await loadFleet(store.devices);
   const fimEvents = [...(await loadMtlsFimEvents()), ...store.fimEvents];
   const devices = fleet.map(publicDevice);
@@ -39,15 +41,17 @@ export default async function HomePage() {
             subscriptions.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <SampleToggle hasSamples={samples} />
-          <Link
-            href="/enroll"
-            className="inline-flex h-8 items-center rounded-lg bg-primary px-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/80"
-          >
-            Enroll a host
-          </Link>
-        </div>
+        {!readOnly ? (
+          <div className="flex flex-wrap gap-2">
+            <SampleToggle hasSamples={samples} />
+            <Link
+              href="/enroll"
+              className="inline-flex h-8 items-center rounded-lg bg-primary px-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/80"
+            >
+              Enroll a host
+            </Link>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -84,7 +88,7 @@ export default async function HomePage() {
               Integrity events
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-3xl font-semibold">{store.fimEvents.length}</CardContent>
+          <CardContent className="text-3xl font-semibold">{fimEvents.length}</CardContent>
         </Card>
       </div>
       <p className="text-sm text-muted-foreground">

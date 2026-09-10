@@ -24,6 +24,12 @@ func TestLoadOrCreateAndSignCSR(t *testing.T) {
 	if Fingerprint(bundle.CACert) != Fingerprint(again.CACert) {
 		t.Fatal("CA should persist on disk")
 	}
+	if Fingerprint(bundle.ServerCert) == Fingerprint(again.ServerCert) {
+		t.Fatal("server certificate should refresh when requested SANs change")
+	}
+	if err := again.ServerCert.VerifyHostname("other"); err != nil {
+		t.Fatalf("refreshed server certificate does not cover other: %v", err)
+	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

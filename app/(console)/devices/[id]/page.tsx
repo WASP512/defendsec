@@ -163,7 +163,9 @@ export default async function DeviceDetailPage({
                     {finding.advisory.summary}
                   </p>
                 </div>
-                <FindingActions findingKey={finding.key} status={finding.status} />
+                {!readOnly ? (
+                  <FindingActions findingKey={finding.key} status={finding.status} />
+                ) : null}
               </li>
             ))}
           </ul>

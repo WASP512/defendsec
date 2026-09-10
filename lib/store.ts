@@ -320,11 +320,17 @@ export async function acceptFimBaseline(deviceId: string) {
 
 export async function ensureStore() {
   return runExclusive(async () => {
+    const samplesEnabled =
+      process.env.DEFENDSEC_ENABLE_SAMPLE_DATA?.trim().toLowerCase() === "true" ||
+      (process.env.DEFENDSEC_ENABLE_SAMPLE_DATA === undefined &&
+        process.env.NODE_ENV !== "production");
     const data = await readStore();
     if (!data) {
       const created = emptyStore();
-      created.devices = sampleFleet();
-      created.fimEvents = sampleFimEvents(created.devices);
+      if (samplesEnabled) {
+        created.devices = sampleFleet();
+        created.fimEvents = sampleFimEvents(created.devices);
+      }
       await writeStore(created);
       return created;
     }
@@ -333,12 +339,14 @@ export async function ensureStore() {
       samples.length > 0 &&
       samples.every((d) => d.pendingUpdates.length === 0 && d.fim.length === 0);
     const needsSchema = (data.schemaVersion ?? 1) < STORE_SCHEMA_VERSION;
-    if (data.devices.length === 0 || staleSamples || needsSchema) {
+    const needsSamples = samplesEnabled && (data.devices.length === 0 || staleSamples);
+    const removeSamples = !samplesEnabled && samples.length > 0;
+    if (needsSamples || removeSamples || needsSchema) {
       const live = data.devices.filter((d) => !d.sample);
-      data.devices = [...live, ...sampleFleet()];
+      data.devices = samplesEnabled ? [...live, ...sampleFleet()] : live;
       data.fimEvents = [
         ...data.fimEvents.filter((event) => !event.sample),
-        ...sampleFimEvents(data.devices.filter((d) => d.sample)),
+        ...(samplesEnabled ? sampleFimEvents(data.devices.filter((d) => d.sample)) : []),
       ];
       data.schemaVersion = STORE_SCHEMA_VERSION;
       await writeStore(data);

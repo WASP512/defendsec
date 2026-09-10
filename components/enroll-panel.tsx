@@ -14,6 +14,8 @@ export function EnrollPanel({
 }) {
   const [secret, setSecret] = useState(enrollSecret);
   const [copied, setCopied] = useState<"secret" | "install" | "go" | "py" | null>(null);
+  const [rotateError, setRotateError] = useState("");
+  const [rotating, setRotating] = useState(false);
 
   const host = (() => {
     try {
@@ -53,9 +55,20 @@ export function EnrollPanel({
   const pyCommand = `python3 agent/defendsec-agent.py --server ${serverUrl} --enroll-secret ${secret}`;
 
   async function rotate() {
-    const res = await fetch("/api/enroll-secret", { method: "POST" });
-    const data = (await res.json()) as { enrollSecret: string };
-    setSecret(data.enrollSecret);
+    setRotateError("");
+    setRotating(true);
+    try {
+      const res = await fetch("/api/enroll-secret", { method: "POST" });
+      const data = (await res.json()) as { enrollSecret?: string; error?: string };
+      if (!res.ok || !data.enrollSecret) {
+        throw new Error(data.error || `Rotation failed (${res.status})`);
+      }
+      setSecret(data.enrollSecret);
+    } catch (error) {
+      setRotateError(error instanceof Error ? error.message : "Rotation failed");
+    } finally {
+      setRotating(false);
+    }
   }
 
   async function copy(kind: "secret" | "install" | "go" | "py", value: string) {
@@ -74,8 +87,8 @@ export function EnrollPanel({
             <Button type="button" variant="outline" onClick={() => copy("secret", secret)}>
               {copied === "secret" ? "Copied" : "Copy"}
             </Button>
-            <Button type="button" variant="outline" onClick={rotate}>
-              Rotate
+            <Button type="button" variant="outline" disabled={rotating} onClick={rotate}>
+              {rotating ? "Rotating…" : "Rotate"}
             </Button>
           </div>
         </div>
@@ -83,6 +96,7 @@ export function EnrollPanel({
           Anyone with this secret can enroll a host. Rotate it if it leaks; existing agents keep
           their node keys.
         </p>
+        {rotateError ? <p className="text-sm text-destructive">{rotateError}</p> : null}
       </div>
 
       <div className="space-y-2">

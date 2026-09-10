@@ -10,11 +10,13 @@ import { loadFleet } from "@/lib/mtls-agents";
 import { getOsvLastIngest } from "@/lib/meta";
 import { listAlerts } from "@/lib/alerts";
 import { relativeTime } from "@/lib/format";
+import { isReadOnlySession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdvisoriesPage() {
   const store = await ensureStore();
+  const readOnly = await isReadOnlySession();
   const [advisories, osvLastIngest, vulnAlerts] = await Promise.all([
     loadAdvisories(),
     getOsvLastIngest(),
@@ -83,7 +85,9 @@ export default async function AdvisoriesPage() {
                   </p>
                   <p className="text-sm text-muted-foreground">{finding.advisory.summary}</p>
                 </div>
-                <FindingActions findingKey={finding.key} status={finding.status} />
+                {!readOnly ? (
+                  <FindingActions findingKey={finding.key} status={finding.status} />
+                ) : null}
               </li>
             );
           })}

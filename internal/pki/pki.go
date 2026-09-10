@@ -168,7 +168,16 @@ func loadOrCreateServer(dir string, ca *x509.Certificate, caKey *ecdsa.PrivateKe
 	certPath := filepath.Join(dir, "server.pem")
 	keyPath := filepath.Join(dir, "server.key")
 	if cert, key, err := readCertKey(certPath, keyPath); err == nil {
-		return cert, key, nil
+		coversHosts := true
+		for _, host := range hosts {
+			if host != "" && cert.VerifyHostname(host) != nil {
+				coversHosts = false
+				break
+			}
+		}
+		if coversHosts && time.Until(cert.NotAfter) > 30*24*time.Hour {
+			return cert, key, nil
+		}
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
