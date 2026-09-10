@@ -6,7 +6,7 @@
 #
 # Usage:
 #   bash packaging/proxmox/ct/defendsec.sh
-#   CTID=120 HOSTNAME=defendsec bash packaging/proxmox/ct/defendsec.sh
+#   CTID=120 CT_HOSTNAME=defendsec bash packaging/proxmox/ct/defendsec.sh
 #   TEMPLATE_STORAGE=local STORAGE=local-lvm bash packaging/proxmox/ct/defendsec.sh
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
 #
@@ -25,7 +25,18 @@ if ! command -v pct >/dev/null 2>&1; then
 fi
 
 CTID="${CTID:-}"
-HOSTNAME="${HOSTNAME:-defendsec}"
+# bash always sets HOSTNAME to this PVE host's name, so an inherited value that
+# matches the host is not a user choice. CT_HOSTNAME is the explicit override.
+PVE_HOSTNAME_SHORT="$(hostname -s 2>/dev/null || true)"
+PVE_HOSTNAME_FQDN="$(hostname -f 2>/dev/null || true)"
+CT_HOSTNAME="${CT_HOSTNAME:-}"
+if [[ -z "$CT_HOSTNAME" ]]; then
+  if [[ -n "${HOSTNAME:-}" && "$HOSTNAME" != "$PVE_HOSTNAME_SHORT" && "$HOSTNAME" != "$PVE_HOSTNAME_FQDN" ]]; then
+    CT_HOSTNAME="$HOSTNAME"
+  else
+    CT_HOSTNAME="defendsec"
+  fi
+fi
 STORAGE="${STORAGE:-}"
 # LXC templates need directory storage with content=vztmpl (usually "local").
 # CT disks typically live on LVM-thin (local-lvm). Do not reuse STORAGE for pveam.
@@ -58,39 +69,50 @@ pick_ctid() {
   echo "$id"
 }
 
-storage_exists() {
-  local name="$1"
-  pvesm status 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$name"
+storage_names() {
+  pvesm status 2>/dev/null | awk 'NR>1 && $1 != "" && $1 != "Name" {print $1}'
 }
 
+storage_exists() {
+  storage_names | grep -qx "$1"
+}
+
+storage_content_line() {
+  pvesm config "$1" 2>/dev/null \
+    | sed -n 's/^[[:space:]]*content[:]\{0,1\}[[:space:]]\{1,\}//p' \
+    | head -n1
+}
+
+# 0 = supports type, 1 = does not, 2 = storage declares no content types.
 storage_has_content() {
-  local name="$1" want="$2"
-  pvesm config "$name" 2>/dev/null | awk -v w="$want" '
-    $1 == "content" || $1 == "content:" {
-      line = $0
-      sub(/^[[:space:]]*content:[[:space:]]*/, "", line)
-      sub(/^[[:space:]]*content[[:space:]]+/, "", line)
-      n = split(line, a, /[,;[:space:]]+/)
-      for (i = 1; i <= n; i++) if (a[i] == w) found = 1
-    }
-    END { exit found ? 0 : 1 }
-  '
+  local line want="$2" t
+  line="$(storage_content_line "$1")"
+  [[ -n "$line" ]] || return 2
+  for t in ${line//,/ }; do
+    [[ "$t" == "$want" ]] && return 0
+  done
+  return 1
 }
 
 first_storage_with_content() {
   local want="$1" s
+  # Storages that explicitly declare the content type win.
   while read -r s; do
-    [[ -n "$s" ]] || continue
-    echo "$s"
-    return 0
-  done < <(pvesm status --content "$want" 2>/dev/null | awk 'NR>1 && $1!="" && $1!="Name" {print $1}')
-  while read -r s; do
-    [[ -n "$s" ]] || continue
     if storage_has_content "$s" "$want"; then
       echo "$s"
       return 0
     fi
-  done < <(pvesm status 2>/dev/null | awk 'NR>1 && $1!="" && $1!="Name" {print $1}')
+  done < <(storage_names)
+  # Otherwise trust pvesm's own filter, but only for storages that declare none.
+  local rc
+  while read -r s; do
+    rc=0
+    storage_has_content "$s" "$want" || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+      echo "$s"
+      return 0
+    fi
+  done < <(pvesm status --content "$want" 2>/dev/null | awk 'NR>1 && $1 != "" && $1 != "Name" {print $1}')
   return 1
 }
 
@@ -99,10 +121,10 @@ pick_storage() {
     echo "$STORAGE"
     return
   fi
-  # Prefer storages that can hold CT disks (rootdir/images).
+  # Prefer storages that can hold CT disks (rootdir).
   local s
   for s in local-lvm local-zfs local; do
-    if storage_exists "$s" && { storage_has_content "$s" rootdir || storage_has_content "$s" images; }; then
+    if storage_exists "$s" && storage_has_content "$s" rootdir; then
       echo "$s"
       return
     fi
@@ -116,16 +138,14 @@ pick_template_storage() {
     return
   fi
   # pveam download requires content=vztmpl (typically the "local" dir storage).
-  local s
-  for s in local; do
-    if storage_exists "$s" && storage_has_content "$s" vztmpl; then
-      echo "$s"
-      return
-    fi
-  done
+  if storage_exists local && storage_has_content local vztmpl; then
+    echo local
+    return
+  fi
   first_storage_with_content vztmpl || true
 }
 
+# Only the template volid may reach stdout here; the caller captures it.
 ensure_template() {
   local storage="$1"
   local tmpl
@@ -134,12 +154,13 @@ ensure_template() {
     echo "$tmpl"
     return
   fi
-  info "Downloading Debian 12 LXC template to storage ${storage}"
-  pveam update >/dev/null
+  info "Downloading Debian 12 LXC template to storage ${storage}" >&2
+  pveam update >/dev/null 2>&1 || true
   local remote
   remote="$(pveam available -section system 2>/dev/null | awk '/debian-12-standard_.*_amd64\.tar\.(xz|zst)/ {print $2; exit}')"
   [[ -n "$remote" ]] || die "could not find debian-12-standard template in pveam available"
-  pveam download "$storage" "$remote" || die "pveam download failed on ${storage} (set TEMPLATE_STORAGE to a vztmpl storage, usually local)"
+  pveam download "$storage" "$remote" >&2 \
+    || die "pveam download failed on ${storage} (set TEMPLATE_STORAGE to a vztmpl storage, usually local)"
   pveam list "$storage" 2>/dev/null | awk -v r="$remote" '$0 ~ r {print $1; exit}'
 }
 
@@ -149,8 +170,19 @@ STORAGE="$(pick_storage)"
 TEMPLATE_STORAGE="$(pick_template_storage)"
 [[ -n "$TEMPLATE_STORAGE" ]] || die "could not detect a Proxmox template storage (set TEMPLATE_STORAGE=local)"
 
-TEMPLATE="$(ensure_template "$TEMPLATE_STORAGE")"
+check_content_or_die() {
+  local name="$1" want="$2" hint="$3" rc=0
+  storage_has_content "$name" "$want" || rc=$?
+  [[ "$rc" -eq 1 ]] && die "storage '${name}' does not support content type '${want}' — ${hint}"
+  return 0
+}
+check_content_or_die "$STORAGE" rootdir "set STORAGE to a storage that holds CT disks (e.g. local-lvm)"
+check_content_or_die "$TEMPLATE_STORAGE" vztmpl "set TEMPLATE_STORAGE to a template storage (usually local)"
+
+TEMPLATE="$(ensure_template "$TEMPLATE_STORAGE" | tail -n1 | tr -d '\r')"
 [[ -n "$TEMPLATE" ]] || die "Debian 12 template missing on ${TEMPLATE_STORAGE}"
+[[ "$TEMPLATE" == *:vztmpl/* ]] \
+  || die "unexpected template volid from ${TEMPLATE_STORAGE}: ${TEMPLATE}"
 
 if pct status "$CTID" >/dev/null 2>&1; then
   die "CT ${CTID} already exists — pick another CTID=..."
@@ -158,11 +190,11 @@ fi
 
 ROOT_PW="${PASSWORD:-$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-20)}"
 
-info "Creating CT ${CTID} (${HOSTNAME}) disk=${STORAGE} template=${TEMPLATE_STORAGE}"
+info "Creating CT ${CTID} (${CT_HOSTNAME}) disk=${STORAGE} template=${TEMPLATE}"
 CREATE_ARGS=(
   "$CTID"
   "$TEMPLATE"
-  --hostname "$HOSTNAME"
+  --hostname "$CT_HOSTNAME"
   --cores "$CORES"
   --memory "$MEMORY"
   --swap "$SWAP"
@@ -206,13 +238,13 @@ pct exec "$CTID" -- env \
   bash "$TMP_INSTALL" \
   --repo-url "$REPO_URL" \
   --repo-ref "$REPO_REF" \
-  --advertise-hostname "$HOSTNAME"
+  --advertise-hostname "$CT_HOSTNAME"
 
 IP="$(pct exec "$CTID" -- bash -c "hostname -I 2>/dev/null | awk '{print \$1}'" | tr -d '\r')"
 info "DefendSec CT ${CTID} is ready"
 cat <<EOF
 
-Container:  ${CTID} (${HOSTNAME})
+Container:  ${CTID} (${CT_HOSTNAME})
 Root pass:  ${ROOT_PW}
 Console:    http://${IP:-<ct-ip>}:47261
 Enroll TLS: https://${IP:-<ct-ip>}:47262

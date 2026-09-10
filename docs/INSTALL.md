@@ -22,7 +22,7 @@ Optional knobs:
 | Env | Default | Purpose |
 | --- | --- | --- |
 | `CTID` | next free ≥200 | Container ID |
-| `HOSTNAME` | `defendsec` | CT hostname (+ TLS SAN) |
+| `CT_HOSTNAME` | `defendsec` | CT hostname (+ TLS SAN) |
 | `STORAGE` | auto (`rootdir`/`images`) | CT disk storage (often `local-lvm`) |
 | `TEMPLATE_STORAGE` | auto (`vztmpl`) | LXC template storage for `pveam` (usually `local`) |
 | `BRIDGE` | `vmbr0` | Network bridge |
@@ -30,10 +30,16 @@ Optional knobs:
 | `REPO_URL` / `REPO_REF` | this repo / `main` | Source to build |
 | `GH_TOKEN` | unset | Optional; not required for the public repo |
 
-Do **not** point `pveam download` at LVM-thin. Templates need directory storage with content type `vztmpl` (`TEMPLATE_STORAGE`, typically `local`). The CT rootfs uses `STORAGE` (typically `local-lvm`). Override when auto-detect is wrong:
+Do **not** point `pveam download` at LVM-thin. Templates need directory storage with content type `vztmpl` (`TEMPLATE_STORAGE`, typically `local`). The CT rootfs uses `STORAGE`, which must support `rootdir` (typically `local-lvm`). Auto-detect reads content types from `pvesm config` and fails fast with the storage name if the choice cannot hold that content. Override when it picks wrong:
 
 ```bash
 TEMPLATE_STORAGE=local STORAGE=local-lvm CTID=210 bash packaging/proxmox/ct/defendsec.sh
+```
+
+Use `CT_HOSTNAME`, not `HOSTNAME`, to name the container. Bash always sets `HOSTNAME` to the Proxmox host's own name, so the script ignores an inherited value that matches the host:
+
+```bash
+CT_HOSTNAME=defendsec CTID=210 bash packaging/proxmox/ct/defendsec.sh
 ```
 
 The script creates a Debian 12 LXC, then runs `packaging/proxmox/install-server.sh` inside it.
