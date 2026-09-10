@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { setTriage } from "@/lib/store";
+import { storeErrorResponse, unauthorizedIfNotAdmin } from "@/lib/api-auth";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const denied = await unauthorizedIfNotAdmin(request);
+  if (denied) return denied;
   let body: { key?: string; status?: "open" | "acknowledged" };
   try {
     body = await request.json();
@@ -13,6 +16,10 @@ export async function POST(request: Request) {
   if (!body.key || (body.status !== "open" && body.status !== "acknowledged")) {
     return NextResponse.json({ error: "key and status required" }, { status: 400 });
   }
-  const triages = await setTriage(body.key, body.status);
-  return NextResponse.json({ ok: true, triages });
+  try {
+    const triages = await setTriage(body.key, body.status);
+    return NextResponse.json({ ok: true, triages });
+  } catch (error) {
+    return storeErrorResponse(error);
+  }
 }

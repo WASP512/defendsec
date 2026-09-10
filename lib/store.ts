@@ -1,10 +1,18 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { sampleFimEvents, sampleFleet } from "./demo";
 import type { CheckinPayload, Device, FimEvent, StoreData } from "./types";
 
+export class StoreCorruptError extends Error {
+  constructor(message = "Host database is corrupt and was not overwritten") {
+    super(message);
+    this.name = "StoreCorruptError";
+  }
+}
+
 const DATA_PATH = join(process.cwd(), "data", "keel.json");
+const BACKUP_PATH = join(process.cwd(), "data", "keel.json.bak");
 
 let queue: Promise<void> = Promise.resolve();
 
@@ -37,23 +45,37 @@ function normalizeDevice(device: Device): Device {
 
 function normalizeStore(data: StoreData): StoreData {
   return {
-    enrollSecret: data.enrollSecret,
+    enrollSecret: data.enrollSecret || randomBytes(12).toString("hex"),
     devices: (data.devices ?? []).map(normalizeDevice),
     fimEvents: data.fimEvents ?? [],
     triages: data.triages ?? [],
   };
 }
 
-async function readStore(): Promise<StoreData> {
+async function readStore(): Promise<StoreData | null> {
+  let raw: string;
   try {
-    const raw = await readFile(DATA_PATH, "utf8");
+    raw = await readFile(DATA_PATH, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return null;
+    throw new StoreCorruptError(
+      `Could not read ${DATA_PATH}: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
+  }
+  if (!raw.trim()) {
+    throw new StoreCorruptError(`${DATA_PATH} is empty. Restore data/keel.json.bak if you have one.`);
+  }
+  try {
     const parsed = JSON.parse(raw) as StoreData;
-    if (!parsed.enrollSecret || !Array.isArray(parsed.devices)) {
-      return emptyStore();
+    if (!Array.isArray(parsed.devices)) {
+      throw new Error("devices is not an array");
     }
     return normalizeStore(parsed);
-  } catch {
-    return emptyStore();
+  } catch (error) {
+    throw new StoreCorruptError(
+      `${DATA_PATH} is not valid Keel data (${error instanceof Error ? error.message : "parse error"}). Restore data/keel.json.bak; the server will not overwrite this file.`,
+    );
   }
 }
 
@@ -62,6 +84,11 @@ async function writeStore(data: StoreData) {
   const tmp = `${DATA_PATH}.${process.pid}.tmp`;
   await writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
   await rename(tmp, DATA_PATH);
+  try {
+    await copyFile(DATA_PATH, BACKUP_PATH);
+  } catch {
+    // Primary is already durable; backup is best-effort.
+  }
 }
 
 export function publicDevice(device: Device) {
@@ -93,6 +120,7 @@ export function publicDevice(device: Device) {
 export async function rotateEnrollSecret() {
   return runExclusive(async () => {
     const data = await readStore();
+    if (!data) throw new StoreCorruptError("Host database is missing");
     data.enrollSecret = randomBytes(12).toString("hex");
     await writeStore(data);
     return data.enrollSecret;
@@ -101,7 +129,8 @@ export async function rotateEnrollSecret() {
 
 export async function enrollDevice(secret: string, hostname: string) {
   return runExclusive(async () => {
-    const data = await readStore();
+    const existingFile = await readStore();
+    const data = existingFile ?? emptyStore();
     if (secret !== data.enrollSecret) {
       return { ok: false as const, error: "Invalid enroll secret" };
     }
@@ -109,10 +138,14 @@ export async function enrollDevice(secret: string, hostname: string) {
       (d) => d.hostname.toLowerCase() === hostname.toLowerCase() && !d.sample,
     );
     if (existing) {
-      existing.nodeKey = randomBytes(24).toString("hex");
       existing.lastSeen = new Date().toISOString();
       await writeStore(data);
-      return { ok: true as const, nodeKey: existing.nodeKey, deviceId: existing.id };
+      return {
+        ok: true as const,
+        nodeKey: existing.nodeKey,
+        deviceId: existing.id,
+        existing: true as const,
+      };
     }
     const device: Device = {
       id: randomBytes(8).toString("hex"),
@@ -140,7 +173,12 @@ export async function enrollDevice(secret: string, hostname: string) {
     };
     data.devices.push(device);
     await writeStore(data);
-    return { ok: true as const, nodeKey: device.nodeKey, deviceId: device.id };
+    return {
+      ok: true as const,
+      nodeKey: device.nodeKey,
+      deviceId: device.id,
+      existing: false as const,
+    };
   });
 }
 
@@ -169,6 +207,9 @@ function applyFim(data: StoreData, device: Device, incoming: NonNullable<Checkin
 export async function checkin(payload: CheckinPayload) {
   return runExclusive(async () => {
     const data = await readStore();
+    if (!data) {
+      return { ok: false as const, error: "Unknown node key" };
+    }
     const device = data.devices.find((d) => d.nodeKey === payload.nodeKey);
     if (!device) {
       return { ok: false as const, error: "Unknown node key" };
@@ -205,6 +246,7 @@ export async function checkin(payload: CheckinPayload) {
 export async function replaceSampleFleet(devices: Device[]) {
   return runExclusive(async () => {
     const data = await readStore();
+    if (!data) throw new StoreCorruptError("Host database is missing");
     const live = data.devices.filter((d) => !d.sample);
     data.devices = [...live, ...devices];
     data.fimEvents = [
@@ -219,6 +261,7 @@ export async function replaceSampleFleet(devices: Device[]) {
 export async function clearSampleFleet() {
   return runExclusive(async () => {
     const data = await readStore();
+    if (!data) throw new StoreCorruptError("Host database is missing");
     data.devices = data.devices.filter((d) => !d.sample);
     data.fimEvents = data.fimEvents.filter((event) => !event.sample);
     await writeStore(data);
@@ -229,6 +272,7 @@ export async function clearSampleFleet() {
 export async function setTriage(key: string, status: "open" | "acknowledged") {
   return runExclusive(async () => {
     const data = await readStore();
+    if (!data) throw new StoreCorruptError("Host database is missing");
     const rest = data.triages.filter((item) => item.key !== key);
     data.triages = [...rest, { key, status, updatedAt: new Date().toISOString() }];
     await writeStore(data);
@@ -239,6 +283,13 @@ export async function setTriage(key: string, status: "open" | "acknowledged") {
 export async function ensureStore() {
   return runExclusive(async () => {
     const data = await readStore();
+    if (!data) {
+      const created = emptyStore();
+      created.devices = sampleFleet();
+      created.fimEvents = sampleFimEvents(created.devices);
+      await writeStore(created);
+      return created;
+    }
     const samples = data.devices.filter((d) => d.sample);
     const staleSamples =
       samples.length > 0 &&
@@ -250,8 +301,8 @@ export async function ensureStore() {
         ...data.fimEvents.filter((event) => !event.sample),
         ...sampleFimEvents(data.devices.filter((d) => d.sample)),
       ];
+      await writeStore(data);
     }
-    await writeStore(data);
     return data;
   });
 }

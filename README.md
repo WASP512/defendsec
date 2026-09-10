@@ -13,16 +13,19 @@ npm install
 npm run dev
 ```
 
-Open [http://127.0.0.1:47261](http://127.0.0.1:47261). The first visit loads a sample fleet with advisories, patches, and integrity events. Remove those hosts anytime, then enroll real machines.
+Open [http://127.0.0.1:47261](http://127.0.0.1:47261) and sign in.
 
-Production:
+- Development (when `KEEL_ADMIN_TOKEN` is unset): token is `keel-local-admin`, also written to `data/admin-token.txt`.
+- Production: set `KEEL_ADMIN_TOKEN`, or let the first start create a random value in `data/admin-token.txt`.
+
+The console cookie is httpOnly. Agent enroll/check-in do **not** use the admin token: they use the enroll secret and node key only.
+
+Host state is `data/keel.json`. A copy is kept at `data/keel.json.bak` after each successful save. If `keel.json` is corrupt, Keel refuses to overwrite it — restore the `.bak` yourself.
 
 ```bash
 npm run build
 npm start
 ```
-
-Host state is `data/keel.json`. Back it up with the rest of the server.
 
 ## Enroll a host
 
@@ -30,7 +33,7 @@ Host state is `data/keel.json`. Back it up with the rest of the server.
 python3 agent/keel-agent.py --server http://YOUR_SERVER:47261 --enroll-secret SECRET
 ```
 
-Copy the exact command from **Enroll**. Python 3 standard library only. The agent stores a node key beside the script and checks in every 30 seconds.
+Copy the exact command from **Enroll**. Python 3 standard library only. Re-enrolling the same hostname reuses the existing node key so a running agent is not invalidated.
 
 Optional extra integrity paths (OS path separator):
 
@@ -40,6 +43,7 @@ KEEL_FIM_PATHS=/etc/hostname python3 agent/keel-agent.py --server URL --enroll-s
 
 ## What you get
 
+- Admin token for the console (cookie or `Authorization: Bearer`)
 - Host list with online/offline (two-minute window)
 - Software version records across hosts
 - Pending patches (`apt list --upgradable` on Debian/Ubuntu)

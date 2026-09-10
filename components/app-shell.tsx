@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Anchor,
   FileWarning,
@@ -30,6 +30,7 @@ const nav = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
 
   return (
     <div className="flex min-h-full flex-col bg-background lg:flex-row">
@@ -84,9 +85,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <p className="mt-auto px-5 py-6 text-xs leading-relaxed text-muted-foreground">
-          Self-hosted security inventory. No accounts, no premium tiers.
-        </p>
+        <form
+          className="mt-auto px-5 py-6"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+            router.replace("/login");
+            router.refresh();
+          }}
+        >
+          <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+            Self-hosted security inventory. Sign-in token required for the console; agents use
+            enroll secret and node key.
+          </p>
+          <button type="submit" className="text-xs text-muted-foreground underline">
+            Sign out
+          </button>
+        </form>
       </aside>
       <main className="min-w-0 flex-1 px-4 py-6 sm:px-8">{children}</main>
     </div>
