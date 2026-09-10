@@ -104,3 +104,11 @@ Unsigned or wrong-device commands are rejected. Open a host that has an mTLS age
 ```bash
 make test-go
 ```
+
+## Phase 3: inventory over mTLS
+
+`keel-agentd` now collects the same snapshot the Python agent does (packages, apt pending updates, encryption/firewall, FIM hashes) and sends `ReportInventory` over gRPC. The console merges that into Fleet, Versions, Patches, Advisories, Policies, and Integrity.
+
+Python HTTP check-in still works. A host only needs one of the two agents.
+
+The first FIM report is the accepted baseline. Drift is stored in `data/mtls-agents.json` (`fimEvents`). **Accept current as baseline** on an mTLS host calls keel-apid.

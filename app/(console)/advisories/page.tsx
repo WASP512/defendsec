@@ -4,12 +4,13 @@ import { SeverityBadge } from "@/components/status-badge";
 import { FindingActions } from "@/components/finding-actions";
 import { ensureStore } from "@/lib/store";
 import { allFindings, severityRank } from "@/lib/advisories";
+import { loadFleet } from "@/lib/mtls-agents";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdvisoriesPage() {
   const store = await ensureStore();
-  const findings = allFindings(store.devices, store.triages).sort(
+  const findings = allFindings(await loadFleet(store.devices), store.triages).sort(
     (a, b) =>
       severityRank(a.advisory.severity) - severityRank(b.advisory.severity) ||
       a.hostname.localeCompare(b.hostname),

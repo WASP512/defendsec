@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ensureStore } from "@/lib/store";
+import { loadFleet } from "@/lib/mtls-agents";
 import { Badge } from "@/components/ui/badge";
 
 export const dynamic = "force-dynamic";
@@ -7,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function VersionsPage() {
   const store = await ensureStore();
   const byName = new Map<string, { version: string; hostname: string; deviceId: string }[]>();
-  for (const device of store.devices) {
+  for (const device of await loadFleet(store.devices)) {
     for (const item of device.software) {
       const list = byName.get(item.name) ?? [];
       list.push({ version: item.version || "unknown", hostname: device.hostname, deviceId: device.id });

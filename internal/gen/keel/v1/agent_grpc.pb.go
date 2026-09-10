@@ -19,8 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentControl_Heartbeat_FullMethodName = "/keel.v1.AgentControl/Heartbeat"
-	AgentControl_Connect_FullMethodName   = "/keel.v1.AgentControl/Connect"
+	AgentControl_Heartbeat_FullMethodName       = "/keel.v1.AgentControl/Heartbeat"
+	AgentControl_ReportInventory_FullMethodName = "/keel.v1.AgentControl/ReportInventory"
+	AgentControl_Connect_FullMethodName         = "/keel.v1.AgentControl/Connect"
 )
 
 // AgentControlClient is the client API for AgentControl service.
@@ -28,6 +29,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AgentControlClient interface {
 	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
+	ReportInventory(ctx context.Context, in *InventoryReport, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 	Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentToServer, ServerToAgent], error)
 }
 
@@ -43,6 +45,16 @@ func (c *agentControlClient) Heartbeat(ctx context.Context, in *HeartbeatRequest
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HeartbeatResponse)
 	err := c.cc.Invoke(ctx, AgentControl_Heartbeat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentControlClient) ReportInventory(ctx context.Context, in *InventoryReport, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HeartbeatResponse)
+	err := c.cc.Invoke(ctx, AgentControl_ReportInventory_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +79,7 @@ type AgentControl_ConnectClient = grpc.BidiStreamingClient[AgentToServer, Server
 // for forward compatibility.
 type AgentControlServer interface {
 	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
+	ReportInventory(context.Context, *InventoryReport) (*HeartbeatResponse, error)
 	Connect(grpc.BidiStreamingServer[AgentToServer, ServerToAgent]) error
 	mustEmbedUnimplementedAgentControlServer()
 }
@@ -80,6 +93,9 @@ type UnimplementedAgentControlServer struct{}
 
 func (UnimplementedAgentControlServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Heartbeat not implemented")
+}
+func (UnimplementedAgentControlServer) ReportInventory(context.Context, *InventoryReport) (*HeartbeatResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReportInventory not implemented")
 }
 func (UnimplementedAgentControlServer) Connect(grpc.BidiStreamingServer[AgentToServer, ServerToAgent]) error {
 	return status.Errorf(codes.Unimplemented, "method Connect not implemented")
@@ -123,6 +139,24 @@ func _AgentControl_Heartbeat_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentControl_ReportInventory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InventoryReport)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentControlServer).ReportInventory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentControl_ReportInventory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentControlServer).ReportInventory(ctx, req.(*InventoryReport))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _AgentControl_Connect_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(AgentControlServer).Connect(&grpc.GenericServerStream[AgentToServer, ServerToAgent]{ServerStream: stream})
 }
@@ -140,6 +174,10 @@ var AgentControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Heartbeat",
 			Handler:    _AgentControl_Heartbeat_Handler,
+		},
+		{
+			MethodName: "ReportInventory",
+			Handler:    _AgentControl_ReportInventory_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

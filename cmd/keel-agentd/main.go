@@ -31,10 +31,11 @@ import (
 
 	"keel/internal/agentcmd"
 	keelv1 "keel/internal/gen/keel/v1"
+	"keel/internal/hostinv"
 	"keel/internal/sign"
 )
 
-const agentVersion = "0.2.0-phase2"
+const agentVersion = "0.3.0-phase3"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -99,6 +100,7 @@ func run(log *slog.Logger) error {
 	defer stop()
 
 	go runStream(ctx, log, client, pub, deviceID, *stateDir)
+	go runInventory(ctx, log, client, *stateDir)
 	runHeartbeats(ctx, log, client, *heartbeatEvery, *stateDir)
 	return nil
 }
@@ -360,6 +362,77 @@ func heartbeat(stateDir string) *keelv1.HeartbeatRequest {
 		UptimeSeconds: 0,
 		Isolated:      agentcmd.LoadState(stateDir).Isolated,
 	}
+}
+
+func runInventory(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient, stateDir string) {
+	send := func() {
+		snap := hostinv.Collect()
+		hctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		_, err := client.ReportInventory(hctx, inventoryReport(snap, stateDir))
+		if err != nil {
+			log.Warn("inventory", "err", err)
+			return
+		}
+		log.Info("inventory ok", "software", len(snap.Software), "fim", len(snap.Fim), "patches", len(snap.PendingUpdates))
+	}
+	send()
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			send()
+		}
+	}
+}
+
+func inventoryReport(snap hostinv.Snapshot, stateDir string) *keelv1.InventoryReport {
+	enc, fw := int32(0), int32(0)
+	if snap.DiskEncryption != nil {
+		if *snap.DiskEncryption {
+			enc = 2
+		} else {
+			enc = 1
+		}
+	}
+	if snap.Firewall != nil {
+		if *snap.Firewall {
+			fw = 2
+		} else {
+			fw = 1
+		}
+	}
+	rep := &keelv1.InventoryReport{
+		Host:           heartbeat(stateDir),
+		Serial:         snap.Serial,
+		HardwareModel:  snap.HardwareModel,
+		Cpu:            snap.CPU,
+		MemoryMb:       snap.MemoryMb,
+		DiskEncryption: enc,
+		Firewall:       fw,
+		IpAddresses:    snap.IPAddresses,
+		Username:       snap.Username,
+		PatchInventory: snap.PatchInventory,
+	}
+	rep.Host.Hostname = snap.Hostname
+	rep.Host.OsName = snap.OSName
+	rep.Host.OsVersion = snap.OSVersion
+	rep.Host.Arch = snap.Arch
+	rep.Host.Platform = snap.Platform
+	rep.Host.UptimeSeconds = snap.UptimeSeconds
+	for _, item := range snap.Software {
+		rep.Software = append(rep.Software, &keelv1.SoftwareItem{Name: item.Name, Version: item.Version})
+	}
+	for _, item := range snap.PendingUpdates {
+		rep.PendingUpdates = append(rep.PendingUpdates, &keelv1.PendingUpdate{Name: item.Name, Current: item.Current, Available: item.Available})
+	}
+	for _, item := range snap.Fim {
+		rep.Fim = append(rep.Fim, &keelv1.FimFile{Path: item.Path, Sha256: item.SHA256, Size: item.Size, Mtime: item.Mtime})
+	}
+	return rep
 }
 
 func ensureControlPub(log *slog.Logger, httpBase, serverName, stateDir string) error {

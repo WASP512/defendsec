@@ -1,12 +1,14 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ensureStore } from "@/lib/store";
 import { policySummary } from "@/lib/policies";
+import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 
 export const dynamic = "force-dynamic";
 
 export default async function PoliciesPage() {
   const store = await ensureStore();
-  const policies = policySummary(store.devices, store.fimEvents, store.triages);
+  const fleet = await loadFleet(store.devices);
+  const policies = policySummary(fleet, [...(await loadMtlsFimEvents()), ...store.fimEvents], store.triages);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -17,7 +19,7 @@ export default async function PoliciesPage() {
           cannot remediate — they only report what the agent sent.
         </p>
       </div>
-      {store.devices.length === 0 ? (
+      {fleet.length === 0 ? (
         <p className="rounded-xl border border-dashed p-10 text-center text-muted-foreground">
           Enroll a host or load the sample fleet to see policy results.
         </p>

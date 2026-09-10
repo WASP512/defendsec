@@ -20,6 +20,36 @@ type issueRequest struct {
 	Payload  json.RawMessage `json:"payload"`
 }
 
+func (s *Server) HandleBaseline(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.adminOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	defer r.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	if err != nil {
+		http.Error(w, "read body", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		DeviceID string `json:"deviceId"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || strings.TrimSpace(req.DeviceID) == "" {
+		http.Error(w, "deviceId required", http.StatusBadRequest)
+		return
+	}
+	if !s.store.AcceptBaseline(strings.TrimSpace(req.DeviceID)) {
+		http.Error(w, "unknown mTLS device", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"ok":true}`))
+}
+
 func (s *Server) HandleControlPub(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/x-pem-file")
 	_, _ = w.Write(s.signer.PublicPEM())

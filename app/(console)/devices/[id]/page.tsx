@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { PolicyBadge, OnlineBadge, SeverityBadge } from "@/components/status-badge";
 import { FindingActions } from "@/components/finding-actions";
 import { ensureStore } from "@/lib/store";
-import { loadMtlsDevices, mergeDevices } from "@/lib/mtls-agents";
+import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 import { evaluateDevice, fimDriftPaths, isOnline } from "@/lib/policies";
 import { findingsForDevice } from "@/lib/advisories";
 import {
@@ -27,13 +27,16 @@ export default async function DeviceDetailPage({
 }) {
   const { id } = await params;
   const store = await ensureStore();
-  const device = mergeDevices(store.devices, await loadMtlsDevices()).find((d) => d.id === id);
+  const device = (await loadFleet(store.devices)).find((d) => d.id === id || d.mtlsDeviceId === id);
   if (!device) notFound();
-  const policies = evaluateDevice(device, store.fimEvents, store.triages);
+  const mtlsId = device.mtlsDeviceId || "";
+  const fimEvents = [...(await loadMtlsFimEvents()), ...store.fimEvents];
+  const policies = evaluateDevice(device, fimEvents, store.triages);
   const findings = findingsForDevice(device, store.triages);
   const drifts = fimDriftPaths(device);
-  const events = store.fimEvents.filter((event) => event.deviceId === device.id);
-  const mtlsId = device.mtlsDeviceId || "";
+  const events = fimEvents.filter(
+    (event) => event.deviceId === device.id || (mtlsId && event.deviceId === mtlsId),
+  );
   const commandLog = mtlsId ? await loadCommands(mtlsId) : [];
 
   const facts = [
@@ -165,7 +168,7 @@ export default async function DeviceDetailPage({
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">File integrity</h2>
-          {drifts.length > 0 ? <AcceptBaseline deviceId={device.id} /> : null}
+          {drifts.length > 0 ? <AcceptBaseline deviceId={mtlsId || device.id} /> : null}
         </div>
         {device.fim.length === 0 && device.fimBaseline.length === 0 ? (
           <p className="text-sm text-muted-foreground">No watched paths reported.</p>

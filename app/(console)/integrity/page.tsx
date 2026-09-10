@@ -1,12 +1,15 @@
 import Link from "next/link";
 import { ensureStore } from "@/lib/store";
 import { relativeTime } from "@/lib/format";
+import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 
 export const dynamic = "force-dynamic";
 
 export default async function IntegrityPage() {
   const store = await ensureStore();
-  const watched = store.devices.reduce((n, d) => n + d.fim.length, 0);
+  const fleet = await loadFleet(store.devices);
+  const events = [...(await loadMtlsFimEvents()), ...store.fimEvents];
+  const watched = fleet.reduce((n, d) => n + d.fim.length, 0);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -18,14 +21,14 @@ export default async function IntegrityPage() {
           log; {watched} path{watched === 1 ? "" : "s"} are currently reported.
         </p>
       </div>
-      {store.fimEvents.length === 0 ? (
+      {events.length === 0 ? (
         <p className="rounded-xl border border-dashed p-10 text-center text-muted-foreground">
           No integrity drift recorded. Enroll a host and change a watched file to generate an
           event.
         </p>
       ) : (
         <ul className="divide-y rounded-xl border">
-          {store.fimEvents.map((event) => (
+          {events.map((event) => (
             <li key={event.id} className="space-y-1 px-4 py-4">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <p className="font-medium">{event.path}</p>

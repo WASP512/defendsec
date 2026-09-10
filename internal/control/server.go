@@ -164,6 +164,68 @@ func (s *Server) Heartbeat(ctx context.Context, req *keelv1.HeartbeatRequest) (*
 	return &keelv1.HeartbeatResponse{Ok: true, ServerTimeUnix: time.Now().Unix()}, nil
 }
 
+func (s *Server) ReportInventory(ctx context.Context, req *keelv1.InventoryReport) (*keelv1.HeartbeatResponse, error) {
+	id, fp, err := peerIdentity(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, err.Error())
+	}
+	host := req.GetHost()
+	dev := presence.Device{
+		ID:              id,
+		Hostname:        host.GetHostname(),
+		Platform:        host.GetPlatform(),
+		OSName:          host.GetOsName(),
+		OSVersion:       host.GetOsVersion(),
+		Arch:            host.GetArch(),
+		UptimeSeconds:   host.GetUptimeSeconds(),
+		LastSeen:        time.Now().UTC().Format(time.RFC3339),
+		Connected:       true,
+		CertFingerprint: fp,
+		Transport:       "mtls-grpc",
+		Isolated:        host.GetIsolated(),
+		Serial:          req.GetSerial(),
+		HardwareModel:   req.GetHardwareModel(),
+		CPU:             req.GetCpu(),
+		MemoryMb:        req.GetMemoryMb(),
+		DiskEncryption:  triBool(req.GetDiskEncryption()),
+		Firewall:        triBool(req.GetFirewall()),
+		IPAddresses:     req.GetIpAddresses(),
+		Username:        req.GetUsername(),
+		PatchInventory:  req.GetPatchInventory(),
+	}
+	for _, item := range req.GetSoftware() {
+		dev.Software = append(dev.Software, presence.Software{Name: item.GetName(), Version: item.GetVersion()})
+	}
+	for _, item := range req.GetPendingUpdates() {
+		dev.PendingUpdates = append(dev.PendingUpdates, presence.Update{
+			Name: item.GetName(), Current: item.GetCurrent(), Available: item.GetAvailable(),
+		})
+	}
+	for _, item := range req.GetFim() {
+		dev.Fim = append(dev.Fim, presence.FimFile{
+			Path: item.GetPath(), SHA256: item.GetSha256(), Size: item.GetSize(), Mtime: item.GetMtime(),
+		})
+	}
+	if err := s.store.ApplyInventory(dev); err != nil {
+		s.log.Error("inventory", "err", err)
+		return nil, status.Error(codes.Internal, "inventory")
+	}
+	return &keelv1.HeartbeatResponse{Ok: true, ServerTimeUnix: time.Now().Unix()}, nil
+}
+
+func triBool(v int32) *bool {
+	switch v {
+	case 2:
+		t := true
+		return &t
+	case 1:
+		t := false
+		return &t
+	default:
+		return nil
+	}
+}
+
 func (s *Server) Connect(stream keelv1.AgentControl_ConnectServer) error {
 	id, fp, err := peerIdentity(stream.Context())
 	if err != nil {

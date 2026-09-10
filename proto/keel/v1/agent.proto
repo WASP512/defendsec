@@ -6,6 +6,7 @@ option go_package = "keel/internal/gen/keel/v1;keelv1";
 
 service AgentControl {
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc ReportInventory(InventoryReport) returns (HeartbeatResponse);
   rpc Connect(stream AgentToServer) returns (stream ServerToAgent);
 }
 
@@ -22,6 +23,41 @@ message HeartbeatRequest {
 message HeartbeatResponse {
   bool ok = 1;
   int64 server_time_unix = 2;
+}
+
+message SoftwareItem {
+  string name = 1;
+  string version = 2;
+}
+
+message PendingUpdate {
+  string name = 1;
+  string current = 2;
+  string available = 3;
+}
+
+message FimFile {
+  string path = 1;
+  string sha256 = 2;
+  int64 size = 3;
+  string mtime = 4;
+}
+
+message InventoryReport {
+  HeartbeatRequest host = 1;
+  string serial = 2;
+  string hardware_model = 3;
+  string cpu = 4;
+  int64 memory_mb = 5;
+  // 0 unknown, 1 false, 2 true
+  int32 disk_encryption = 6;
+  int32 firewall = 7;
+  repeated string ip_addresses = 8;
+  string username = 9;
+  repeated SoftwareItem software = 10;
+  repeated PendingUpdate pending_updates = 11;
+  string patch_inventory = 12;
+  repeated FimFile fim = 13;
 }
 
 message Hello {

@@ -1,6 +1,8 @@
 package presence
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,19 +10,60 @@ import (
 	"time"
 )
 
+type Software struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+type Update struct {
+	Name      string `json:"name"`
+	Current   string `json:"current"`
+	Available string `json:"available"`
+}
+
+type FimFile struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+	Mtime  string `json:"mtime"`
+}
+
+type FimEvent struct {
+	ID         string `json:"id"`
+	DeviceID   string `json:"deviceId"`
+	Hostname   string `json:"hostname"`
+	Path       string `json:"path"`
+	Previous   string `json:"previous"`
+	Current    string `json:"current"`
+	DetectedAt string `json:"detectedAt"`
+}
+
 type Device struct {
-	ID              string `json:"id"`
-	Hostname        string `json:"hostname"`
-	Platform        string `json:"platform"`
-	OSName          string `json:"osName"`
-	OSVersion       string `json:"osVersion"`
-	Arch            string `json:"arch"`
-	UptimeSeconds   int64  `json:"uptimeSeconds"`
-	LastSeen        string `json:"lastSeen"`
-	Connected       bool   `json:"connected"`
-	CertFingerprint string `json:"certFingerprint"`
-	Transport       string `json:"transport"`
-	Isolated        bool   `json:"isolated"`
+	ID              string     `json:"id"`
+	Hostname        string     `json:"hostname"`
+	Platform        string     `json:"platform"`
+	OSName          string     `json:"osName"`
+	OSVersion       string     `json:"osVersion"`
+	Arch            string     `json:"arch"`
+	UptimeSeconds   int64      `json:"uptimeSeconds"`
+	LastSeen        string     `json:"lastSeen"`
+	Connected       bool       `json:"connected"`
+	CertFingerprint string     `json:"certFingerprint"`
+	Transport       string     `json:"transport"`
+	Isolated        bool       `json:"isolated"`
+	Serial          string     `json:"serial,omitempty"`
+	HardwareModel   string     `json:"hardwareModel,omitempty"`
+	CPU             string     `json:"cpu,omitempty"`
+	MemoryMb        int64      `json:"memoryMb,omitempty"`
+	DiskEncryption  *bool      `json:"diskEncryption"`
+	Firewall        *bool      `json:"firewall"`
+	IPAddresses     []string   `json:"ipAddresses,omitempty"`
+	Username        string     `json:"username,omitempty"`
+	Software        []Software `json:"software,omitempty"`
+	PendingUpdates  []Update   `json:"pendingUpdates,omitempty"`
+	PatchInventory  string     `json:"patchInventory,omitempty"`
+	Fim             []FimFile  `json:"fim,omitempty"`
+	FimBaseline     []FimFile  `json:"fimBaseline,omitempty"`
 }
 
 type File struct {
@@ -29,8 +72,9 @@ type File struct {
 }
 
 type snapshot struct {
-	UpdatedAt string   `json:"updatedAt"`
-	Devices   []Device `json:"devices"`
+	UpdatedAt string     `json:"updatedAt"`
+	Devices   []Device   `json:"devices"`
+	FimEvents []FimEvent `json:"fimEvents"`
 }
 
 func New(path string) *File {
@@ -47,7 +91,7 @@ func (f *File) Upsert(dev Device) error {
 	found := false
 	for i, existing := range doc.Devices {
 		if existing.ID == dev.ID {
-			doc.Devices[i] = dev
+			doc.Devices[i] = mergeHeartbeat(existing, dev)
 			found = true
 			break
 		}
@@ -57,6 +101,122 @@ func (f *File) Upsert(dev Device) error {
 	}
 	doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	return f.write(doc)
+}
+
+func mergeHeartbeat(old, neu Device) Device {
+	out := old
+	if neu.Hostname != "" {
+		out.Hostname = neu.Hostname
+	}
+	if neu.Platform != "" {
+		out.Platform = neu.Platform
+	}
+	if neu.OSName != "" {
+		out.OSName = neu.OSName
+	}
+	if neu.OSVersion != "" {
+		out.OSVersion = neu.OSVersion
+	}
+	if neu.Arch != "" {
+		out.Arch = neu.Arch
+	}
+	out.UptimeSeconds = neu.UptimeSeconds
+	if neu.UptimeSeconds == 0 && old.UptimeSeconds != 0 {
+		out.UptimeSeconds = old.UptimeSeconds
+	}
+	out.LastSeen = neu.LastSeen
+	out.Connected = neu.Connected
+	out.Isolated = neu.Isolated
+	if neu.CertFingerprint != "" {
+		out.CertFingerprint = neu.CertFingerprint
+	}
+	if neu.Transport != "" {
+		out.Transport = neu.Transport
+	}
+	return out
+}
+
+func (f *File) ApplyInventory(dev Device) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return err
+	}
+	idx := -1
+	var old Device
+	for i, existing := range doc.Devices {
+		if existing.ID == dev.ID {
+			idx = i
+			old = existing
+			break
+		}
+	}
+	merged := mergeHeartbeat(old, dev)
+	merged.ID = dev.ID
+	merged.Serial = dev.Serial
+	merged.HardwareModel = dev.HardwareModel
+	merged.CPU = dev.CPU
+	merged.MemoryMb = dev.MemoryMb
+	merged.DiskEncryption = dev.DiskEncryption
+	merged.Firewall = dev.Firewall
+	merged.IPAddresses = dev.IPAddresses
+	merged.Username = dev.Username
+	merged.Software = dev.Software
+	merged.PendingUpdates = dev.PendingUpdates
+	merged.PatchInventory = dev.PatchInventory
+	if len(old.FimBaseline) == 0 && len(dev.Fim) > 0 {
+		merged.FimBaseline = copyFim(dev.Fim)
+	} else {
+		merged.FimBaseline = old.FimBaseline
+	}
+	prev := map[string]string{}
+	for _, file := range old.Fim {
+		prev[file.Path] = file.SHA256
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, file := range dev.Fim {
+		if last, ok := prev[file.Path]; ok && last != file.SHA256 {
+			doc.FimEvents = append([]FimEvent{{
+				ID:         newID(),
+				DeviceID:   dev.ID,
+				Hostname:   merged.Hostname,
+				Path:       file.Path,
+				Previous:   last,
+				Current:    file.SHA256,
+				DetectedAt: now,
+			}}, doc.FimEvents...)
+		}
+	}
+	if len(doc.FimEvents) > 200 {
+		doc.FimEvents = doc.FimEvents[:200]
+	}
+	merged.Fim = dev.Fim
+	if idx >= 0 {
+		doc.Devices[idx] = merged
+	} else {
+		doc.Devices = append(doc.Devices, merged)
+	}
+	doc.UpdatedAt = now
+	return f.write(doc)
+}
+
+func (f *File) AcceptBaseline(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return false
+	}
+	for i, existing := range doc.Devices {
+		if existing.ID == id {
+			doc.Devices[i].FimBaseline = copyFim(existing.Fim)
+			doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			_ = f.write(doc)
+			return true
+		}
+	}
+	return false
 }
 
 func (f *File) Get(id string) (Device, bool) {
@@ -84,9 +244,7 @@ func (f *File) SetConnected(id string, connected bool) error {
 	for i, existing := range doc.Devices {
 		if existing.ID == id {
 			doc.Devices[i].Connected = connected
-			if !connected {
-				break
-			}
+			break
 		}
 	}
 	doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -110,11 +268,23 @@ func (f *File) SetIsolated(id string, isolated bool) error {
 	return f.write(doc)
 }
 
+func copyFim(in []FimFile) []FimFile {
+	out := make([]FimFile, len(in))
+	copy(out, in)
+	return out
+}
+
+func newID() string {
+	var b [6]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
 func (f *File) read() (snapshot, error) {
 	raw, err := os.ReadFile(f.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return snapshot{Devices: []Device{}}, nil
+			return snapshot{Devices: []Device{}, FimEvents: []FimEvent{}}, nil
 		}
 		return snapshot{}, err
 	}
@@ -124,6 +294,9 @@ func (f *File) read() (snapshot, error) {
 	}
 	if doc.Devices == nil {
 		doc.Devices = []Device{}
+	}
+	if doc.FimEvents == nil {
+		doc.FimEvents = []FimEvent{}
 	}
 	return doc, nil
 }

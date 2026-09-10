@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DeviceTable } from "@/components/device-table";
 import { SampleToggle } from "@/components/sample-toggle";
 import { ensureStore, publicDevice } from "@/lib/store";
-import { loadMtlsDevices, mergeDevices } from "@/lib/mtls-agents";
+import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 import { isOnline, policySummary } from "@/lib/policies";
 import { allFindings } from "@/lib/advisories";
 import Link from "next/link";
@@ -11,21 +11,22 @@ export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const store = await ensureStore();
-  const fleet = mergeDevices(store.devices, await loadMtlsDevices());
+  const fleet = await loadFleet(store.devices);
+  const fimEvents = [...(await loadMtlsFimEvents()), ...store.fimEvents];
   const devices = fleet.map(publicDevice);
   const online = fleet.filter((d) => isOnline(d)).length;
-  const failing = policySummary(store.devices, store.fimEvents, store.triages).reduce(
+  const failing = policySummary(fleet, fimEvents, store.triages).reduce(
     (n, p) => n + p.failing,
     0,
   );
   const samples = store.devices.some((d) => d.sample);
-  const findings = allFindings(store.devices, store.triages);
+  const findings = allFindings(fleet, store.triages);
   const serious = findings.filter(
     (f) =>
       f.status === "open" &&
       (f.advisory.severity === "critical" || f.advisory.severity === "high"),
   ).length;
-  const patches = store.devices.reduce((n, d) => n + d.pendingUpdates.length, 0);
+  const patches = fleet.reduce((n, d) => n + d.pendingUpdates.length, 0);
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">

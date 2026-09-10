@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { ensureStore } from "@/lib/store";
+import { loadFleet } from "@/lib/mtls-agents";
 
 export const dynamic = "force-dynamic";
 
 export default async function PatchesPage() {
   const store = await ensureStore();
-  const rows = store.devices.flatMap((device) =>
+  const rows = (await loadFleet(store.devices)).flatMap((device) =>
     device.pendingUpdates.map((item) => ({ device, item })),
   );
 
