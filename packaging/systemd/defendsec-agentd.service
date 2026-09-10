@@ -1,6 +1,6 @@
 [Unit]
 Description=DefendSec mTLS host agent
-After=network-online.target defendsec-apid.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]

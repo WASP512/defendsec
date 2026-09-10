@@ -43,9 +43,9 @@ STORAGE="${STORAGE:-}"
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-}"
 BRIDGE="${BRIDGE:-vmbr0}"
 CORES="${CORES:-2}"
-MEMORY="${MEMORY:-2048}"
+MEMORY="${MEMORY:-4096}"
 SWAP="${SWAP:-512}"
-DISK="${DISK:-16}"
+DISK="${DISK:-24}"
 UNPRIVILEGED="${UNPRIVILEGED:-1}"
 REPO_URL="${REPO_URL:-https://github.com/WASP512/defendsec.git}"
 REPO_REF="${REPO_REF:-main}"
@@ -129,7 +129,7 @@ pick_storage() {
       return
     fi
   done
-  first_storage_with_content rootdir || first_storage_with_content images || true
+  first_storage_with_content rootdir || true
 }
 
 pick_template_storage() {
@@ -295,9 +295,8 @@ Console:    http://${IP:-<ct-ip>}:47261
 Enroll TLS: https://${IP:-<ct-ip>}:47262
 gRPC:       ${IP:-<ct-ip>}:47263
 
-Open the console, sign in with the admin token printed by the installer
-(or /var/lib/defendsec/admin-token.txt inside the CT), then enroll agents
-with the separate agent install one-liner from docs/INSTALL.md / Enroll page.
+Admin token: pct exec ${CTID} -- cat /var/lib/defendsec/admin-token.txt
+Sign in, then copy the separate agent command from the Enroll page.
 
 Enter CT:   pct enter ${CTID}
 EOF

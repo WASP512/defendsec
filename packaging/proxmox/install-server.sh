@@ -35,6 +35,7 @@ ADVERTISE_HOSTNAME="${ADVERTISE_HOSTNAME:-}"
 PG_PASSWORD="${PG_PASSWORD:-}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 ENROLL_SECRET="${ENROLL_SECRET:-}"
+VIEWER_TOKEN="${VIEWER_TOKEN:-}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 # native = system postgresql (default, works in Proxmox LXC). docker = optional.
 POSTGRES_MODE="${POSTGRES_MODE:-native}"
@@ -56,10 +57,23 @@ while [[ $# -gt 0 ]]; do
     --advertise-hostname) ADVERTISE_HOSTNAME="$2"; shift 2 ;;
     --pg-password) PG_PASSWORD="$2"; shift 2 ;;
     --admin-token) ADMIN_TOKEN="$2"; shift 2 ;;
+    --viewer-token) VIEWER_TOKEN="$2"; shift 2 ;;
     --postgres) POSTGRES_MODE="$2"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     -h|--help)
-      sed -n '1,22p' "$0"
+      cat <<'EOF'
+Usage: install-server.sh [options]
+  --repo-url URL             source repository
+  --repo-ref REF             source branch/tag (default: main)
+  --install-root PATH        source/build directory (default: /opt/defendsec)
+  --data-dir PATH            state directory (default: /var/lib/defendsec)
+  --advertise-hostname NAME  TLS hostname/SAN
+  --pg-password PASSWORD     set Postgres password (preserved on rerun)
+  --admin-token TOKEN        set console admin token (preserved on rerun)
+  --viewer-token TOKEN       enable a read-only viewer token
+  --postgres native|docker   Postgres mode (default: native)
+  --skip-build               use existing prebuilt bin/ and .next/ artifacts
+EOF
       exit 0
       ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -91,6 +105,17 @@ case "$ARCH" in
   aarch64|arm64) GOARCH=arm64 ;;
   *) die "unsupported architecture: $ARCH" ;;
 esac
+
+if [[ -z "$ADMIN_TOKEN" && -s "${DATA_DIR}/admin-token.txt" ]]; then
+  ADMIN_TOKEN="$(tr -d '\r\n' <"${DATA_DIR}/admin-token.txt")"
+fi
+if [[ -z "$PG_PASSWORD" && -r /etc/defendsec/apid.env ]]; then
+  PG_PASSWORD="$(sed -n 's|^DEFENDSEC_DATABASE_URL=postgres://defendsec:\([^@]*\)@.*|\1|p' \
+    /etc/defendsec/apid.env | head -n1)"
+fi
+if [[ -z "$VIEWER_TOKEN" && -r /etc/defendsec/apid.env ]]; then
+  VIEWER_TOKEN="$(sed -n 's/^DEFENDSEC_VIEWER_TOKEN=//p' /etc/defendsec/apid.env | head -n1)"
+fi
 
 if [[ -z "$PG_PASSWORD" ]]; then
   PG_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)"
@@ -326,6 +351,7 @@ clone_or_update_repo() {
     fi
     git -C "$INSTALL_ROOT" fetch --depth 1 origin "$REPO_REF"
     git -C "$INSTALL_ROOT" checkout -B "$REPO_REF" "FETCH_HEAD"
+    git -C "$INSTALL_ROOT" remote set-url origin "$REPO_URL"
   else
     rm -rf "$INSTALL_ROOT"
     git clone --depth 1 --branch "$REPO_REF" "$auth_url" "$INSTALL_ROOT"
@@ -348,12 +374,15 @@ start_postgres_native() {
       ;;
   esac
 
+  local postgres_ready=0
   for _ in $(seq 1 30); do
     if su -s /bin/bash postgres -c "cd /tmp && psql -tAc 'SELECT 1'" >/dev/null 2>&1; then
+      postgres_ready=1
       break
     fi
     sleep 1
   done
+  [[ "$postgres_ready" -eq 1 ]] || die "Postgres did not become ready within 30 seconds"
 
   local esc
   esc="$(printf "%s" "$PG_PASSWORD" | sed "s/'/''/g")"
@@ -503,6 +532,7 @@ DEFENDSEC_DATABASE_URL=${db_url}
 DEFENDSEC_TLS_HOSTNAME=${TLS_HOSTS}
 DEFENDSEC_ADMIN_TOKEN=${ADMIN_TOKEN}
 DEFENDSEC_ENROLL_SECRET=${ENROLL_SECRET}
+DEFENDSEC_VIEWER_TOKEN=${VIEWER_TOKEN}
 EOF
   chmod 640 /etc/defendsec/apid.env
   chown root:defendsec /etc/defendsec/apid.env
@@ -514,6 +544,7 @@ HOSTNAME=0.0.0.0
 DATABASE_URL=${db_url}
 DEFENDSEC_DATABASE_URL=${db_url}
 DEFENDSEC_ADMIN_TOKEN=${ADMIN_TOKEN}
+DEFENDSEC_VIEWER_TOKEN=${VIEWER_TOKEN}
 DEFENDSEC_APID_ADMIN=http://127.0.0.1:47264
 DEFENDSEC_DOWNLOADS_DIR=${DOWNLOADS_DIR}
 DEFENDSEC_DATA_DIR=${DATA_DIR}
@@ -586,7 +617,7 @@ EOF
     cat >/etc/systemd/system/defendsec-apid.service.d/postgres.conf <<EOF
 [Unit]
 After=postgresql.service
-Wants=postgresql.service
+Requires=postgresql.service
 EOF
   fi
 
@@ -635,19 +666,13 @@ DefendSec server install complete.
   Console:     http://${host}:47261
   Enroll TLS:  https://${host}:47262
   gRPC:        ${host}:47263
-  Admin token: ${ADMIN_TOKEN}
-  Postgres:    user=defendsec  password=${PG_PASSWORD}  (127.0.0.1 only, mode=${POSTGRES_MODE})
+  Admin token: ${DATA_DIR}/admin-token.txt
+  Postgres:    user=defendsec (127.0.0.1 only, mode=${POSTGRES_MODE})
+               credentials: /etc/defendsec/apid.env
 
-  Enroll secret: ${ENROLL_SECRET}
+  Enroll secret: ${DATA_DIR}/defendsec.json
 
-Agent install (separate download — run on each host):
-
-  curl -fsSL "http://${host}:47261/downloads/install-agent.sh" | sudo bash -s -- \\
-    --server-http "https://${host}:47262" \\
-    --server-grpc "${host}:47263" \\
-    --tls-server-name "${ADVERTISE_HOSTNAME}" \\
-    --enroll-secret "${ENROLL_SECRET}" \\
-    --download-base "http://${host}:47261/downloads"
+Open the console with the admin token, then copy the agent command from Enroll.
 
 Docs: ${INSTALL_ROOT}/docs/INSTALL.md
 EOF

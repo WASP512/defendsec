@@ -23,10 +23,10 @@ Optional knobs:
 | --- | --- | --- |
 | `CTID` | next free ≥200 | Container ID |
 | `CT_HOSTNAME` | `defendsec` | CT hostname (+ TLS SAN) |
-| `STORAGE` | auto (`rootdir`/`images`) | CT disk storage (often `local-lvm`) |
+| `STORAGE` | auto (`rootdir`) | CT disk storage (often `local-lvm`) |
 | `TEMPLATE_STORAGE` | auto (`vztmpl`) | LXC template storage for `pveam` (usually `local`) |
 | `BRIDGE` | `vmbr0` | Network bridge |
-| `CORES` / `MEMORY` / `DISK` | `2` / `2048` / `16` | Resources |
+| `CORES` / `MEMORY` / `DISK` | `2` / `4096` / `24` | Resources (room for first source build) |
 | `REPO_URL` / `REPO_REF` | this repo / `main` | Source to build |
 | `GH_TOKEN` | unset | Optional; not required for the public repo |
 
@@ -64,10 +64,11 @@ Open the console with the explicit HTTP scheme: `http://<ct-ip>:47261`. Port `47
 serve TLS; browsing to `https://…:47261` causes `SSL_ERROR_RX_RECORD_TOO_LONG`. The admin token
 travels over plain HTTP, so expose this port only on a trusted admin network or put the console
 behind an HTTPS reverse proxy. When HTTPS terminates at a proxy, set
-`DEFENDSEC_COOKIE_SECURE=true` in `/etc/defendsec/console.env`.
+`DEFENDSEC_COOKIE_SECURE=true` and
+`DEFENDSEC_PUBLIC_CONSOLE_URL=https://defendsec.example.com` in
+`/etc/defendsec/console.env`, then restart `defendsec-console`.
 
-There is no username. Paste the admin token printed by the installer. Recover the application
-credentials from the Proxmox host with:
+There is no username. Retrieve the application credentials from the Proxmox host with:
 
 ```bash
 pct exec <CTID> -- cat /var/lib/defendsec/admin-token.txt
@@ -88,6 +89,10 @@ curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/pr
 
 Same layout: `/opt/defendsec` source, `/var/lib/defendsec` data, systemd units `defendsec-apid` + `defendsec-console`. Postgres is native by default.
 
+Re-running `install-server.sh` preserves the existing Postgres password, admin token, viewer
+token, and enroll secret unless you pass replacements explicitly. Enable a read-only login with
+`--viewer-token TOKEN`.
+
 ### Re-run after a failed CT install
 
 If the first run left a half-installed CT, destroy it on the Proxmox host, then re-run `ct/defendsec.sh`:
@@ -105,14 +110,7 @@ Typical failures:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh -o /tmp/defendsec-install-server.sh
 pct push 200 /tmp/defendsec-install-server.sh /tmp/defendsec-install-server.sh
-pct exec 200 -- bash /tmp/defendsec-install-server.sh
-```
-
-Or enter the CT and re-run only the server installer:
-
-```bash
-pct enter <CTID>
-curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh | bash
+pct exec 200 -- bash /tmp/defendsec-install-server.sh --advertise-hostname defendsec
 ```
 
 ## 2) Agent — separate download per host

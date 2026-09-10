@@ -56,15 +56,21 @@ Set the same viewer token in both apid and the Next.js process. Viewers sign in 
 Create a tarball (JSON presence, PKI, optional Postgres dump):
 
 ```bash
-DATABASE_URL=postgres://defendsec:defendsec@127.0.0.1:5432/defendsec?sslmode=disable \
-  ./scripts/backup.sh
+# Packaged server / Proxmox CT:
+sudo bash -c 'set -a; . /etc/defendsec/apid.env; \
+  DEFENDSEC_DATA_DIR=/var/lib/defendsec /opt/defendsec/scripts/backup.sh'
+
+# Source checkout:
+DEFENDSEC_DATA_DIR="$PWD/data" DATABASE_URL=postgres://... ./scripts/backup.sh
 ```
 
 Restore on a clean VM (stop apid/console first):
 
 ```bash
-DATABASE_URL=postgres://defendsec:defendsec@127.0.0.1:5432/defendsec?sslmode=disable \
-  ./scripts/restore.sh data/backups/defendsec-YYYYMMDDTHHMMSSZ.tar.gz
+sudo systemctl stop defendsec-console defendsec-apid
+sudo bash -c 'set -a; . /etc/defendsec/apid.env; \
+  DEFENDSEC_DATA_DIR=/var/lib/defendsec /opt/defendsec/scripts/restore.sh /path/to/backup.tar.gz'
+sudo systemctl start defendsec-apid defendsec-console
 ```
 
 Verify: hosts appear in the console, alerts/commands tables present, agents reconnect with existing certs.

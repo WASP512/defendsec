@@ -55,7 +55,7 @@ if command -v docker >/dev/null 2>&1; then
   fi
 fi
 
-rm -f /usr/local/bin/defendsec-apid
+rm -f /usr/local/bin/defendsec-apid /usr/local/bin/defendsec-agentd
 
 if [[ "$PURGE_POSTGRES" == "1" ]] && command -v psql >/dev/null 2>&1 && id postgres >/dev/null 2>&1; then
   info "Dropping native Postgres database and role defendsec"
