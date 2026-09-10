@@ -31,11 +31,12 @@ import (
 
 	"defendsec/internal/agentcmd"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
+	"defendsec/internal/agentfim"
 	"defendsec/internal/hostinv"
 	"defendsec/internal/sign"
 )
 
-const agentVersion = "0.3.0-phase3"
+const agentVersion = "0.6.0-phase6"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -101,6 +102,7 @@ func run(log *slog.Logger) error {
 
 	go runStream(ctx, log, client, pub, deviceID, *stateDir)
 	go runInventory(ctx, log, client, *stateDir)
+	go runFimWatch(ctx, log, client, *stateDir)
 	runHeartbeats(ctx, log, client, *heartbeatEvery, *stateDir)
 	return nil
 }
@@ -361,6 +363,38 @@ func heartbeat(stateDir string) *defendsecv1.HeartbeatRequest {
 		Platform:      platform,
 		UptimeSeconds: 0,
 		Isolated:      agentcmd.LoadState(stateDir).Isolated,
+	}
+}
+
+
+func runFimWatch(ctx context.Context, log *slog.Logger, client defendsecv1.AgentControlClient, stateDir string) {
+	trigger := make(chan struct{}, 1)
+	stop, err := agentfim.WatchPaths(log, hostinv.FimPaths(), func() {
+		select {
+		case trigger <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		log.Warn("fim watcher disabled", "err", err)
+		return
+	}
+	defer stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-trigger:
+			hctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			snap := hostinv.Collect()
+			_, err := client.ReportInventory(hctx, inventoryReport(snap, stateDir))
+			cancel()
+			if err != nil {
+				log.Warn("fim-triggered inventory", "err", err)
+			} else {
+				log.Info("fim-triggered inventory ok", "fim", len(snap.Fim))
+			}
+		}
 	}
 }
 

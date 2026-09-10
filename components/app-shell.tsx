@@ -10,6 +10,7 @@ import {
   Monitor,
   Package,
   Scale,
+  ScrollText,
   ShieldAlert,
   ShieldCheck,
   Terminal,
@@ -24,6 +25,7 @@ const nav = [
   { href: "/versions", label: "Versions", icon: History },
   { href: "/integrity", label: "Integrity", icon: FileWarning },
   { href: "/policies", label: "Policies", icon: ShieldCheck },
+  { href: "/audit", label: "Audit", icon: ScrollText },
   { href: "/enroll", label: "Enroll", icon: Terminal },
   { href: "/scope", label: "Scope", icon: Scale },
 ];

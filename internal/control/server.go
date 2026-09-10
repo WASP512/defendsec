@@ -26,6 +26,7 @@ import (
 	"defendsec/internal/pki"
 	"defendsec/internal/presence"
 	"defendsec/internal/sign"
+	"defendsec/internal/storepg"
 )
 
 type Server struct {
@@ -35,6 +36,7 @@ type Server struct {
 	adminToken string
 	store      *presence.File
 	commands   *cmdlog.File
+	pg         *storepg.Store
 	hub        *Hub
 	signer     *sign.Key
 	log        *slog.Logger
@@ -54,6 +56,41 @@ func New(bundle *pki.Bundle, secret, adminToken string, store *presence.File, co
 		signer:     signer,
 		log:        log,
 	}
+}
+
+func (s *Server) SetPostgres(pg *storepg.Store) {
+	s.pg = pg
+}
+
+func (s *Server) syncDevice(dev presence.Device) {
+	if s.pg == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.pg.UpsertDevice(ctx, dev); err != nil {
+		s.log.Warn("postgres upsert device", "err", err, "device", dev.ID)
+	}
+}
+
+func (s *Server) syncCommand(rec cmdlog.Record) {
+	if s.pg == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.pg.AppendCommand(ctx, rec); err != nil {
+		s.log.Warn("postgres append command", "err", err)
+	}
+}
+
+func (s *Server) audit(actor, action, deviceID string, detail any) {
+	if s.pg == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = s.pg.Audit(ctx, actor, action, deviceID, detail)
 }
 
 type enrollRequest struct {
@@ -119,13 +156,16 @@ func (s *Server) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not sign csr", http.StatusInternalServerError)
 		return
 	}
-	_ = s.store.Upsert(presence.Device{
+	dev := presence.Device{
 		ID:        deviceID,
 		Hostname:  hostname,
 		LastSeen:  time.Now().UTC().Format(time.RFC3339),
 		Connected: false,
 		Transport: "mtls-grpc",
-	})
+	}
+	_ = s.store.Upsert(dev)
+	s.syncDevice(dev)
+	s.audit("enroll", "device_enrolled", deviceID, map[string]any{"hostname": hostname})
 	resp := enrollResponse{
 		DeviceID:      deviceID,
 		CertPEM:       string(certPEM),
@@ -142,6 +182,9 @@ func (s *Server) Heartbeat(ctx context.Context, req *defendsecv1.HeartbeatReques
 	id, fp, err := peerIdentity(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, err.Error())
+	}
+	if err := s.ensureNotRevoked(ctx, fp); err != nil {
+		return nil, err
 	}
 	dev := presence.Device{
 		ID:              id,
@@ -161,6 +204,11 @@ func (s *Server) Heartbeat(ctx context.Context, req *defendsecv1.HeartbeatReques
 		s.log.Error("presence upsert", "err", err)
 		return nil, status.Error(codes.Internal, "presence")
 	}
+	if got, ok := s.store.Get(id); ok {
+		s.syncDevice(got)
+	} else {
+		s.syncDevice(dev)
+	}
 	return &defendsecv1.HeartbeatResponse{Ok: true, ServerTimeUnix: time.Now().Unix()}, nil
 }
 
@@ -168,6 +216,9 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 	id, fp, err := peerIdentity(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, err.Error())
+	}
+	if err := s.ensureNotRevoked(ctx, fp); err != nil {
+		return nil, err
 	}
 	host := req.GetHost()
 	dev := presence.Device{
@@ -206,9 +257,24 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 			Path: item.GetPath(), SHA256: item.GetSha256(), Size: item.GetSize(), Mtime: item.GetMtime(),
 		})
 	}
-	if err := s.store.ApplyInventory(dev); err != nil {
+	events, err := s.store.ApplyInventory(dev)
+	if err != nil {
 		s.log.Error("inventory", "err", err)
 		return nil, status.Error(codes.Internal, "inventory")
+	}
+	if got, ok := s.store.Get(id); ok {
+		s.syncDevice(got)
+	} else {
+		s.syncDevice(dev)
+	}
+	if s.pg != nil {
+		ctx2, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		for _, ev := range events {
+			if err := s.pg.AppendFimEvent(ctx2, ev); err != nil {
+				s.log.Warn("postgres fim event", "err", err)
+			}
+		}
 	}
 	return &defendsecv1.HeartbeatResponse{Ok: true, ServerTimeUnix: time.Now().Unix()}, nil
 }
@@ -231,10 +297,23 @@ func (s *Server) Connect(stream defendsecv1.AgentControl_ConnectServer) error {
 	if err != nil {
 		return status.Error(codes.Unauthenticated, err.Error())
 	}
+	if err := s.ensureNotRevoked(stream.Context(), fp); err != nil {
+		return err
+	}
 	s.log.Info("agent connected", "device", id, "fp", fp[:min(12, len(fp))])
 	_ = s.store.SetConnected(id, true)
+	if s.pg != nil {
+		ctx2, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = s.pg.SetConnected(ctx2, id, true)
+		cancel()
+	}
 	defer func() {
 		_ = s.store.SetConnected(id, false)
+		if s.pg != nil {
+			ctx2, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = s.pg.SetConnected(ctx2, id, false)
+			cancel()
+		}
 		s.log.Info("agent disconnected", "device", id)
 	}()
 
@@ -294,6 +373,24 @@ func (s *Server) Connect(stream defendsecv1.AgentControl_ConnectServer) error {
 			}
 		}
 	}
+}
+
+
+func (s *Server) ensureNotRevoked(ctx context.Context, fingerprint string) error {
+	if s.pg == nil || fingerprint == "" {
+		return nil
+	}
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	revoked, err := s.pg.IsRevoked(cctx, fingerprint)
+	if err != nil {
+		s.log.Warn("revoke check", "err", err)
+		return nil
+	}
+	if revoked {
+		return status.Error(codes.PermissionDenied, "certificate revoked")
+	}
+	return nil
 }
 
 func peerIdentity(ctx context.Context) (deviceID, fingerprint string, err error) {

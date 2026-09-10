@@ -365,30 +365,36 @@ func pendingUpdates() ([]Update, string) {
 	return updates, "ok"
 }
 
-func fimFiles() []FimFile {
+func FimPaths() []string {
 	var paths []string
 	switch runtime.GOOS {
 	case "linux":
 		paths = []string{"/etc/passwd", "/etc/group", "/etc/hosts", "/etc/ssh/sshd_config", "/etc/sudoers"}
 	case "darwin":
 		paths = []string{"/etc/hosts", "/etc/ssh/sshd_config"}
+	default:
+		paths = []string{}
 	}
-	extra := os.Getenv("DEFENDSEC_FIM_PATHS")
-	if extra != "" {
+	if extra := os.Getenv("DEFENDSEC_FIM_PATHS"); extra != "" {
 		for _, item := range strings.Split(extra, string(os.PathListSeparator)) {
 			if strings.TrimSpace(item) != "" {
 				paths = append(paths, strings.TrimSpace(item))
 			}
 		}
 	}
+	return paths
+}
+
+func fimFiles() []FimFile {
 	var out []FimFile
-	for _, p := range paths {
+	for _, p := range FimPaths() {
 		if f, err := hashFile(p); err == nil {
 			out = append(out, f)
 		}
 	}
 	return out
 }
+
 
 func hashFile(path string) (FimFile, error) {
 	raw, err := os.ReadFile(path)

@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: defendsec
+      POSTGRES_PASSWORD: defendsec
+      POSTGRES_DB: defendsec
+    ports:
+      - "5432:5432"
+    volumes:
+      - defendsec_pg:/var/lib/postgresql/data
+      - ./db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U defendsec -d defendsec"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  defendsec_pg:

@@ -71,13 +71,19 @@ func SaveState(dir string, st State) error {
 func Isolate(dir string) (State, error) {
 	st := State{Isolated: true, Mode: "flag", Message: "host marked isolated; network drop requires root and DEFENDSEC_ISOLATE_NET=1"}
 	if os.Geteuid() == 0 && os.Getenv("DEFENDSEC_ISOLATE_NET") == "1" {
-		st.Mode = "net"
-		st.Message = "network isolate requested (iptables not applied in this build without DEFENDSEC_ISOLATE_NET tooling)"
+		if err := applyNetIsolate(); err != nil {
+			st.Mode = "flag"
+			st.Message = "isolated flag set; network drop failed: " + err.Error()
+		} else {
+			st.Mode = "net"
+			st.Message = "network isolated via iptables chain DEFENDSEC_ISOLATE (loopback + established allowed)"
+		}
 	}
 	return st, SaveState(dir, st)
 }
 
 func Release(dir string) (State, error) {
+	_ = clearNetIsolate()
 	st := State{Isolated: false, Mode: "flag", Message: "isolation cleared"}
 	return st, SaveState(dir, st)
 }

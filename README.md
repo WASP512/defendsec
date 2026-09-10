@@ -112,3 +112,53 @@ make test-go
 Python HTTP check-in still works. A host only needs one of the two agents.
 
 The first FIM report is the accepted baseline. Drift is stored in `data/defendsec-agents.json` (`fimEvents`). **Accept current as baseline** on an mTLS host calls defendsec-apid.
+
+## Phase 4: Postgres, audit, revoke
+
+Optional durable store. File JSON remains the console source of truth; apid dual-writes when a database URL is set.
+
+```bash
+docker compose up -d postgres
+export DEFENDSEC_DATABASE_URL=postgres://defendsec:defendsec@127.0.0.1:5432/defendsec
+./bin/defendsec-apid --data-dir data --db-url "$DEFENDSEC_DATABASE_URL"
+```
+
+Admin loopback (`:47264`) gains:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /v1/audit` | Recent audit events |
+| `POST /v1/revoke` | Revoke a device cert fingerprint (mTLS rejected afterward) |
+| `GET/POST /v1/advisories` | List / import advisory rows |
+| `GET/POST /v1/agent-releases` | Publish / read agent update channel metadata |
+
+Console **Audit** reads Postgres when `DATABASE_URL` / `DEFENDSEC_DATABASE_URL` is set for Next.js.
+
+## Phase 5: OSV ingest, real isolate, continuous FIM
+
+```bash
+# OSV → advisories table (requires network + psycopg, or --via admin)
+pip install psycopg
+DEFENDSEC_DATABASE_URL=postgres://defendsec:defendsec@127.0.0.1:5432/defendsec \
+  python3 scripts/ingest-osv.py --packages openssl,openssh-server,git
+```
+
+Network isolate: run the agent as root with `DEFENDSEC_ISOLATE_NET=1`. The agent installs an `iptables` chain `DEFENDSEC_ISOLATE` that rejects new egress while keeping loopback and established flows (so the control channel survives).
+
+Continuous FIM: `defendsec-agentd` watches inventory FIM paths with `fsnotify` and triggers an immediate inventory report on change (debounced). Override paths with `DEFENDSEC_FIM_PATHS`.
+
+## Phase 6: agent update channel, live query, backup
+
+Signed command types:
+
+| Type | Effect |
+| --- | --- |
+| `live_query` | Allowlisted snapshot: `processes`, `listening_ports`, `users`, `os_info` |
+| `agent_update` | Stages `pending-update.json` in the agent state dir for an external updater |
+
+```bash
+./scripts/backup.sh
+./scripts/restore.sh data/backups/defendsec-YYYYMMDDThhmmssZ.tar.gz
+```
+
+Backup captures JSON store, PKI, and `pg_dump` when a database URL is present.

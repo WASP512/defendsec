@@ -93,6 +93,32 @@ func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir 
 		}
 		ack.Accepted = true
 		ack.Message = fmt.Sprintf("signaled %d process(es) named %s", n, p.Name)
+	case agentcmd.TypeLiveQuery:
+		p, err := agentcmd.ParseLiveQueryPayload(cmd.GetPayload())
+		if err != nil {
+			ack.Message = err.Error()
+			return ack
+		}
+		out, err := agentcmd.RunLiveQuery(p.Query)
+		if err != nil {
+			ack.Message = err.Error()
+			return ack
+		}
+		ack.Accepted = true
+		ack.Message = out
+	case agentcmd.TypeAgentUpdate:
+		p, err := agentcmd.ParseAgentUpdatePayload(cmd.GetPayload())
+		if err != nil {
+			ack.Message = err.Error()
+			return ack
+		}
+		msg, err := agentcmd.StageAgentUpdate(stateDir, p)
+		if err != nil {
+			ack.Message = err.Error()
+			return ack
+		}
+		ack.Accepted = true
+		ack.Message = msg
 	default:
 		ack.Message = "unknown command type"
 	}

@@ -20,11 +20,13 @@ import (
 
 	"defendsec/internal/cmdlog"
 	"defendsec/internal/control"
+	"defendsec/internal/db"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
 	"defendsec/internal/presence"
 	"defendsec/internal/secret"
 	"defendsec/internal/sign"
+	"defendsec/internal/storepg"
 )
 
 func main() {
@@ -43,6 +45,7 @@ func run(log *slog.Logger) error {
 	enrollSecret := flag.String("enroll-secret", "", "override enroll secret (default: DEFENDSEC_ENROLL_SECRET or data/defendsec.json)")
 	adminTokenFlag := flag.String("admin-token", "", "override admin token (default: DEFENDSEC_ADMIN_TOKEN or data/admin-token.txt)")
 	advertise := flag.String("tls-hostname", "", "extra hostname/IP SAN for the server certificate")
+	dbURL := flag.String("db-url", "", "Postgres URL (or DATABASE_URL / DEFENDSEC_DATABASE_URL)")
 	flag.Parse()
 
 	pkiDir := filepath.Join(*dataDir, "pki")
@@ -73,6 +76,27 @@ func run(log *slog.Logger) error {
 	commands := cmdlog.New(filepath.Join(*dataDir, "commands.json"))
 	svc := control.New(bundle, secretValue, adminToken, store, commands, signer, log)
 
+	if url := db.ResolveURL(*dbURL); url != "" {
+		pool, err := db.Open(context.Background(), url)
+		if err != nil {
+			return fmt.Errorf("postgres: %w", err)
+		}
+		migSQL, err := os.ReadFile(filepath.Join("db", "migrations", "001_init.sql"))
+		if err != nil {
+			// try beside data dir / repo root via executable cwd already
+			migSQL, err = os.ReadFile(filepath.Join(*dataDir, "..", "db", "migrations", "001_init.sql"))
+		}
+		if err != nil {
+			return fmt.Errorf("read migrations: %w", err)
+		}
+		if err := db.Migrate(context.Background(), pool, string(migSQL)); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+		svc.SetPostgres(storepg.New(pool))
+		log.Info("postgres enabled")
+		defer pool.Close()
+	}
+
 	httpTLS, err := bundle.ServerTLS()
 	if err != nil {
 		return err
@@ -93,6 +117,10 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/commands", svc.HandleAdminCommands)
 	adminMux.HandleFunc("/v1/baseline", svc.HandleBaseline)
 	adminMux.HandleFunc("/v1/control-pub", svc.HandleControlPub)
+	adminMux.HandleFunc("/v1/audit", svc.HandleAudit)
+	adminMux.HandleFunc("/v1/revoke", svc.HandleRevoke)
+	adminMux.HandleFunc("/v1/advisories", svc.HandleAdvisories)
+	adminMux.HandleFunc("/v1/agent-releases", svc.HandleAgentReleases)
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
 		Handler:           adminMux,

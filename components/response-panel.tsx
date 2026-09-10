@@ -19,6 +19,7 @@ export function ResponsePanel({
   const [pending, setPending] = useState<string>("");
   const [error, setError] = useState("");
   const [killName, setKillName] = useState("");
+  const [query, setQuery] = useState("processes");
 
   if (!mtlsDeviceId) {
     return (
@@ -58,8 +59,8 @@ export function ResponsePanel({
         Commands are Ed25519-signed by defendsec-apid and verified on the agent. Unsigned payloads are
         rejected. Isolation is a host flag (network drop only if the agent is root with{" "}
         <code className="text-foreground">DEFENDSEC_ISOLATE_NET=1</code>). Kill matches{" "}
-        <code className="text-foreground">/proc/*/comm</code> and will not signal protected names
-        such as systemd, sshd, or defendsec-agentd.
+        <code className="text-foreground">/proc/*/comm</code>. Live query runs an allowlisted host
+        snapshot (processes, listening_ports, users, os_info).
       </p>
       <div className="flex flex-wrap gap-2">
         <Button
@@ -100,6 +101,31 @@ export function ResponsePanel({
         </div>
         <Button type="submit" variant="destructive" size="sm" disabled={Boolean(pending) || !killName.trim()}>
           {pending === "kill_process" ? "Sending…" : "Send SIGTERM"}
+        </Button>
+      </form>
+      <form
+        className="flex flex-col gap-2 sm:flex-row sm:items-end"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void send("live_query", { query });
+        }}
+      >
+        <div className="min-w-0 flex-1 space-y-1">
+          <Label htmlFor="live-query">Live query</Label>
+          <select
+            id="live-query"
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          >
+            <option value="processes">processes</option>
+            <option value="listening_ports">listening_ports</option>
+            <option value="users">users</option>
+            <option value="os_info">os_info</option>
+          </select>
+        </div>
+        <Button type="submit" variant="outline" size="sm" disabled={Boolean(pending)}>
+          {pending === "live_query" ? "Sending…" : "Run query"}
         </Button>
       </form>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}

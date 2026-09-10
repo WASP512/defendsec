@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -42,10 +43,20 @@ func (s *Server) HandleBaseline(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "deviceId required", http.StatusBadRequest)
 		return
 	}
-	if !s.store.AcceptBaseline(strings.TrimSpace(req.DeviceID)) {
+	deviceID := strings.TrimSpace(req.DeviceID)
+	if !s.store.AcceptBaseline(deviceID) {
 		http.Error(w, "unknown mTLS device", http.StatusNotFound)
 		return
 	}
+	if s.pg != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		_, _ = s.pg.AcceptBaseline(ctx, deviceID)
+		cancel()
+		if got, ok := s.store.Get(deviceID); ok {
+			s.syncDevice(got)
+		}
+	}
+	s.audit("admin", "baseline_accept", deviceID, nil)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"ok":true}`))
 }
@@ -97,7 +108,7 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 	req.Type = strings.TrimSpace(req.Type)
 	req.DeviceID = strings.TrimSpace(req.DeviceID)
 	switch req.Type {
-	case "isolate", "release", "kill_process":
+	case "isolate", "release", "kill_process", "live_query", "agent_update":
 	default:
 		http.Error(w, "unknown command type", http.StatusBadRequest)
 		return
@@ -141,6 +152,8 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "log", http.StatusInternalServerError)
 		return
 	}
+	s.syncCommand(rec)
+	s.audit("admin", "command_issue", req.DeviceID, map[string]any{"type": req.Type, "commandId": id})
 	if s.pushSigned(env) {
 		_ = s.commands.Update(id, func(r *cmdlog.Record) {
 			r.Status = "sent"
@@ -148,6 +161,11 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 		})
 		rec.Status = "sent"
 		rec.Message = "signed command pushed on mTLS stream"
+		if s.pg != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = s.pg.UpdateCommand(ctx, id, "sent", false, rec.Message)
+			cancel()
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(rec)
@@ -197,11 +215,27 @@ func (s *Server) noteAck(deviceID string, accepted bool, commandID, message stri
 		r.Accepted = accepted
 		r.Message = message
 	})
+	if s.pg != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = s.pg.UpdateCommand(ctx, commandID, "acked", accepted, message)
+		cancel()
+	}
 	lower := strings.ToLower(message)
 	if accepted && strings.Contains(lower, "isolated") && !strings.Contains(lower, "cleared") {
 		_ = s.store.SetIsolated(deviceID, true)
+		if s.pg != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = s.pg.SetIsolated(ctx, deviceID, true)
+			cancel()
+		}
 	}
 	if accepted && strings.Contains(lower, "isolation cleared") {
 		_ = s.store.SetIsolated(deviceID, false)
+		if s.pg != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = s.pg.SetIsolated(ctx, deviceID, false)
+			cancel()
+		}
 	}
+	s.audit("agent", "command_ack", deviceID, map[string]any{"commandId": commandID, "accepted": accepted, "message": message})
 }

@@ -136,12 +136,12 @@ func mergeHeartbeat(old, neu Device) Device {
 	return out
 }
 
-func (f *File) ApplyInventory(dev Device) error {
+func (f *File) ApplyInventory(dev Device) ([]FimEvent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	doc, err := f.read()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	idx := -1
 	var old Device
@@ -175,9 +175,10 @@ func (f *File) ApplyInventory(dev Device) error {
 		prev[file.Path] = file.SHA256
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	var created []FimEvent
 	for _, file := range dev.Fim {
 		if last, ok := prev[file.Path]; ok && last != file.SHA256 {
-			doc.FimEvents = append([]FimEvent{{
+			ev := FimEvent{
 				ID:         newID(),
 				DeviceID:   dev.ID,
 				Hostname:   merged.Hostname,
@@ -185,7 +186,9 @@ func (f *File) ApplyInventory(dev Device) error {
 				Previous:   last,
 				Current:    file.SHA256,
 				DetectedAt: now,
-			}}, doc.FimEvents...)
+			}
+			created = append(created, ev)
+			doc.FimEvents = append([]FimEvent{ev}, doc.FimEvents...)
 		}
 	}
 	if len(doc.FimEvents) > 200 {
@@ -198,7 +201,10 @@ func (f *File) ApplyInventory(dev Device) error {
 		doc.Devices = append(doc.Devices, merged)
 	}
 	doc.UpdatedAt = now
-	return f.write(doc)
+	if err := f.write(doc); err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
 func (f *File) AcceptBaseline(id string) bool {
