@@ -4,9 +4,11 @@ import { dirname, join } from "node:path";
 import { cookies } from "next/headers";
 
 import { DEV_ADMIN_TOKEN } from "./auth-public";
+import { dataDir } from "./data-paths";
 
 export const ADMIN_COOKIE = "defendsec_admin";
-const TOKEN_PATH = join(process.cwd(), "data", "admin-token.txt");
+const DATA_DIR = dataDir();
+const TOKEN_PATH = join(DATA_DIR, "admin-token.txt");
 
 let cachedToken: string | null = null;
 let loadToken: Promise<string> | null = null;
@@ -124,11 +126,16 @@ export async function getApidAuthToken(request?: Request) {
 }
 
 export function adminCookieOptions() {
+  const configuredSecure = process.env.DEFENDSEC_COOKIE_SECURE?.trim().toLowerCase();
+  const secure =
+    configuredSecure === undefined || configuredSecure === ""
+      ? process.env.NODE_ENV === "production"
+      : ["1", "true", "yes", "on"].includes(configuredSecure);
   return {
     httpOnly: true,
     sameSite: "lax" as const,
     path: "/",
-    secure: process.env.NODE_ENV === "production",
+    secure,
     maxAge: 60 * 60 * 24 * 14,
   };
 }

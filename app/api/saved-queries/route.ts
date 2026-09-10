@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import { unauthorizedIfNotAdmin, unauthorizedIfNotAuthenticated } from "@/lib/api-auth";
 import { getApidAuthToken } from "@/lib/auth";
 import { APID_ADMIN_URL } from "@/lib/commands";
+import { dataPath } from "@/lib/data-paths";
 import { databaseURL, query } from "@/lib/pg";
 
 export const runtime = "nodejs";
 
-const FALLBACK_PATH = join(process.cwd(), "data", "saved-queries.json");
+const FALLBACK_PATH = dataPath("saved-queries.json");
 
 type SavedQuery = {
   id: string;
@@ -37,6 +38,7 @@ async function appendToFile(name: string, queryText: string): Promise<SavedQuery
   };
   const existing = await listFromFile();
   existing.unshift(rec);
+  await mkdir(dirname(FALLBACK_PATH), { recursive: true });
   await writeFile(
     FALLBACK_PATH,
     JSON.stringify({ updatedAt: new Date().toISOString(), queries: existing.slice(0, 200) }, null, 2),

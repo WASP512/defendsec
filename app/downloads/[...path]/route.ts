@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { NextResponse } from "next/server";
+import { dataPath } from "@/lib/data-paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,7 @@ const ALLOWED = new Set([
 function downloadsDir(): string {
   return (
     process.env.DEFENDSEC_DOWNLOADS_DIR?.trim() ||
-    join(process.cwd(), "data", "downloads")
+    dataPath("downloads")
   );
 }
 

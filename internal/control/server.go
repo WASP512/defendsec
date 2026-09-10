@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -32,17 +33,18 @@ import (
 
 type Server struct {
 	defendsecv1.UnimplementedAgentControlServer
-	bundle     *pki.Bundle
-	secret     string
+	bundle      *pki.Bundle
+	secret      string
+	secretMu    sync.RWMutex
 	adminToken  string
 	viewerToken string
 	dataDir     string
-	store      *presence.File
-	commands   *cmdlog.File
-	pg         *storepg.Store
-	hub        *Hub
-	signer     *sign.Key
-	log        *slog.Logger
+	store       *presence.File
+	commands    *cmdlog.File
+	pg          *storepg.Store
+	hub         *Hub
+	signer      *sign.Key
+	log         *slog.Logger
 }
 
 func New(bundle *pki.Bundle, secret, adminToken, dataDir string, store *presence.File, commands *cmdlog.File, signer *sign.Key, log *slog.Logger) *Server {
@@ -143,7 +145,10 @@ func (s *Server) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if !secretMatch(req.EnrollSecret, s.secret) {
+	s.secretMu.RLock()
+	enrollOK := secretMatch(req.EnrollSecret, s.secret)
+	s.secretMu.RUnlock()
+	if !enrollOK {
 		http.Error(w, "invalid enroll secret", http.StatusUnauthorized)
 		return
 	}
@@ -410,7 +415,6 @@ func (s *Server) Connect(stream defendsecv1.AgentControl_ConnectServer) error {
 		}
 	}
 }
-
 
 func (s *Server) ensureNotRevoked(ctx context.Context, fingerprint string) error {
 	if s.pg == nil || fingerprint == "" {

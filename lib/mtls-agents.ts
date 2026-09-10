@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dataPath } from "./data-paths";
 import type { Device, FimEvent, FimFile, PatchInventory, Platform, SoftwareItem, PendingUpdate } from "./types";
 
 type MtlsFile = {
@@ -39,7 +39,7 @@ function asPlatform(value: string | undefined): Platform {
 
 export async function loadMtlsFile(): Promise<MtlsFile> {
   try {
-    const raw = await readFile(join(process.cwd(), "data", "defendsec-agents.json"), "utf8");
+    const raw = await readFile(dataPath("defendsec-agents.json"), "utf8");
     return JSON.parse(raw) as MtlsFile;
   } catch {
     return {};

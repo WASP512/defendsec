@@ -6,6 +6,7 @@ import {
   getViewerToken,
   safeEqual,
 } from "@/lib/auth";
+import { redirectTo } from "@/lib/http";
 
 export const runtime = "nodejs";
 
@@ -33,12 +34,12 @@ export async function POST(request: Request) {
     (safeEqual(parsed.token, admin) || (viewer !== "" && safeEqual(parsed.token, viewer)));
   if (!ok) {
     if (parsed.mode === "form") {
-      return NextResponse.redirect(new URL("/login?error=1", request.url), 303);
+      return redirectTo("/login?error=1");
     }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (parsed.mode === "form") {
-    const response = NextResponse.redirect(new URL("/", request.url), 303);
+    const response = redirectTo("/");
     response.cookies.set(ADMIN_COOKIE, parsed.token, adminCookieOptions());
     return response;
   }

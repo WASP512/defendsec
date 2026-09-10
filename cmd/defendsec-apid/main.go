@@ -147,6 +147,7 @@ func run(log *slog.Logger) error {
 
 	adminMux := http.NewServeMux()
 	adminMux.HandleFunc("/healthz", svc.HandleHealth)
+	adminMux.HandleFunc("/v1/enroll-secret", svc.HandleEnrollSecret)
 	adminMux.HandleFunc("/v1/commands", svc.HandleAdminCommands)
 	adminMux.HandleFunc("/v1/baseline", svc.HandleBaseline)
 	adminMux.HandleFunc("/v1/control-pub", svc.HandleControlPub)

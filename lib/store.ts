@@ -1,7 +1,8 @@
 import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import { sampleFimEvents, sampleFleet } from "./demo";
+import { dataPath } from "./data-paths";
 import type { CheckinPayload, Device, FimEvent, FimFile, StoreData } from "./types";
 import { STORE_SCHEMA_VERSION } from "./types";
 
@@ -12,8 +13,8 @@ export class StoreCorruptError extends Error {
   }
 }
 
-const DATA_PATH = join(process.cwd(), "data", "defendsec.json");
-const BACKUP_PATH = join(process.cwd(), "data", "defendsec.json.bak");
+const DATA_PATH = dataPath("defendsec.json");
+const BACKUP_PATH = dataPath("defendsec.json.bak");
 
 let queue: Promise<void> = Promise.resolve();
 

@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server";
 import { ADMIN_COOKIE, adminCookieOptions } from "@/lib/auth";
+import { redirectTo } from "@/lib/http";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
-  const response = NextResponse.redirect(new URL("/login", request.url), 303);
+export async function POST() {
+  const response = redirectTo("/login");
   response.cookies.set(ADMIN_COOKIE, "", { ...adminCookieOptions(), maxAge: 0 });
   return response;
 }

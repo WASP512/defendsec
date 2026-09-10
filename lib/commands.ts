@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dataPath } from "./data-paths";
 
 export type CommandRecord = {
   id: string;
@@ -16,7 +16,7 @@ export type CommandRecord = {
 
 export async function loadCommands(deviceId?: string): Promise<CommandRecord[]> {
   try {
-    const raw = await readFile(join(process.cwd(), "data", "commands.json"), "utf8");
+    const raw = await readFile(dataPath("commands.json"), "utf8");
     const parsed = JSON.parse(raw) as { commands?: CommandRecord[] };
     const list = parsed.commands ?? [];
     if (!deviceId) return list.slice().reverse();

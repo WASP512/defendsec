@@ -27,12 +27,12 @@ export function LoginForm({
         <p className="text-sm text-muted-foreground">
           Development fallback is <code className="text-foreground">{DEV_ADMIN_TOKEN}</code>. Set{" "}
           <code className="text-foreground">DEFENDSEC_ADMIN_TOKEN</code> or use{" "}
-          <code className="text-foreground">data/admin-token.txt</code> in production.
+          <code className="text-foreground">data/admin-token.txt</code> in a source checkout.
         </p>
       ) : (
         <p className="text-sm text-muted-foreground">
-          Use <code className="text-foreground">DEFENDSEC_ADMIN_TOKEN</code> or the value in{" "}
-          <code className="text-foreground">data/admin-token.txt</code> on the server.
+          Use <code className="text-foreground">DEFENDSEC_ADMIN_TOKEN</code>. Packaged installs also
+          store it at <code className="text-foreground">/var/lib/defendsec/admin-token.txt</code>.
         </p>
       )}
       {failed ? <p className="text-sm text-destructive">That token was rejected.</p> : null}
