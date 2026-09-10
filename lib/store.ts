@@ -2,7 +2,8 @@ import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { sampleFimEvents, sampleFleet } from "./demo";
-import type { CheckinPayload, Device, FimEvent, StoreData } from "./types";
+import type { CheckinPayload, Device, FimEvent, FimFile, StoreData } from "./types";
+import { STORE_SCHEMA_VERSION } from "./types";
 
 export class StoreCorruptError extends Error {
   constructor(message = "Host database is corrupt and was not overwritten") {
@@ -25,8 +26,13 @@ function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+function copyFim(files: FimFile[]): FimFile[] {
+  return files.map((file) => ({ ...file }));
+}
+
 function emptyStore(): StoreData {
   return {
+    schemaVersion: STORE_SCHEMA_VERSION,
     enrollSecret: randomBytes(12).toString("hex"),
     devices: [],
     fimEvents: [],
@@ -35,16 +41,20 @@ function emptyStore(): StoreData {
 }
 
 function normalizeDevice(device: Device): Device {
+  const fim = device.fim ?? [];
   return {
     ...device,
     software: device.software ?? [],
     pendingUpdates: device.pendingUpdates ?? [],
-    fim: device.fim ?? [],
+    patchInventory: device.patchInventory ?? null,
+    fim,
+    fimBaseline: device.fimBaseline ?? copyFim(fim),
   };
 }
 
 function normalizeStore(data: StoreData): StoreData {
   return {
+    schemaVersion: data.schemaVersion ?? 1,
     enrollSecret: data.enrollSecret || randomBytes(12).toString("hex"),
     devices: (data.devices ?? []).map(normalizeDevice),
     fimEvents: data.fimEvents ?? [],
@@ -110,7 +120,9 @@ export function publicDevice(device: Device) {
     uptimeSeconds: device.uptimeSeconds,
     software: device.software,
     pendingUpdates: device.pendingUpdates,
+    patchInventory: device.patchInventory,
     fim: device.fim,
+    fimBaseline: device.fimBaseline,
     sample: device.sample,
     enrolledAt: device.enrolledAt,
     lastSeen: device.lastSeen,
@@ -165,7 +177,9 @@ export async function enrollDevice(secret: string, hostname: string) {
       uptimeSeconds: 0,
       software: [],
       pendingUpdates: [],
+      patchInventory: null,
       fim: [],
+      fimBaseline: [],
       sample: false,
       enrolledAt: new Date().toISOString(),
       lastSeen: new Date().toISOString(),
@@ -183,6 +197,9 @@ export async function enrollDevice(secret: string, hostname: string) {
 }
 
 function applyFim(data: StoreData, device: Device, incoming: NonNullable<CheckinPayload["fim"]>) {
+  if (device.fimBaseline.length === 0 && incoming.length > 0) {
+    device.fimBaseline = copyFim(incoming);
+  }
   const previous = new Map(device.fim.map((file) => [file.path, file.sha256]));
   const events: FimEvent[] = [];
   for (const file of incoming) {
@@ -234,6 +251,9 @@ export async function checkin(payload: CheckinPayload) {
     device.uptimeSeconds = payload.uptimeSeconds ?? device.uptimeSeconds;
     device.software = payload.software ?? device.software;
     device.pendingUpdates = payload.pendingUpdates ?? device.pendingUpdates;
+    if (payload.patchInventory !== undefined) {
+      device.patchInventory = payload.patchInventory;
+    }
     if (payload.fim) {
       applyFim(data, device, payload.fim);
     }
@@ -253,6 +273,7 @@ export async function replaceSampleFleet(devices: Device[]) {
       ...data.fimEvents.filter((event) => !event.sample),
       ...sampleFimEvents(devices),
     ];
+    data.schemaVersion = STORE_SCHEMA_VERSION;
     await writeStore(data);
     return data;
   });
@@ -280,6 +301,18 @@ export async function setTriage(key: string, status: "open" | "acknowledged") {
   });
 }
 
+export async function acceptFimBaseline(deviceId: string) {
+  return runExclusive(async () => {
+    const data = await readStore();
+    if (!data) throw new StoreCorruptError("Host database is missing");
+    const device = data.devices.find((item) => item.id === deviceId);
+    if (!device) return { ok: false as const, error: "Device not found" };
+    device.fimBaseline = copyFim(device.fim);
+    await writeStore(data);
+    return { ok: true as const, device };
+  });
+}
+
 export async function ensureStore() {
   return runExclusive(async () => {
     const data = await readStore();
@@ -294,13 +327,15 @@ export async function ensureStore() {
     const staleSamples =
       samples.length > 0 &&
       samples.every((d) => d.pendingUpdates.length === 0 && d.fim.length === 0);
-    if (data.devices.length === 0 || staleSamples) {
+    const needsSchema = (data.schemaVersion ?? 1) < STORE_SCHEMA_VERSION;
+    if (data.devices.length === 0 || staleSamples || needsSchema) {
       const live = data.devices.filter((d) => !d.sample);
       data.devices = [...live, ...sampleFleet()];
       data.fimEvents = [
         ...data.fimEvents.filter((event) => !event.sample),
         ...sampleFimEvents(data.devices.filter((d) => d.sample)),
       ];
+      data.schemaVersion = STORE_SCHEMA_VERSION;
       await writeStore(data);
     }
     return data;

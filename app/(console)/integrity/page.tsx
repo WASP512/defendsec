@@ -13,9 +13,9 @@ export default async function IntegrityPage() {
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">File integrity</h1>
         <p className="mt-1 max-w-2xl text-muted-foreground">
-          The agent hashes a small set of system files each check-in. First report is the
-          baseline; later hash changes show up here. {watched} path{watched === 1 ? "" : "s"}{" "}
-          currently on baseline.
+          The agent hashes watched files each check-in. The first report becomes the baseline.
+          Later changes fail policy until you accept the current hashes. This page is the audit
+          log; {watched} path{watched === 1 ? "" : "s"} are currently reported.
         </p>
       </div>
       {store.fimEvents.length === 0 ? (

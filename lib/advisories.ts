@@ -1,7 +1,22 @@
 import type { Advisory, Device, Finding, FindingTriage, SoftwareItem } from "./types";
 
+const PACKAGE_ALIASES: Record<string, string> = {
+  "docker.io": "docker",
+  "docker-ce": "docker",
+  "docker-ee": "docker",
+  "google-chrome": "google chrome",
+  "google-chrome-stable": "google chrome",
+  "google chrome": "google chrome",
+  "adobe-photoshop": "adobe photoshop",
+  "openssh": "openssh-server",
+};
+
+export function stripDebianEpoch(raw: string) {
+  return raw.trim().replace(/^\d+:/, "");
+}
+
 function parseVersion(raw: string) {
-  return raw
+  return stripDebianEpoch(raw)
     .split(/[^0-9]+/)
     .filter(Boolean)
     .map((part) => Number.parseInt(part, 10));
@@ -20,6 +35,20 @@ export function versionOlderThan(installed: string, floor: string) {
     if (left > right) return false;
   }
   return false;
+}
+
+export function canonicalPackage(name: string) {
+  const lower = name.toLowerCase().trim();
+  if (PACKAGE_ALIASES[lower]) return PACKAGE_ALIASES[lower];
+  const dashed = lower.replace(/_/g, "-");
+  if (PACKAGE_ALIASES[dashed]) return PACKAGE_ALIASES[dashed];
+  const spaced = dashed.replace(/-/g, " ");
+  if (PACKAGE_ALIASES[spaced]) return PACKAGE_ALIASES[spaced];
+  return spaced;
+}
+
+export function packageMatches(advisoryPackage: string, installedName: string) {
+  return canonicalPackage(installedName) === canonicalPackage(advisoryPackage);
 }
 
 export const ADVISORIES: Advisory[] = [
@@ -77,19 +106,9 @@ export const ADVISORIES: Advisory[] = [
     package: "adobe photoshop",
     below: "25.9.1",
     severity: "high",
-    summary: "Memory corruption in older Photoshop 26.x pre-release builds. Update Creative Cloud.",
+    summary: "Memory corruption in older Photoshop builds. Update Creative Cloud.",
   },
 ];
-
-function matchesPackage(advisory: Advisory, item: SoftwareItem) {
-  const name = item.name.toLowerCase();
-  const needle = advisory.package.toLowerCase();
-  if (name === needle) return true;
-  if (name.replace(/-/g, " ") === needle) return true;
-  if (name.includes(needle)) return true;
-  if (needle.includes(name) && name.length > 2) return true;
-  return false;
-}
 
 export function findingKey(deviceId: string, advisoryId: string, packageName: string) {
   return `${deviceId}:${advisoryId}:${packageName.toLowerCase()}`;
@@ -105,7 +124,7 @@ export function findingsForSoftware(
   for (const item of software) {
     if (!item.version) continue;
     for (const advisory of ADVISORIES) {
-      if (!matchesPackage(advisory, item)) continue;
+      if (!packageMatches(advisory.package, item.name)) continue;
       if (!versionOlderThan(item.version, advisory.below)) continue;
       const key = findingKey(device.id, advisory.id, item.name);
       findings.push({

@@ -22,6 +22,8 @@ The console cookie is httpOnly. Agent enroll/check-in do **not** use the admin t
 
 Host state is `data/keel.json`. A copy is kept at `data/keel.json.bak` after each successful save. If `keel.json` is corrupt, Keel refuses to overwrite it — restore the `.bak` yourself.
 
+Integrity policy compares current hashes to an **accepted baseline** (first check-in, or **Accept current as baseline** on the host page). The event list is an audit log and does not keep the host failing forever.
+
 ```bash
 npm run build
 npm start

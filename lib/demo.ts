@@ -1,6 +1,12 @@
 import { randomBytes } from "node:crypto";
 import type { Device } from "./types";
 
+export const SAMPLE_KEEP_ONLINE = new Set([
+  "ops-macbook-14",
+  "finance-win-07",
+  "build-linux-03",
+]);
+
 function ago(minutes: number) {
   return new Date(Date.now() - minutes * 60_000).toISOString();
 }
@@ -37,7 +43,16 @@ export function sampleFleet(): Device[] {
         { name: "Slack", version: "4.41.105" },
       ],
       pendingUpdates: [{ name: "Google Chrome", current: "131.0.6778.86", available: "132.0.6834.83" }],
+      patchInventory: "ok",
       fim: [
+        {
+          path: "/etc/ssh/sshd_config",
+          sha256: "a".repeat(64),
+          size: 3200,
+          mtime: ago(12 * 24 * 60),
+        },
+      ],
+      fimBaseline: [
         {
           path: "/etc/ssh/sshd_config",
           sha256: "a".repeat(64),
@@ -71,7 +86,16 @@ export function sampleFleet(): Device[] {
         { name: "Windows Security Update KB5048685", current: "installed", available: "pending" },
         { name: "CrowdStrike Falcon", current: "7.18", available: "7.22" },
       ],
+      patchInventory: "ok",
       fim: [
+        {
+          path: "C:\\Windows\\System32\\drivers\\etc\\hosts",
+          sha256: "b".repeat(64),
+          size: 824,
+          mtime: ago(3 * 24 * 60),
+        },
+      ],
+      fimBaseline: [
         {
           path: "C:\\Windows\\System32\\drivers\\etc\\hosts",
           sha256: "b".repeat(64),
@@ -108,12 +132,27 @@ export function sampleFleet(): Device[] {
         { name: "git", current: "2.34.1", available: "2.34.1-1ubuntu1.12" },
         { name: "openssh-server", current: "8.9p1", available: "1:8.9p1-3ubuntu0.11" },
       ],
+      patchInventory: "ok",
       fim: [
         {
           path: "/etc/ssh/sshd_config",
           sha256: "c".repeat(64),
           size: 3288,
           mtime: ago(40),
+        },
+        {
+          path: "/etc/passwd",
+          sha256: "d".repeat(64),
+          size: 2104,
+          mtime: ago(200 * 24 * 60),
+        },
+      ],
+      fimBaseline: [
+        {
+          path: "/etc/ssh/sshd_config",
+          sha256: "9".repeat(64),
+          size: 3288,
+          mtime: ago(200 * 24 * 60),
         },
         {
           path: "/etc/passwd",
@@ -145,12 +184,21 @@ export function sampleFleet(): Device[] {
         { name: "Adobe Photoshop", version: "25.0" },
       ],
       pendingUpdates: [{ name: "macOS", current: "12.7.6", available: "15.1" }],
+      patchInventory: "ok",
       fim: [
         {
           path: "/etc/hosts",
           sha256: "e".repeat(64),
           size: 236,
           mtime: ago(8),
+        },
+      ],
+      fimBaseline: [
+        {
+          path: "/etc/hosts",
+          sha256: "8".repeat(64),
+          size: 236,
+          mtime: ago(400 * 24 * 60),
         },
       ],
       enrolledAt: ago(400 * 24 * 60),

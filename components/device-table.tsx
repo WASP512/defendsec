@@ -9,7 +9,8 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { OnlineBadge } from "@/components/status-badge";
-import { formatBytesMb, onlineFromLastSeen, platformLabel, relativeTime } from "@/lib/format";
+import { formatBytesMb, platformLabel, relativeTime } from "@/lib/format";
+import { isOnline } from "@/lib/policies";
 import type { PublicDevice } from "@/lib/types";
 
 export function DeviceTable({ devices }: { devices: PublicDevice[] }) {
@@ -64,7 +65,7 @@ export function DeviceTable({ devices }: { devices: PublicDevice[] }) {
                 {formatBytesMb(device.memoryMb)}
               </TableCell>
               <TableCell>
-                <OnlineBadge online={onlineFromLastSeen(device.lastSeen)} />
+                <OnlineBadge online={isOnline(device)} />
               </TableCell>
               <TableCell className="hidden sm:table-cell text-muted-foreground">
                 {relativeTime(device.lastSeen)}

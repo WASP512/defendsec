@@ -58,6 +58,8 @@ export type Finding = {
   status: FindingStatus;
 };
 
+export type PatchInventory = "ok" | "unsupported" | "error";
+
 export type Device = {
   id: string;
   hostname: string;
@@ -76,7 +78,9 @@ export type Device = {
   uptimeSeconds: number;
   software: SoftwareItem[];
   pendingUpdates: PendingUpdate[];
+  patchInventory: PatchInventory | null;
   fim: FimFile[];
+  fimBaseline: FimFile[];
   sample: boolean;
   enrolledAt: string;
   lastSeen: string;
@@ -101,6 +105,7 @@ export type CheckinPayload = {
   uptimeSeconds?: number;
   software?: SoftwareItem[];
   pendingUpdates?: PendingUpdate[];
+  patchInventory?: PatchInventory | null;
   fim?: FimFile[];
 };
 
@@ -117,10 +122,13 @@ export type PolicyResult = {
 export type PublicDevice = Omit<Device, "nodeKey">;
 
 export type StoreData = {
+  schemaVersion: number;
   enrollSecret: string;
   devices: Device[];
   fimEvents: FimEvent[];
   triages: FindingTriage[];
 };
+
+export const STORE_SCHEMA_VERSION = 2;
 
 export const ONLINE_WINDOW_MS = 2 * 60 * 1000;

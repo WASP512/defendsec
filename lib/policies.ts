@@ -1,9 +1,28 @@
-import type { Device, FindingTriage, FimEvent, PolicyResult, PolicyStatus } from "./types";
+import type { Device, FindingTriage, PolicyResult, PolicyStatus } from "./types";
 import { ONLINE_WINDOW_MS } from "./types";
 import { findingsForDevice } from "./advisories";
+import { SAMPLE_KEEP_ONLINE } from "./demo";
 
-export function isOnline(device: Device, now = Date.now()) {
+export function isOnline(
+  device: Pick<Device, "sample" | "hostname" | "lastSeen">,
+  now = Date.now(),
+) {
+  if (device.sample && SAMPLE_KEEP_ONLINE.has(device.hostname)) return true;
   return now - new Date(device.lastSeen).getTime() < ONLINE_WINDOW_MS;
+}
+
+export function fimDriftPaths(device: Device) {
+  const drifted: string[] = [];
+  const baseline = new Map(device.fimBaseline.map((file) => [file.path, file.sha256]));
+  const current = new Map(device.fim.map((file) => [file.path, file.sha256]));
+  for (const [path, hash] of current) {
+    const expected = baseline.get(path);
+    if (expected && expected !== hash) drifted.push(path);
+  }
+  for (const path of baseline.keys()) {
+    if (!current.has(path)) drifted.push(path);
+  }
+  return [...new Set(drifted)];
 }
 
 function statusFrom(ok: boolean | null): PolicyStatus {
@@ -45,7 +64,7 @@ export const POLICY_DEFS = [
   {
     id: "fim",
     name: "Watched files unchanged",
-    description: "Hashes of enrolled integrity paths match the last baseline.",
+    description: "Current hashes match the last accepted baseline.",
   },
 ] as const;
 
@@ -71,19 +90,47 @@ function supportedOs(device: Device): boolean | null {
   return null;
 }
 
+function patchStatus(device: Device): PolicyResult {
+  if (device.patchInventory !== "ok") {
+    const detail =
+      device.patchInventory === "unsupported"
+        ? "This platform does not report a patch catalog yet"
+        : device.patchInventory === "error"
+          ? "Agent could not collect pending updates"
+          : "No patch inventory reported yet";
+    return {
+      id: "patches",
+      name: "No pending patches",
+      description: POLICY_DEFS[5].description,
+      status: "unknown",
+      detail,
+    };
+  }
+  return {
+    id: "patches",
+    name: "No pending patches",
+    description: POLICY_DEFS[5].description,
+    status: statusFrom(device.pendingUpdates.length === 0),
+    detail:
+      device.pendingUpdates.length === 0
+        ? "No pending updates"
+        : `${device.pendingUpdates.length} pending`,
+  };
+}
+
 export function evaluateDevice(
   device: Device,
-  fimEvents: FimEvent[] = [],
+  _fimEvents: unknown[] = [],
   triages: FindingTriage[] = [],
 ): PolicyResult[] {
+  void _fimEvents;
   const online = isOnline(device);
   const serious = findingsForDevice(device, triages).filter(
     (f) =>
       f.status === "open" &&
       (f.advisory.severity === "critical" || f.advisory.severity === "high"),
   );
-  const drifted = fimEvents.filter((event) => event.deviceId === device.id);
-  const patchesUnknown = device.pendingUpdates.length === 0 && device.software.length === 0;
+  const drifted = fimDriftPaths(device);
   return [
     {
       id: "online",
@@ -135,43 +182,34 @@ export function evaluateDevice(
           ? "No high or critical matches in the local catalog"
           : serious.map((f) => `${f.advisory.cve} (${f.packageName})`).join(", "),
     },
-    {
-      id: "patches",
-      name: "No pending patches",
-      description: POLICY_DEFS[5].description,
-      status: patchesUnknown ? "unknown" : statusFrom(device.pendingUpdates.length === 0),
-      detail: patchesUnknown
-        ? "No patch inventory reported yet"
-        : device.pendingUpdates.length === 0
-          ? "No pending updates"
-          : `${device.pendingUpdates.length} pending`,
-    },
+    patchStatus(device),
     {
       id: "fim",
       name: "Watched files unchanged",
       description: POLICY_DEFS[6].description,
       status:
-        device.fim.length === 0 && drifted.length === 0
+        device.fim.length === 0 && device.fimBaseline.length === 0
           ? "unknown"
           : statusFrom(drifted.length === 0),
       detail:
         drifted.length > 0
-          ? drifted.map((event) => event.path).join(", ")
+          ? drifted.join(", ")
           : device.fim.length === 0
             ? "No integrity paths reported"
-            : `${device.fim.length} paths on baseline`,
+            : `${device.fim.length} paths match the accepted baseline`,
     },
   ];
 }
 
 export function policySummary(
   devices: Device[],
-  fimEvents: FimEvent[] = [],
+  _fimEvents: unknown[] = [],
   triages: FindingTriage[] = [],
 ) {
+  void _fimEvents;
   return POLICY_DEFS.map((def) => {
     const results = devices.map(
-      (d) => evaluateDevice(d, fimEvents, triages).find((p) => p.id === def.id)!,
+      (d) => evaluateDevice(d, _fimEvents, triages).find((p) => p.id === def.id)!,
     );
     return {
       ...def,
