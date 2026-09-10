@@ -75,7 +75,16 @@ pct stop <CTID>
 pct destroy <CTID>
 ```
 
-Typical failure: `pveam download` against disk storage (`local-lvm`) instead of template storage. Re-run with `TEMPLATE_STORAGE=local`.
+Typical failures:
+
+- `pveam download` against disk storage (`local-lvm`) instead of template storage. Re-run with `TEMPLATE_STORAGE=local`.
+- `bash: curl: command not found` inside the CT — Debian 12 standard has no curl. Current helper fetches `install-server.sh` on the **Proxmox host** and `pct push`es it. If you already have an empty CT 200, skip recreate and finish the install from the host:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh -o /tmp/defendsec-install-server.sh
+pct push 200 /tmp/defendsec-install-server.sh /tmp/defendsec-install-server.sh
+pct exec 200 -- bash /tmp/defendsec-install-server.sh
+```
 
 Or enter the CT and re-run only the server installer:
 

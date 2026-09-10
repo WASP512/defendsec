@@ -214,23 +214,52 @@ pct create "${CREATE_ARGS[@]}"
 pct start "$CTID"
 
 info "Waiting for network inside CT ${CTID}"
+net_ok=0
 for _ in $(seq 1 60); do
   if pct exec "$CTID" -- bash -c 'getent hosts deb.debian.org >/dev/null 2>&1'; then
+    net_ok=1
     break
   fi
   sleep 2
 done
+[[ "$net_ok" -eq 1 ]] || die "CT ${CTID} has no DNS/network after 2 minutes (check DHCP on ${BRIDGE})"
 
-# Push or fetch install-server.sh
 TMP_INSTALL="/tmp/defendsec-install-server.sh"
-if [[ -n "$INSTALL_URL" ]]; then
-  pct exec "$CTID" -- bash -c "curl -fsSL $(printf %q "$INSTALL_URL") -o ${TMP_INSTALL}"
-elif [[ -f "$(dirname "$0")/../install-server.sh" ]]; then
-  pct push "$CTID" "$(dirname "$0")/../install-server.sh" "$TMP_INSTALL"
-else
-  RAW="https://raw.githubusercontent.com/WASP512/defendsec/${REPO_REF}/packaging/proxmox/install-server.sh"
-  pct exec "$CTID" -- bash -c "curl -fsSL $(printf %q "$RAW") -o ${TMP_INSTALL}"
-fi
+
+host_http_get() {
+  local url="$1" dest="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$dest"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$dest" "$url"
+  else
+    die "need curl or wget on the Proxmox host to fetch ${url}"
+  fi
+}
+
+# Debian 12 standard LXC has no curl. Fetch on the PVE host (which does) and pct push.
+push_install_script() {
+  local src="" tmp=""
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+  if [[ -n "$INSTALL_URL" ]]; then
+    tmp="$(mktemp)"
+    host_http_get "$INSTALL_URL" "$tmp"
+    src="$tmp"
+  elif [[ -n "$script_dir" && -f "${script_dir}/../install-server.sh" ]]; then
+    src="${script_dir}/../install-server.sh"
+  else
+    tmp="$(mktemp)"
+    host_http_get "https://raw.githubusercontent.com/WASP512/defendsec/${REPO_REF}/packaging/proxmox/install-server.sh" "$tmp"
+    src="$tmp"
+  fi
+  [[ -s "$src" ]] || die "install-server.sh is empty"
+  pct push "$CTID" "$src" "$TMP_INSTALL"
+  [[ -n "$tmp" ]] && rm -f "$tmp"
+}
+
+info "Copying server installer into CT ${CTID}"
+push_install_script
 
 info "Installing DefendSec server inside CT ${CTID}"
 pct exec "$CTID" -- env \
