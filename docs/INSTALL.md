@@ -28,6 +28,7 @@ Optional knobs:
 | `BRIDGE` | `vmbr0` | Network bridge |
 | `CORES` / `MEMORY` / `DISK` | `2` / `2048` / `16` | Resources |
 | `REPO_URL` / `REPO_REF` | this repo / `main` | Source to build |
+| `GH_TOKEN` | unset | Optional; not required for the public repo |
 
 Do **not** point `pveam download` at LVM-thin. Templates need directory storage with content type `vztmpl` (`TEMPLATE_STORAGE`, typically `local`). The CT rootfs uses `STORAGE` (typically `local-lvm`). Override when auto-detect is wrong:
 
