@@ -5,7 +5,8 @@
 # installs the binary + systemd unit, and enrolls with the control plane.
 #
 # Usage:
-#   curl -fsSL http://SERVER:47261/downloads/install-agent.sh | sudo bash -s -- \
+#   curl -fL --progress-bar http://SERVER:47261/downloads/install-agent.sh \
+#     -o /tmp/install-agent.sh && sudo bash /tmp/install-agent.sh \
 #     --server-http https://SERVER:47262 \
 #     --server-grpc SERVER:47263 \
 #     --tls-server-name SERVER \
@@ -51,7 +52,19 @@ while [[ $# -gt 0 ]]; do
 done
 
 die() { echo "error: $*" >&2; exit 1; }
-info() { printf '==> %s\n' "$*"; }
+STARTED_AT="$(date +%s)"
+CURRENT_STAGE=0
+TOTAL_STAGES=5
+info() {
+  local now elapsed
+  now="$(date +%s)"
+  elapsed=$((now - STARTED_AT))
+  printf '==> [%02dm%02ds] %s\n' "$((elapsed / 60))" "$((elapsed % 60))" "$*"
+}
+stage() {
+  CURRENT_STAGE=$((CURRENT_STAGE + 1))
+  info "[${CURRENT_STAGE}/${TOTAL_STAGES}] $*"
+}
 
 [[ -n "$SERVER_HTTP" ]] || die "--server-http is required"
 [[ -n "$SERVER_GRPC" ]] || die "--server-grpc is required"
@@ -79,8 +92,8 @@ fetch_binary() {
   local name="defendsec-agentd-linux-${GOARCH}"
   if [[ -n "$DOWNLOAD_BASE" ]]; then
     info "Downloading ${name} from ${DOWNLOAD_BASE}"
-    curl -fsSL "${DOWNLOAD_BASE%/}/${name}" -o "$TMPDIR/defendsec-agentd"
-    curl -fsSL "${DOWNLOAD_BASE%/}/SHA256SUMS" -o "$TMPDIR/SHA256SUMS"
+    curl -fL --progress-bar "${DOWNLOAD_BASE%/}/${name}" -o "$TMPDIR/defendsec-agentd"
+    curl -fL --progress-bar "${DOWNLOAD_BASE%/}/SHA256SUMS" -o "$TMPDIR/SHA256SUMS"
     verify_binary "$name"
     chmod 0755 "$TMPDIR/defendsec-agentd"
     return
@@ -94,8 +107,8 @@ fetch_binary() {
   sums_url="$(jq -r '.assets[] | select(.name=="SHA256SUMS") | .browser_download_url' <<<"$release" | head -1)"
   [[ -n "$url" && "$url" != "null" ]] || die "no release asset named ${name}; pass --download-base or --binary"
   [[ -n "$sums_url" && "$sums_url" != "null" ]] || die "release has no SHA256SUMS asset"
-  curl -fsSL "$url" -o "$TMPDIR/defendsec-agentd"
-  curl -fsSL "$sums_url" -o "$TMPDIR/SHA256SUMS"
+  curl -fL --progress-bar "$url" -o "$TMPDIR/defendsec-agentd"
+  curl -fL --progress-bar "$sums_url" -o "$TMPDIR/SHA256SUMS"
   verify_binary "$name"
   chmod 0755 "$TMPDIR/defendsec-agentd"
 }
@@ -112,10 +125,10 @@ verify_binary() {
 install_packages_light() {
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y >/dev/null
-    apt-get install -y --no-install-recommends ca-certificates curl jq >/dev/null
+    apt-get update -y
+    apt-get install -y --no-install-recommends ca-certificates curl jq
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y ca-certificates curl jq >/dev/null
+    dnf install -y ca-certificates curl jq
   fi
 }
 
@@ -159,10 +172,14 @@ EOF
   systemctl enable --now defendsec-agentd
 
   local ok=0
-  for _ in $(seq 1 30); do
+  for attempt in $(seq 1 30); do
     if systemctl is-active --quiet defendsec-agentd && [[ -s "${STATE_DIR}/device-id" ]]; then
       ok=1
+      echo "    Agent enrolled and service is active."
       break
+    fi
+    if (( attempt == 1 || attempt % 5 == 0 )); then
+      echo "    Waiting for enrollment (${attempt}/30)…"
     fi
     sleep 1
   done
@@ -173,10 +190,16 @@ EOF
   fi
 }
 
+info "Starting DefendSec agent installer"
+stage "Install required operating-system packages"
 install_packages_light
+stage "Download and verify agent binary"
 fetch_binary
+stage "Install agent binary"
 install -m 0755 "$TMPDIR/defendsec-agentd" "$INSTALL_BIN"
+stage "Write agent configuration"
 write_config
+stage "Start agent and verify enrollment"
 install_unit
 
 info "Agent installed and started"

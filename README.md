@@ -13,7 +13,11 @@ Most people run the server as a Proxmox LXC. That path is two commands plus a br
 1. **Create the server** on the Proxmox host (as root). First install often takes **15–30 minutes** while it builds Go and Node:
 
    ```bash
-   bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
+   echo "Downloading DefendSec installer…" && \
+     curl -fL --progress-bar \
+       https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh \
+       -o /tmp/defendsec.sh && \
+     bash /tmp/defendsec.sh
    ```
 
 2. **Open the console** at `http://<container-ip>:47261` (use **http**, not https). There is no username. Get the admin token from the Proxmox host:

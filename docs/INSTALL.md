@@ -28,7 +28,11 @@ Then go to [First login](#first-login) and [Enroll hosts](#enroll-hosts).
 Run this **on the Proxmox VE host**, as **root**. It creates a Debian 12 LXC, installs Postgres, builds the server, and starts the services.
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
+echo "Downloading DefendSec installer…" && \
+  curl -fL --progress-bar \
+    https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh \
+    -o /tmp/defendsec.sh && \
+  bash /tmp/defendsec.sh
 ```
 
 **How long?** Often **15–30 minutes** on first run. Most of that is downloading a Debian template and compiling Go/Node inside the container. Later reinstalls are faster if the template is already cached.
@@ -57,8 +61,10 @@ CT_HOSTNAME=defendsec \
 TEMPLATE_STORAGE=local \
 STORAGE=local-lvm \
 BRIDGE=vmbr0 \
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
+bash /tmp/defendsec.sh
 ```
+
+Download `/tmp/defendsec.sh` first with the visible download command from Path A.
 
 | Setting | Default | When to set it |
 | --- | --- | --- |
@@ -81,7 +87,11 @@ Templates **must** live on directory storage with content type `vztmpl` (usually
 On a Debian, Ubuntu, or Fedora machine as **root**:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh | bash
+echo "Downloading DefendSec server installer…" && \
+  curl -fL --progress-bar \
+    https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh \
+    -o /tmp/defendsec-install-server.sh && \
+  bash /tmp/defendsec-install-server.sh
 ```
 
 That installs:
@@ -158,7 +168,11 @@ On each Linux host (amd64 or arm64):
 The command looks like this (the Enroll page fills in the right values):
 
 ```bash
-curl -fsSL "http://SERVER:47261/downloads/install-agent.sh" | sudo bash -s -- \
+echo "Downloading DefendSec agent installer…" && \
+  curl -fL --progress-bar \
+    "http://SERVER:47261/downloads/install-agent.sh" \
+    -o /tmp/install-agent.sh && \
+sudo bash /tmp/install-agent.sh \
   --server-http "https://SERVER:47262" \
   --server-grpc "SERVER:47263" \
   --tls-server-name "SERVER" \

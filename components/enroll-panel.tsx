@@ -35,7 +35,9 @@ export function EnrollPanel({
   })();
 
   const installCommand = [
-    `curl -fsSL "${downloadBase}/install-agent.sh" | sudo bash -s -- \\`,
+    `echo "Downloading DefendSec agent installer…" && \\`,
+    `  curl -fL --progress-bar "${downloadBase}/install-agent.sh" -o /tmp/install-agent.sh && \\`,
+    `  sudo bash /tmp/install-agent.sh \\`,
     `  --server-http https://${host}:47262 \\`,
     `  --server-grpc ${host}:47263 \\`,
     `  --tls-server-name ${host} \\`,
@@ -104,7 +106,7 @@ export function EnrollPanel({
         <textarea
           id="install-cmd"
           readOnly
-          rows={7}
+          rows={9}
           className="w-full rounded-lg border bg-muted/40 p-3 font-mono text-sm"
           value={installCommand}
         />

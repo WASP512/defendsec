@@ -18,5 +18,9 @@ Step-by-step: [../../docs/INSTALL.md](../../docs/INSTALL.md).
 Copy-paste for a Proxmox host:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
+echo "Downloading DefendSec installer…" && \
+  curl -fL --progress-bar \
+    https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh \
+    -o /tmp/defendsec.sh && \
+  bash /tmp/defendsec.sh
 ```

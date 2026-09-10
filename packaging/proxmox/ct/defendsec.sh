@@ -8,7 +8,8 @@
 #   bash packaging/proxmox/ct/defendsec.sh
 #   CTID=120 CT_HOSTNAME=defendsec bash packaging/proxmox/ct/defendsec.sh
 #   TEMPLATE_STORAGE=local STORAGE=local-lvm bash packaging/proxmox/ct/defendsec.sh
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
+#   curl -fL --progress-bar https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh \
+#     -o /tmp/defendsec.sh && bash /tmp/defendsec.sh
 #
 # After install, sign in at http://<ct-ip>:47261 and copy Agent install from Enroll.
 
@@ -54,8 +55,19 @@ PASSWORD="${PASSWORD:-}"
 # Optional: GitHub auth for private forks or rate limits. Public clones need none.
 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 
-info() { printf '\n==> %s\n' "$*"; }
+STARTED_AT="$(date +%s)"
+info() {
+  local now elapsed
+  now="$(date +%s)"
+  elapsed=$((now - STARTED_AT))
+  printf '\n==> [%02dm%02ds] %s\n' "$((elapsed / 60))" "$((elapsed % 60))" "$*"
+}
 die() { echo "error: $*" >&2; exit 1; }
+
+info "Starting DefendSec Proxmox installer"
+echo "This creates a Debian 12 container and builds the server inside it."
+echo "A first install commonly takes 15–30 minutes; progress will remain visible here."
+info "Detecting container ID, disk storage, and template storage"
 
 pick_ctid() {
   if [[ -n "$CTID" ]]; then
@@ -151,11 +163,12 @@ ensure_template() {
   local tmpl
   tmpl="$(pveam list "$storage" 2>/dev/null | awk '/debian-12-standard/ {print $1; exit}')"
   if [[ -n "$tmpl" ]]; then
+    info "Using cached Debian 12 template ${tmpl}" >&2
     echo "$tmpl"
     return
   fi
   info "Downloading Debian 12 LXC template to storage ${storage}" >&2
-  pveam update >/dev/null 2>&1 || true
+  pveam update >&2 || true
   local remote
   remote="$(pveam available -section system 2>/dev/null | awk '/debian-12-standard_.*_amd64\.tar\.(xz|zst)/ {print $2; exit}')"
   [[ -n "$remote" ]] || die "could not find debian-12-standard template in pveam available"
@@ -226,12 +239,16 @@ EOF
 trap on_exit EXIT
 pct start "$CTID"
 
-info "Waiting for network inside CT ${CTID}"
+info "Waiting for DNS/network inside CT ${CTID} (up to 2 minutes)"
 net_ok=0
-for _ in $(seq 1 60); do
+for attempt in $(seq 1 60); do
   if pct exec "$CTID" -- bash -c 'getent hosts deb.debian.org >/dev/null 2>&1'; then
     net_ok=1
+    echo "    Network is ready."
     break
+  fi
+  if (( attempt == 1 || attempt % 5 == 0 )); then
+    echo "    Still waiting for network (${attempt}/60)…"
   fi
   sleep 2
 done
@@ -242,9 +259,10 @@ TMP_INSTALL="/tmp/defendsec-install-server.sh"
 host_http_get() {
   local url="$1" dest="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$dest"
+    echo "    Downloading ${url}"
+    curl -fL --progress-bar "$url" -o "$dest"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$dest" "$url"
+    wget --show-progress -O "$dest" "$url"
   else
     die "need curl or wget on the Proxmox host to fetch ${url}"
   fi

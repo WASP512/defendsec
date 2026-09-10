@@ -80,7 +80,19 @@ EOF
   esac
 done
 
-info() { printf '\n==> %s\n' "$*"; }
+STARTED_AT="$(date +%s)"
+CURRENT_STAGE=0
+TOTAL_STAGES=9
+info() {
+  local now elapsed
+  now="$(date +%s)"
+  elapsed=$((now - STARTED_AT))
+  printf '\n==> [%02dm%02ds] %s\n' "$((elapsed / 60))" "$((elapsed % 60))" "$*"
+}
+stage() {
+  CURRENT_STAGE=$((CURRENT_STAGE + 1))
+  info "[${CURRENT_STAGE}/${TOTAL_STAGES}] $*"
+}
 die() { echo "error: $*" >&2; exit 1; }
 
 case "$POSTGRES_MODE" in
@@ -194,7 +206,10 @@ version_ge() {
 
 fetch_to() {
   local url="$1" dest="$2"
-  curl -fsSL "$url" -o "$dest" || wget -qO "$dest" "$url" || die "download failed: ${url}"
+  echo "    Downloading ${url}"
+  curl -fL --progress-bar "$url" -o "$dest" \
+    || wget --show-progress -O "$dest" "$url" \
+    || die "download failed: ${url}"
 }
 
 verify_sha256() {
@@ -375,10 +390,14 @@ start_postgres_native() {
   esac
 
   local postgres_ready=0
-  for _ in $(seq 1 30); do
+  for attempt in $(seq 1 30); do
     if su -s /bin/bash postgres -c "cd /tmp && psql -tAc 'SELECT 1'" >/dev/null 2>&1; then
       postgres_ready=1
+      echo "    Postgres service is ready."
       break
+    fi
+    if (( attempt == 1 || attempt % 5 == 0 )); then
+      echo "    Waiting for Postgres service (${attempt}/30)…"
     fi
     sleep 1
   done
@@ -412,9 +431,13 @@ SQL
     fi
   fi
 
-  for _ in $(seq 1 30); do
+  for attempt in $(seq 1 30); do
     if PGPASSWORD="$PG_PASSWORD" psql -h 127.0.0.1 -U defendsec -d defendsec -tAc 'SELECT 1' >/dev/null 2>&1; then
+      echo "    Database login verified."
       return
+    fi
+    if (( attempt == 1 || attempt % 5 == 0 )); then
+      echo "    Waiting for database login (${attempt}/30)…"
     fi
     sleep 1
   done
@@ -438,9 +461,13 @@ start_postgres_docker() {
       -v "${DATA_DIR}/postgres:/var/lib/postgresql/data" \
       postgres:16-alpine >/dev/null
   fi
-  for _ in $(seq 1 60); do
+  for attempt in $(seq 1 60); do
     if docker exec defendsec-postgres pg_isready -U defendsec -d defendsec >/dev/null 2>&1; then
+      echo "    Docker Postgres is ready."
       return
+    fi
+    if (( attempt == 1 || attempt % 5 == 0 )); then
+      echo "    Waiting for Docker Postgres (${attempt}/60)…"
     fi
     sleep 1
   done
@@ -626,11 +653,15 @@ EOF
   systemctl enable --now defendsec-console
 
   local apid_ok=0 console_ok=0
-  for _ in $(seq 1 30); do
+  for attempt in $(seq 1 30); do
     if systemctl is-active --quiet defendsec-apid \
       && curl -kfsS https://127.0.0.1:47262/healthz >/dev/null; then
       apid_ok=1
+      echo "    API health check passed."
       break
+    fi
+    if (( attempt == 1 || attempt % 5 == 0 )); then
+      echo "    Waiting for API health check (${attempt}/30)…"
     fi
     sleep 1
   done
@@ -640,11 +671,15 @@ EOF
     die "defendsec-apid failed its startup health check"
   fi
 
-  for _ in $(seq 1 30); do
+  for attempt in $(seq 1 30); do
     if systemctl is-active --quiet defendsec-console \
       && curl -fsS http://127.0.0.1:47261/login >/dev/null; then
       console_ok=1
+      echo "    Console health check passed."
       break
+    fi
+    if (( attempt == 1 || attempt % 5 == 0 )); then
+      echo "    Waiting for console health check (${attempt}/30)…"
     fi
     sleep 1
   done
@@ -678,13 +713,25 @@ Docs: ${INSTALL_ROOT}/docs/INSTALL.md
 EOF
 }
 
+info "Starting DefendSec server installer"
+echo "OS=${OS_ID} architecture=${GOARCH} Postgres=${POSTGRES_MODE}"
+echo "A first source build commonly takes 15–30 minutes. Keep this terminal open."
+stage "Install operating-system packages"
 install_packages
+stage "Create service user and data directories"
 create_users_dirs
+stage "Download DefendSec source"
 clone_or_update_repo
+stage "Check and install Go / Node toolchains"
 ensure_toolchains
+stage "Start and configure Postgres"
 start_postgres
+stage "Build API and agent binaries"
 build_binaries
+stage "Install JavaScript packages and build console"
 build_console
+stage "Write configuration and agent downloads"
 seed_secrets_and_downloads
+stage "Install services and run health checks"
 install_systemd_units
 print_summary
