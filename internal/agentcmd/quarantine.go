@@ -53,6 +53,10 @@ func AllowedQuarantinePath(path string) bool {
 		if abs == watchAbs {
 			return true
 		}
+		// Allow files under watched directories (e.g. /etc/ssh/sshd_config.d/*.conf).
+		if strings.HasPrefix(abs, watchAbs+string(filepath.Separator)) {
+			return true
+		}
 	}
 	return false
 }

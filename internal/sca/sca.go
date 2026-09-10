@@ -56,19 +56,39 @@ func LoadPack(path string) (*Pack, error) {
 }
 
 func DefaultLinuxSSHPath() string {
-	for _, p := range []string{
+	return firstExisting(
 		"packs/sca/linux-ssh-v1.yaml",
 		filepath.Join("..", "packs", "sca", "linux-ssh-v1.yaml"),
-	} {
+		filepath.Join("..", "..", "packs", "sca", "linux-ssh-v1.yaml"),
+	)
+}
+
+func DefaultLinuxHostPath() string {
+	return firstExisting(
+		"packs/sca/linux-host-v1.yaml",
+		filepath.Join("..", "packs", "sca", "linux-host-v1.yaml"),
+		filepath.Join("..", "..", "packs", "sca", "linux-host-v1.yaml"),
+	)
+}
+
+func firstExisting(paths ...string) string {
+	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
 	}
-	return "packs/sca/linux-ssh-v1.yaml"
+	if len(paths) > 0 {
+		return paths[0]
+	}
+	return ""
 }
 
 func LoadDefaultLinuxSSH() (*Pack, error) {
 	return LoadPack(DefaultLinuxSSHPath())
+}
+
+func LoadDefaultLinuxHost() (*Pack, error) {
+	return LoadPack(DefaultLinuxHostPath())
 }
 
 func EvalFileRegex(check Check) Result {

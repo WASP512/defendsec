@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"defendsec/internal/alertmeta"
 	"defendsec/internal/presence"
 	"defendsec/internal/vuln"
 )
@@ -59,20 +60,30 @@ func (s *Server) alertFromVuln(dev presence.Device, adv map[string]string, sw pr
 		title = cve + " on " + sw.Name
 	}
 	summary := fmt.Sprintf("%s %s is below patched floor %s", sw.Name, sw.Version, adv["below"])
+	detail := alertmeta.BaseDetail(dev.Hostname)
+	detail[alertmeta.KeyPackageName] = sw.Name
+	detail[alertmeta.KeyPackageVer] = sw.Version
+	detail[alertmeta.KeyPackageFloor] = adv["below"]
+	detail[alertmeta.KeyAdvisoryID] = adv["id"]
+	detail[alertmeta.KeyAdvisoryCVE] = cve
+	detail[alertmeta.KeyAdvisorySum] = adv["summary"]
+	detail = alertmeta.WithRaw(detail, map[string]any{
+		"advisoryId": adv["id"], "cve": cve, "package": sw.Name,
+		"version": sw.Version, "below": adv["below"], "summary": adv["summary"],
+	})
 	return presence.Alert{
-		ID:         id,
-		DeviceID:   dev.ID,
-		Hostname:   dev.Hostname,
-		Kind:       "vuln",
-		Severity:   adv["severity"],
-		Title:      title,
-		Summary:    summary,
-		SourceType: "advisory",
-		SourceID:   adv["id"],
-		Detail: map[string]any{
-			"advisoryId": adv["id"], "cve": cve, "package": sw.Name,
-			"version": sw.Version, "below": adv["below"],
-		},
+		ID:               id,
+		DeviceID:         dev.ID,
+		Hostname:         dev.Hostname,
+		Kind:             "vuln",
+		Severity:         adv["severity"],
+		Title:            title,
+		Summary:          summary,
+		SourceType:       "advisory",
+		SourceID:         adv["id"],
+		GeneratorID:      alertmeta.GeneratorVuln,
+		GeneratorVersion: alertmeta.GeneratorVersion,
+		Detail:           detail,
 	}
 }
 

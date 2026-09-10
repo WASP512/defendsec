@@ -270,7 +270,9 @@ def fim_files() -> list[dict]:
             Path("/etc/group"),
             Path("/etc/hosts"),
             Path("/etc/ssh/sshd_config"),
+            Path("/etc/ssh/sshd_config.d"),
             Path("/etc/sudoers"),
+            Path("/etc/crypto-policies/config"),
         ]
     elif system == "Darwin":
         candidates = [Path("/etc/hosts"), Path("/etc/ssh/sshd_config")]
@@ -283,6 +285,13 @@ def fim_files() -> list[dict]:
             candidates.append(Path(item.strip()))
     results = []
     for path in candidates:
+        if path.is_dir():
+            for child in sorted(path.iterdir()):
+                if child.is_file() and child.suffix in {".conf", ".cfg"}:
+                    hashed = hash_file(child)
+                    if hashed:
+                        results.append(hashed)
+            continue
         hashed = hash_file(path)
         if hashed:
             results.append(hashed)

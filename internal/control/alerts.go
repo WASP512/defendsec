@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"defendsec/internal/alertmeta"
 	"defendsec/internal/presence"
 	"defendsec/internal/sca"
 	"defendsec/internal/storepg"
@@ -57,13 +58,7 @@ func (s *Server) listAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		for _, a := range s.store.ListAlerts(status, kind, deviceID, limit) {
-			rows = append(rows, alertToMap(storepg.Alert{
-				ID: a.ID, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt,
-				DeviceID: a.DeviceID, Hostname: a.Hostname, Kind: a.Kind,
-				Severity: a.Severity, Title: a.Title, Summary: a.Summary,
-				Status: a.Status, SourceType: a.SourceType, SourceID: a.SourceID,
-				Detail: mustJSON(a.Detail),
-			}))
+			rows = append(rows, alertToMap(storeAlert(a)))
 		}
 	}
 	if rows == nil {
@@ -123,11 +118,17 @@ func (s *Server) recordAlert(alert presence.Alert) {
 	if alert.Status == "" {
 		alert.Status = "open"
 	}
+	detected, ingested := alertmeta.Stamp(alert.DetectedAt)
+	alert.DetectedAt = detected
+	alert.IngestedAt = ingested
 	if alert.CreatedAt == "" {
-		alert.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+		alert.CreatedAt = ingested
 	}
 	if alert.UpdatedAt == "" {
 		alert.UpdatedAt = alert.CreatedAt
+	}
+	if alert.GeneratorVersion == "" {
+		alert.GeneratorVersion = alertmeta.GeneratorVersion
 	}
 	if err := s.store.InsertAlert(alert); err != nil {
 		s.log.Warn("alert file", "err", err)
@@ -156,58 +157,113 @@ func (s *Server) ensureAlert(deviceID, kind, sourceID string, build func() prese
 	s.recordAlert(build())
 }
 
+func (s *Server) resolveAlert(deviceID, kind, sourceID string) {
+	_ = s.store.ResolveOpenAlerts(deviceID, kind, sourceID)
+	if s.pg != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if _, err := s.pg.ResolveOpenAlerts(ctx, deviceID, kind, sourceID); err != nil {
+			s.log.Warn("resolve alert", "err", err, "kind", kind, "source", sourceID)
+		}
+	}
+}
+
 func (s *Server) alertFromFimEvent(ev presence.FimEvent) presence.Alert {
 	severity := ev.Severity
 	if severity == "" {
 		severity = fimPathSeverity(ev.Path)
 	}
+	action := ev.Action
+	if action == "" {
+		action = "modified"
+	}
+	detail := alertmeta.BaseDetail(ev.Hostname)
+	detail[alertmeta.KeyFilePath] = ev.Path
+	detail[alertmeta.KeyFileHashPrev] = ev.Previous
+	detail[alertmeta.KeyFileHashCurr] = ev.Current
+	detail[alertmeta.KeyEventAction] = action
+	detail = alertmeta.WithRaw(detail, map[string]any{
+		"path": ev.Path, "previous": ev.Previous, "current": ev.Current, "action": action,
+	})
 	return presence.Alert{
-		ID:         ev.ID,
-		DeviceID:   ev.DeviceID,
-		Hostname:   ev.Hostname,
-		Kind:       "fim",
-		Severity:   severity,
-		Title:      "File integrity change: " + ev.Path,
-		Summary:    shortHash(ev.Previous) + " → " + shortHash(ev.Current),
-		SourceType: "fim_event",
-		SourceID:   ev.ID,
-		Detail: map[string]any{
-			"path": ev.Path, "previous": ev.Previous, "current": ev.Current, "action": ev.Action,
-		},
+		ID:               ev.ID,
+		DetectedAt:       ev.DetectedAt,
+		DeviceID:         ev.DeviceID,
+		Hostname:         ev.Hostname,
+		Kind:             "fim",
+		Severity:         severity,
+		Title:            "File integrity " + action + ": " + ev.Path,
+		Summary:          shortHash(ev.Previous) + " → " + shortHash(ev.Current),
+		SourceType:       "fim_event",
+		SourceID:         ev.ID,
+		GeneratorID:      alertmeta.GeneratorFIM,
+		GeneratorVersion: alertmeta.GeneratorVersion,
+		Detail:           detail,
 	}
 }
 
-func (s *Server) alertFromDrift(dev presence.Device, path string) presence.Alert {
+func (s *Server) alertFromDrift(dev presence.Device, path, prev, curr string) presence.Alert {
 	id, _ := newDeviceID()
+	action := "modified"
+	if prev != "" && curr == "" {
+		action = "deleted"
+	} else if prev == "" && curr != "" {
+		action = "created"
+	}
+	detail := alertmeta.BaseDetail(dev.Hostname)
+	detail[alertmeta.KeyFilePath] = path
+	detail[alertmeta.KeyFileHashPrev] = prev
+	detail[alertmeta.KeyFileHashCurr] = curr
+	detail[alertmeta.KeyEventAction] = action
+	detail = alertmeta.WithRaw(detail, map[string]any{
+		"path": path, "previous": prev, "current": curr, "action": action,
+	})
+	summary := "Current hash differs from accepted baseline"
+	if action == "deleted" {
+		summary = "Path missing from current inventory (present in baseline)"
+	} else if action == "created" {
+		summary = "Path appeared in inventory (not in baseline)"
+	} else if prev != "" || curr != "" {
+		summary = shortHash(prev) + " → " + shortHash(curr)
+	}
 	return presence.Alert{
-		ID:         id,
-		DeviceID:   dev.ID,
-		Hostname:   dev.Hostname,
-		Kind:       "fim",
-		Severity:   fimPathSeverity(path),
-		Title:      "Baseline drift: " + path,
-		Summary:    "Current hash differs from accepted baseline",
-		SourceType: "fim_drift",
-		SourceID:   "drift:" + path,
-		Detail:     map[string]any{"path": path},
+		ID:               id,
+		DeviceID:         dev.ID,
+		Hostname:         dev.Hostname,
+		Kind:             "fim",
+		Severity:         fimPathSeverity(path),
+		Title:            "Baseline drift (" + action + "): " + path,
+		Summary:          summary,
+		SourceType:       "fim_drift",
+		SourceID:         "drift:" + path,
+		GeneratorID:      alertmeta.GeneratorFIM,
+		GeneratorVersion: alertmeta.GeneratorVersion,
+		Detail:           detail,
 	}
 }
 
 func (s *Server) alertFromSca(dev presence.Device, r sca.Result) presence.Alert {
 	id, _ := newDeviceID()
+	detail := alertmeta.BaseDetail(dev.Hostname)
+	detail[alertmeta.KeySCAPackID] = r.PackID
+	detail[alertmeta.KeySCACheckID] = r.CheckID
+	detail[alertmeta.KeySCADetail] = r.Detail
+	detail = alertmeta.WithRaw(detail, map[string]any{
+		"packId": r.PackID, "checkId": r.CheckID, "detail": r.Detail, "pass": r.Pass,
+	})
 	return presence.Alert{
-		ID:         id,
-		DeviceID:   dev.ID,
-		Hostname:   dev.Hostname,
-		Kind:       "sca",
-		Severity:   r.Severity,
-		Title:      r.Title,
-		Summary:    r.Detail,
-		SourceType: "sca_check",
-		SourceID:   r.PackID + "/" + r.CheckID,
-		Detail: map[string]any{
-			"packId": r.PackID, "checkId": r.CheckID, "detail": r.Detail,
-		},
+		ID:               id,
+		DeviceID:         dev.ID,
+		Hostname:         dev.Hostname,
+		Kind:             "sca",
+		Severity:         r.Severity,
+		Title:            r.Title,
+		Summary:          r.Detail,
+		SourceType:       "sca_check",
+		SourceID:         r.PackID + "/" + r.CheckID,
+		GeneratorID:      alertmeta.GeneratorSCA,
+		GeneratorVersion: alertmeta.GeneratorVersion,
+		Detail:           detail,
 	}
 }
 
@@ -219,58 +275,16 @@ func (s *Server) processFimAlerts(events []presence.FimEvent) {
 }
 
 func (s *Server) processDriftAlerts(dev presence.Device) {
-	for _, path := range driftPaths(dev) {
-		path := path
+	drifts := driftStates(dev)
+	open := map[string]bool{}
+	for path, st := range drifts {
+		path, st := path, st
+		open[path] = true
 		s.ensureAlert(dev.ID, "fim", "drift:"+path, func() presence.Alert {
-			return s.alertFromDrift(dev, path)
+			return s.alertFromDrift(dev, path, st.prev, st.curr)
 		})
 	}
-}
-
-func (s *Server) processScaAlerts(dev presence.Device, results []sca.Result) {
-	for _, r := range results {
-		if r.Pass {
-			continue
-		}
-		r := r
-		s.ensureAlert(dev.ID, "sca", r.PackID+"/"+r.CheckID, func() presence.Alert {
-			return s.alertFromSca(dev, r)
-		})
-	}
-}
-
-func (s *Server) evaluateSca(dev presence.Device, agentResults []presence.ScaResult) []presence.ScaResult {
-	pack, err := sca.LoadDefaultLinuxSSH()
-	if err != nil {
-		s.log.Warn("sca pack", "err", err)
-		return agentResults
-	}
-	if dev.Platform != "" && pack.Platform != "" && dev.Platform != pack.Platform {
-		return agentResults
-	}
-	agentByID := map[string]presence.ScaResult{}
-	for _, r := range agentResults {
-		agentByID[r.CheckID] = r
-	}
-	var merged []presence.ScaResult
-	for _, r := range sca.EvalInventoryFieldChecks(pack, dev) {
-		merged = append(merged, presence.ScaResult{
-			PackID: r.PackID, CheckID: r.CheckID, Title: r.Title,
-			Severity: r.Severity, Pass: r.Pass, Detail: r.Detail,
-		})
-	}
-	for _, check := range pack.Checks {
-		if check.Type != "file_regex" {
-			continue
-		}
-		if r, ok := agentByID[check.ID]; ok {
-			merged = append(merged, r)
-		}
-	}
-	return merged
-}
-
-func driftPaths(dev presence.Device) []string {
+	// Resolve drift alerts for paths that returned to baseline.
 	baseline := map[string]string{}
 	for _, f := range dev.FimBaseline {
 		baseline[f.Path] = f.SHA256
@@ -279,45 +293,136 @@ func driftPaths(dev presence.Device) []string {
 	for _, f := range dev.Fim {
 		current[f.Path] = f.SHA256
 	}
-	var out []string
+	for path, exp := range baseline {
+		if open[path] {
+			continue
+		}
+		if cur, ok := current[path]; ok && cur == exp {
+			s.resolveAlert(dev.ID, "fim", "drift:"+path)
+		}
+	}
+}
+
+func (s *Server) processScaAlerts(dev presence.Device, results []sca.Result) {
+	for _, r := range results {
+		r := r
+		sourceID := r.PackID + "/" + r.CheckID
+		if r.Pass {
+			s.resolveAlert(dev.ID, "sca", sourceID)
+			continue
+		}
+		s.ensureAlert(dev.ID, "sca", sourceID, func() presence.Alert {
+			return s.alertFromSca(dev, r)
+		})
+	}
+}
+
+func (s *Server) evaluateSca(dev presence.Device, agentResults []presence.ScaResult) []presence.ScaResult {
+	var packs []*sca.Pack
+	if pack, err := sca.LoadDefaultLinuxSSH(); err == nil {
+		packs = append(packs, pack)
+	} else {
+		s.log.Warn("sca pack", "err", err)
+	}
+	if pack, err := sca.LoadDefaultLinuxHost(); err == nil {
+		packs = append(packs, pack)
+	}
+	agentByKey := map[string]presence.ScaResult{}
+	for _, r := range agentResults {
+		agentByKey[r.PackID+"/"+r.CheckID] = r
+		agentByKey[r.CheckID] = r
+	}
+	var merged []presence.ScaResult
 	seen := map[string]bool{}
-	for path, hash := range current {
-		if exp, ok := baseline[path]; ok && exp != hash {
-			if !seen[path] {
-				out = append(out, path)
-				seen[path] = true
+	for _, pack := range packs {
+		if pack == nil {
+			continue
+		}
+		if dev.Platform != "" && pack.Platform != "" && pack.Platform != "linux" && pack.Platform != dev.Platform {
+			continue
+		}
+		for _, r := range sca.EvalInventoryFieldChecks(pack, dev) {
+			key := r.PackID + "/" + r.CheckID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			merged = append(merged, presence.ScaResult{
+				PackID: r.PackID, CheckID: r.CheckID, Title: r.Title,
+				Severity: r.Severity, Pass: r.Pass, Detail: r.Detail,
+			})
+		}
+		for _, check := range pack.Checks {
+			if check.Type != "file_regex" {
+				continue
+			}
+			key := pack.ID + "/" + check.ID
+			if seen[key] {
+				continue
+			}
+			if r, ok := agentByKey[key]; ok {
+				seen[key] = true
+				merged = append(merged, r)
+				continue
+			}
+			if r, ok := agentByKey[check.ID]; ok {
+				seen[key] = true
+				r.PackID = pack.ID
+				merged = append(merged, r)
 			}
 		}
 	}
-	for path := range baseline {
-		if _, ok := current[path]; !ok {
-			if !seen[path] {
-				out = append(out, path)
-				seen[path] = true
+	if len(merged) == 0 {
+		return agentResults
+	}
+	return merged
+}
+
+type driftState struct {
+	prev string
+	curr string
+}
+
+func driftStates(dev presence.Device) map[string]driftState {
+	baseline := map[string]string{}
+	for _, f := range dev.FimBaseline {
+		baseline[f.Path] = f.SHA256
+	}
+	current := map[string]string{}
+	for _, f := range dev.Fim {
+		current[f.Path] = f.SHA256
+	}
+	out := map[string]driftState{}
+	for path, hash := range current {
+		if exp, ok := baseline[path]; ok && exp != hash {
+			out[path] = driftState{prev: exp, curr: hash}
+		} else if !ok {
+			// Present now but not in baseline: only alert after baseline exists.
+			if len(baseline) > 0 {
+				out[path] = driftState{prev: "", curr: hash}
 			}
+		}
+	}
+	for path, exp := range baseline {
+		if _, ok := current[path]; !ok {
+			out[path] = driftState{prev: exp, curr: ""}
 		}
 	}
 	return out
 }
 
 func fimPathSeverity(path string) string {
-	lower := strings.ToLower(path)
-	switch {
-	case strings.Contains(lower, "sshd_config"), strings.Contains(lower, "sudoers"):
-		return "high"
-	case strings.Contains(lower, "passwd"), strings.Contains(lower, "shadow"), strings.Contains(lower, "hosts"):
-		return "medium"
-	default:
-		return "medium"
-	}
+	return presence.FimPathSeverity(path)
 }
 
 func storeAlert(a presence.Alert) storepg.Alert {
 	return storepg.Alert{
 		ID: a.ID, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt,
+		DetectedAt: a.DetectedAt, IngestedAt: a.IngestedAt,
 		DeviceID: a.DeviceID, Hostname: a.Hostname, Kind: a.Kind,
 		Severity: a.Severity, Title: a.Title, Summary: a.Summary,
 		Status: a.Status, SourceType: a.SourceType, SourceID: a.SourceID,
+		GeneratorID: a.GeneratorID, GeneratorVersion: a.GeneratorVersion,
 		Detail: mustJSON(a.Detail),
 	}
 }
@@ -330,14 +435,19 @@ func alertToMap(a storepg.Alert) map[string]any {
 	}
 	return map[string]any{
 		"id": a.ID, "createdAt": a.CreatedAt, "updatedAt": a.UpdatedAt,
+		"detectedAt": a.DetectedAt, "ingestedAt": a.IngestedAt,
 		"deviceId": a.DeviceID, "hostname": a.Hostname, "kind": a.Kind,
 		"severity": a.Severity, "title": a.Title, "summary": a.Summary,
 		"status": a.Status, "sourceType": a.SourceType, "sourceId": a.SourceID,
+		"generatorId": a.GeneratorID, "generatorVersion": a.GeneratorVersion,
 		"detail": detail,
 	}
 }
 
 func shortHash(s string) string {
+	if s == "" {
+		return "(none)"
+	}
 	if len(s) <= 12 {
 		return s
 	}

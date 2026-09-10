@@ -7,19 +7,23 @@ import (
 )
 
 type Alert struct {
-	ID         string
-	CreatedAt  string
-	UpdatedAt  string
-	DeviceID   string
-	Hostname   string
-	Kind       string
-	Severity   string
-	Title      string
-	Summary    string
-	Status     string
-	SourceType string
-	SourceID   string
-	Detail     json.RawMessage
+	ID               string
+	CreatedAt        string
+	UpdatedAt        string
+	DetectedAt       string
+	IngestedAt       string
+	DeviceID         string
+	Hostname         string
+	Kind             string
+	Severity         string
+	Title            string
+	Summary          string
+	Status           string
+	SourceType       string
+	SourceID         string
+	GeneratorID      string
+	GeneratorVersion string
+	Detail           json.RawMessage
 }
 
 type AlertFilters struct {
@@ -42,17 +46,31 @@ func (s *Store) InsertAlert(ctx context.Context, a Alert) error {
 	if updated == "" {
 		updated = created
 	}
+	detected := a.DetectedAt
+	if detected == "" {
+		detected = created
+	}
+	ingested := a.IngestedAt
+	if ingested == "" {
+		ingested = created
+	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO alerts (
-			id, created_at, updated_at, device_id, hostname, kind, severity,
-			title, summary, status, source_type, source_id, detail
+			id, created_at, updated_at, detected_at, ingested_at,
+			device_id, hostname, kind, severity,
+			title, summary, status, source_type, source_id,
+			generator_id, generator_version, detail
 		) VALUES (
-			$1, $2::timestamptz, $3::timestamptz, $4, $5, $6, $7,
-			$8, $9, $10, $11, $12, $13::jsonb
+			$1, $2::timestamptz, $3::timestamptz, $4::timestamptz, $5::timestamptz,
+			$6, $7, $8, $9,
+			$10, $11, $12, $13, $14,
+			$15, $16, $17::jsonb
 		)
 		ON CONFLICT (id) DO NOTHING
-	`, a.ID, created, updated, a.DeviceID, a.Hostname, a.Kind, a.Severity,
-		a.Title, a.Summary, a.Status, a.SourceType, a.SourceID, string(detail))
+	`, a.ID, created, updated, detected, ingested,
+		a.DeviceID, a.Hostname, a.Kind, a.Severity,
+		a.Title, a.Summary, a.Status, a.SourceType, a.SourceID,
+		a.GeneratorID, a.GeneratorVersion, string(detail))
 	return err
 }
 
@@ -62,13 +80,17 @@ func (s *Store) ListAlerts(ctx context.Context, f AlertFilters) ([]Alert, error)
 		limit = 200
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, created_at, updated_at, device_id, hostname, kind, severity,
-		       title, summary, status, source_type, source_id, detail
+		SELECT id, created_at, updated_at,
+		       COALESCE(detected_at, created_at), COALESCE(ingested_at, created_at),
+		       device_id, hostname, kind, severity,
+		       title, summary, status, source_type, source_id,
+		       COALESCE(generator_id, ''), COALESCE(generator_version, ''),
+		       detail
 		FROM alerts
 		WHERE ($1 = '' OR status = $1)
 		  AND ($2 = '' OR kind = $2)
 		  AND ($3 = '' OR device_id = $3)
-		ORDER BY created_at DESC
+		ORDER BY COALESCE(detected_at, created_at) DESC
 		LIMIT $4
 	`, f.Status, f.Kind, f.DeviceID, limit)
 	if err != nil {
@@ -78,16 +100,20 @@ func (s *Store) ListAlerts(ctx context.Context, f AlertFilters) ([]Alert, error)
 	var out []Alert
 	for rows.Next() {
 		var a Alert
-		var created, updated time.Time
+		var created, updated, detected, ingested time.Time
 		var detail []byte
 		if err := rows.Scan(
-			&a.ID, &created, &updated, &a.DeviceID, &a.Hostname, &a.Kind, &a.Severity,
-			&a.Title, &a.Summary, &a.Status, &a.SourceType, &a.SourceID, &detail,
+			&a.ID, &created, &updated, &detected, &ingested,
+			&a.DeviceID, &a.Hostname, &a.Kind, &a.Severity,
+			&a.Title, &a.Summary, &a.Status, &a.SourceType, &a.SourceID,
+			&a.GeneratorID, &a.GeneratorVersion, &detail,
 		); err != nil {
 			return nil, err
 		}
 		a.CreatedAt = created.UTC().Format(time.RFC3339)
 		a.UpdatedAt = updated.UTC().Format(time.RFC3339)
+		a.DetectedAt = detected.UTC().Format(time.RFC3339)
+		a.IngestedAt = ingested.UTC().Format(time.RFC3339)
 		a.Detail = detail
 		out = append(out, a)
 	}

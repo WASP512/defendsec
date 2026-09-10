@@ -10,6 +10,8 @@ export type Alert = {
   id: string;
   createdAt: string;
   updatedAt: string;
+  detectedAt?: string;
+  ingestedAt?: string;
   deviceId: string;
   hostname: string;
   kind: AlertKind;
@@ -19,6 +21,8 @@ export type Alert = {
   status: AlertStatus;
   sourceType: string;
   sourceId: string;
+  generatorId?: string;
+  generatorVersion?: string;
   detail: Record<string, unknown>;
 };
 
@@ -33,6 +37,8 @@ function mapRow(row: {
   id: string;
   created_at: Date;
   updated_at: Date;
+  detected_at?: Date | null;
+  ingested_at?: Date | null;
   device_id: string;
   hostname: string;
   kind: string;
@@ -42,12 +48,16 @@ function mapRow(row: {
   status: string;
   source_type: string;
   source_id: string;
+  generator_id?: string | null;
+  generator_version?: string | null;
   detail: unknown;
 }): Alert {
   return {
     id: row.id,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
+    detectedAt: row.detected_at ? new Date(row.detected_at).toISOString() : undefined,
+    ingestedAt: row.ingested_at ? new Date(row.ingested_at).toISOString() : undefined,
     deviceId: row.device_id,
     hostname: row.hostname,
     kind: row.kind as AlertKind,
@@ -57,6 +67,8 @@ function mapRow(row: {
     status: row.status as AlertStatus,
     sourceType: row.source_type,
     sourceId: row.source_id,
+    generatorId: row.generator_id ?? undefined,
+    generatorVersion: row.generator_version ?? undefined,
     detail: (row.detail as Record<string, unknown>) ?? {},
   };
 }
@@ -67,6 +79,8 @@ export async function listAlerts(filters: AlertFilters = {}): Promise<Alert[]> {
     id: string;
     created_at: Date;
     updated_at: Date;
+    detected_at: Date | null;
+    ingested_at: Date | null;
     device_id: string;
     hostname: string;
     kind: string;
@@ -76,15 +90,23 @@ export async function listAlerts(filters: AlertFilters = {}): Promise<Alert[]> {
     status: string;
     source_type: string;
     source_id: string;
+    generator_id: string | null;
+    generator_version: string | null;
     detail: unknown;
   }>(
-    `SELECT id, created_at, updated_at, device_id, hostname, kind, severity,
-            title, summary, status, source_type, source_id, detail
+    `SELECT id, created_at, updated_at,
+            COALESCE(detected_at, created_at) AS detected_at,
+            COALESCE(ingested_at, created_at) AS ingested_at,
+            device_id, hostname, kind, severity,
+            title, summary, status, source_type, source_id,
+            COALESCE(generator_id, '') AS generator_id,
+            COALESCE(generator_version, '') AS generator_version,
+            detail
      FROM alerts
      WHERE ($1 = '' OR status = $1)
        AND ($2 = '' OR kind = $2)
        AND ($3 = '' OR device_id = $3)
-     ORDER BY created_at DESC
+     ORDER BY COALESCE(detected_at, created_at) DESC
      LIMIT $4`,
     [filters.status ?? "", filters.kind ?? "", filters.deviceId ?? "", limit],
   );

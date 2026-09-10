@@ -492,7 +492,15 @@ func FimPaths() []string {
 	var paths []string
 	switch runtime.GOOS {
 	case "linux":
-		paths = []string{"/etc/passwd", "/etc/group", "/etc/hosts", "/etc/ssh/sshd_config", "/etc/sudoers"}
+		paths = []string{
+			"/etc/passwd",
+			"/etc/group",
+			"/etc/hosts",
+			"/etc/ssh/sshd_config",
+			"/etc/ssh/sshd_config.d",
+			"/etc/sudoers",
+			"/etc/crypto-policies/config",
+		}
 	case "darwin":
 		paths = []string{"/etc/hosts", "/etc/ssh/sshd_config"}
 	default:
@@ -508,9 +516,50 @@ func FimPaths() []string {
 	return paths
 }
 
+// ExpandFimPaths turns watch roots into concrete files (directories → *.conf / *.cfg children).
+func ExpandFimPaths(roots []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		p = filepath.Clean(p)
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		st, err := os.Stat(root)
+		if err != nil {
+			add(root)
+			continue
+		}
+		if !st.IsDir() {
+			add(root)
+			continue
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || (!strings.HasSuffix(name, ".conf") && !strings.HasSuffix(name, ".cfg")) {
+				continue
+			}
+			add(filepath.Join(root, name))
+		}
+	}
+	return out
+}
+
 func fimFiles() []FimFile {
 	var out []FimFile
-	for _, p := range FimPaths() {
+	for _, p := range ExpandFimPaths(FimPaths()) {
 		if f, err := hashFile(p); err == nil {
 			out = append(out, f)
 		}

@@ -83,9 +83,11 @@ Verify: hosts appear in the console, alerts/commands tables present, agents reco
 ## Alert triage
 
 - **Alerts** page filters by status/kind/device.
-- Acknowledge / resolve / reopen (admin only).
+- Each alert carries **detected** vs **ingested** time plus a **generator** id (`defendsec.fim` / `.sca` / `.vuln`) and a stable `detail` contract (`file.path`, `event.action`, `sca.*`, `package.*`, `advisory.*`, plus `raw` for replay).
+- Acknowledge / resolve / reopen (admin only). Open FIM drift and SCA findings auto-resolve when the host returns to baseline / checks pass.
 - **FIM critical/high:** use **Suggest isolate** (confirmation required; does not auto-run).
-- **Vuln:** link to **Advisories** for package/CVE context.
+- **SCA high/critical:** open the host response panel or filter SCA alerts for that device.
+- **Vuln:** link to **Advisories** for package/CVE context (Fedora RPM aliases such as `openssh-server` ↔ `openssh`, `openssl-libs` ↔ `openssl`).
 - Every signed command is audited as `command_issue` (admin) and `command_ack` (agent).
 
 ## Data retention

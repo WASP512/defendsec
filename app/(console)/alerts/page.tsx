@@ -132,8 +132,12 @@ export default async function AlertsPage({
                 <Link href={`/devices/${alert.deviceId}`} className="underline">
                   {alert.hostname || alert.deviceId}
                 </Link>
-                {" · "}
-                {relativeTime(alert.createdAt)}
+                {" · detected "}
+                {relativeTime(alert.detectedAt || alert.createdAt)}
+                {alert.ingestedAt && alert.detectedAt && alert.ingestedAt !== alert.detectedAt
+                  ? ` · ingested ${relativeTime(alert.ingestedAt)}`
+                  : null}
+                {alert.generatorId ? ` · ${alert.generatorId}` : null}
               </p>
             </div>
             <div className="flex flex-col items-end gap-2">

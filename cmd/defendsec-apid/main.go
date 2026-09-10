@@ -93,7 +93,7 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("postgres: %w", err)
 		}
-		for _, name := range []string{"001_init.sql", "002_alerts.sql", "003_saved_queries.sql"} {
+		for _, name := range []string{"001_init.sql", "002_alerts.sql", "003_saved_queries.sql", "004_alert_provenance.sql"} {
 			migSQL, err := os.ReadFile(filepath.Join("db", "migrations", name))
 			if err != nil {
 				migSQL, err = os.ReadFile(filepath.Join(*dataDir, "..", "db", "migrations", name))

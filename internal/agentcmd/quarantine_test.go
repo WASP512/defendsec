@@ -13,6 +13,9 @@ func TestAllowedQuarantinePath(t *testing.T) {
 	if !AllowedQuarantinePath("/tmp/defendsec-quarantine/evil.bin") {
 		t.Fatal("expected staging path allowed")
 	}
+	if !AllowedQuarantinePath("/etc/ssh/sshd_config.d/50-redhat.conf") {
+		t.Fatal("expected sshd drop-in under watched dir allowed")
+	}
 	if AllowedQuarantinePath("/etc/shadow") {
 		t.Fatal("expected /etc/shadow rejected (not in default FIM list)")
 	}

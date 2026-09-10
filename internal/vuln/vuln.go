@@ -6,14 +6,28 @@ import (
 )
 
 var packageAliases = map[string]string{
-	"docker.io":              "docker",
-	"docker-ce":              "docker",
-	"docker-ee":              "docker",
-	"google-chrome":          "google chrome",
-	"google-chrome-stable":   "google chrome",
-	"google chrome":          "google chrome",
-	"adobe-photoshop":        "adobe photoshop",
-	"openssh":                "openssh-server",
+	"docker.io":            "docker",
+	"docker-ce":            "docker",
+	"docker-ee":            "docker",
+	"google-chrome":        "google chrome",
+	"google-chrome-stable": "google chrome",
+	"google chrome":        "google chrome",
+	"adobe-photoshop":      "adobe photoshop",
+	// Fedora/RHEL RPM names ↔ common advisory package labels
+	"openssh":        "openssh",
+	"openssh-server": "openssh",
+	"openssh-clients": "openssh",
+	"openssl":        "openssl",
+	"openssl-libs":   "openssl",
+	"openssl-devel":  "openssl",
+	"kernel":         "kernel",
+	"kernel-core":    "kernel",
+	"kernel-modules": "kernel",
+	"glibc":          "glibc",
+	"glibc-common":   "glibc",
+	"curl":           "curl",
+	"libcurl":        "curl",
+	"libcurl-minimal": "curl",
 }
 
 func StripDebianEpoch(raw string) string {

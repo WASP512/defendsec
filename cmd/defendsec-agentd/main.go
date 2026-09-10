@@ -463,7 +463,11 @@ func inventoryReport(snap hostinv.Snapshot, stateDir string) *defendsecv1.Invent
 		rep.Fim = append(rep.Fim, &defendsecv1.FimFile{Path: item.Path, Sha256: item.SHA256, Size: item.Size, Mtime: item.Mtime})
 	}
 	if snap.Platform == "linux" {
-		if pack, err := sca.LoadDefaultLinuxSSH(); err == nil {
+		for _, load := range []func() (*sca.Pack, error){sca.LoadDefaultLinuxSSH, sca.LoadDefaultLinuxHost} {
+			pack, err := load()
+			if err != nil {
+				continue
+			}
 			for _, r := range sca.EvalFileRegexChecks(pack) {
 				rep.ScaResults = append(rep.ScaResults, &defendsecv1.ScaResult{
 					PackId: r.PackID, CheckId: r.CheckID, Title: r.Title,

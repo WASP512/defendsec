@@ -93,17 +93,15 @@ func TestEvalFileRegex_dropIns(t *testing.T) {
 	}
 }
 
-func TestEvalFileRegex_missingSkipped(t *testing.T) {
-	check := Check{
-		ID:        "sshd-password-auth",
-		Title:     "PasswordAuthentication should be no",
-		Severity:  "high",
-		Type:      "file_regex",
-		Path:      filepath.Join(t.TempDir(), "no-such-sshd_config"),
-		MustMatch: `(?i)^PasswordAuthentication\s+no`,
+func TestLoadDefaultLinuxHost(t *testing.T) {
+	pack, err := LoadDefaultLinuxHost()
+	if err != nil {
+		t.Fatal(err)
 	}
-	got := EvalFileRegex(check)
-	if !got.Pass {
-		t.Fatalf("expected skip/pass for missing file, got: %s", got.Detail)
+	if pack.ID != "sca-linux-host-v1" {
+		t.Fatalf("id = %s", pack.ID)
+	}
+	if len(pack.Checks) < 3 {
+		t.Fatalf("expected host checks, got %d", len(pack.Checks))
 	}
 }

@@ -18,6 +18,8 @@ export function AlertSuggestActions({
 
   const showIsolateSuggest =
     alert.kind === "fim" && (alert.severity === "critical" || alert.severity === "high");
+  const showScaHost =
+    alert.kind === "sca" && (alert.severity === "critical" || alert.severity === "high");
 
   async function suggestIsolate() {
     if (
@@ -55,6 +57,31 @@ export function AlertSuggestActions({
           className="inline-flex h-8 items-center rounded-lg border border-border px-3 text-sm hover:bg-muted"
         >
           View advisories
+        </Link>
+        <Link
+          href={`/devices/${alert.deviceId}`}
+          className="inline-flex h-8 items-center rounded-lg border border-border px-3 text-sm hover:bg-muted"
+        >
+          Open host
+        </Link>
+      </div>
+    );
+  }
+
+  if (showScaHost) {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <Link
+          href={`/devices/${alert.deviceId}`}
+          className="inline-flex h-8 items-center rounded-lg border border-border px-3 text-sm hover:bg-muted"
+        >
+          Open host response
+        </Link>
+        <Link
+          href={`/alerts?kind=sca&deviceId=${encodeURIComponent(alert.deviceId)}`}
+          className="inline-flex h-8 items-center rounded-lg border border-border px-3 text-sm hover:bg-muted"
+        >
+          SCA alerts
         </Link>
       </div>
     );

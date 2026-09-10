@@ -1,0 +1,34 @@
+id: sca-linux-host-v1
+name: Linux host baseline (Fedora/RHEL-friendly)
+platform: linux
+checks:
+  - id: firewall-enabled
+    title: Host firewall reported enabled
+    severity: medium
+    type: inventory_field
+    field: firewall
+    expect: "true"
+  - id: disk-encryption
+    title: Disk encryption reported enabled
+    severity: high
+    type: inventory_field
+    field: diskEncryption
+    expect: "true"
+  - id: crypto-policies-config
+    title: System crypto-policies config present (Fedora/RHEL)
+    severity: low
+    type: file_regex
+    path: /etc/crypto-policies/config
+    must_match: '(?i)^(DEFAULT|FUTURE|FIPS|NEXT)'
+  - id: sshd-password-auth-host
+    title: PasswordAuthentication should be no (sshd + drop-ins)
+    severity: high
+    type: file_regex
+    path: /etc/ssh/sshd_config
+    must_match: '(?i)^PasswordAuthentication\s+no'
+  - id: sshd-permit-root
+    title: PermitRootLogin should be no or prohibit-password
+    severity: high
+    type: file_regex
+    path: /etc/ssh/sshd_config
+    must_match: '(?i)^PermitRootLogin\s+(no|prohibit-password|without-password)'

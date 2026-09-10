@@ -37,4 +37,16 @@ func TestPackageMatches(t *testing.T) {
 	if !PackageMatches("google chrome", "Google Chrome") {
 		t.Fatal("Google Chrome should match google chrome")
 	}
+	if !PackageMatches("openssh", "openssh-server") {
+		t.Fatal("openssh-server should match openssh")
+	}
+	if !PackageMatches("openssl", "openssl-libs") {
+		t.Fatal("openssl-libs should match openssl")
+	}
+	if !PackageMatches("kernel", "kernel-core") {
+		t.Fatal("kernel-core should match kernel")
+	}
+	if !PackageMatches("curl", "libcurl") {
+		t.Fatal("libcurl should match curl")
+	}
 }

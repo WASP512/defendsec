@@ -48,8 +48,9 @@ If enroll TLS fails, wipe `data/pki` once and restart apid so the hostname/IP SA
 | --- | --- |
 | Packages | Agent uses `rpm` / `dnf check-update` (exit 100 = updates available) |
 | Firewall inventory | `firewall-cmd --state` (firewalld) |
-| FIM | `/etc/passwd`, `/etc/group`, `/etc/hosts`, `/etc/ssh/sshd_config`, `/etc/sudoers` |
+| FIM | `/etc/passwd`, `/etc/group`, `/etc/hosts`, `/etc/ssh/sshd_config`, `/etc/ssh/sshd_config.d/*.conf`, `/etc/sudoers`, `/etc/crypto-policies/config` |
 | SCA SSH | Reads `/etc/ssh/sshd_config` **and** `/etc/ssh/sshd_config.d/*.conf`. Missing sshd config is skipped (no openssh-server). Obsolete `Protocol 2` check is not used. |
+| SCA host | Firewall + disk encryption inventory fields, crypto-policies config, PasswordAuthentication / PermitRootLogin (shared sshd paths). |
 | Live `crontab` | Also reads `/var/spool/cron` (Fedora/RHEL layout) |
 | Isolate net | Needs root + `DEFENDSEC_ISOLATE_NET=1` + `iptables-nft`. firewalld can coexist awkwardly; prefer flag-only isolate for casual testing. |
 

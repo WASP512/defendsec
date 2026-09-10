@@ -6,9 +6,26 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
+
+// FimPathSeverity returns the default severity for a watched integrity path.
+func FimPathSeverity(path string) string {
+	base := strings.ToLower(filepath.Base(path))
+	lower := strings.ToLower(path)
+	switch {
+	case strings.Contains(lower, "sshd_config"), strings.Contains(lower, "sudoers"),
+		base == "shadow", strings.Contains(lower, "/shadow"):
+		return "high"
+	case base == "passwd", base == "group", strings.Contains(lower, "/hosts"),
+		strings.Contains(lower, "ssh_config"), strings.Contains(lower, "crypto-policies"):
+		return "medium"
+	default:
+		return "medium"
+	}
+}
 
 type Software struct {
 	Name    string `json:"name"`
@@ -50,19 +67,23 @@ type ScaResult struct {
 }
 
 type Alert struct {
-	ID         string         `json:"id"`
-	CreatedAt  string         `json:"createdAt"`
-	UpdatedAt  string         `json:"updatedAt"`
-	DeviceID   string         `json:"deviceId"`
-	Hostname   string         `json:"hostname"`
-	Kind       string         `json:"kind"`
-	Severity   string         `json:"severity"`
-	Title      string         `json:"title"`
-	Summary    string         `json:"summary"`
-	Status     string         `json:"status"`
-	SourceType string         `json:"sourceType"`
-	SourceID   string         `json:"sourceId"`
-	Detail     map[string]any `json:"detail,omitempty"`
+	ID               string         `json:"id"`
+	CreatedAt        string         `json:"createdAt"`
+	UpdatedAt        string         `json:"updatedAt"`
+	DetectedAt       string         `json:"detectedAt,omitempty"`
+	IngestedAt       string         `json:"ingestedAt,omitempty"`
+	DeviceID         string         `json:"deviceId"`
+	Hostname         string         `json:"hostname"`
+	Kind             string         `json:"kind"`
+	Severity         string         `json:"severity"`
+	Title            string         `json:"title"`
+	Summary          string         `json:"summary"`
+	Status           string         `json:"status"`
+	SourceType       string         `json:"sourceType"`
+	SourceID         string         `json:"sourceId"`
+	GeneratorID      string         `json:"generatorId,omitempty"`
+	GeneratorVersion string         `json:"generatorVersion,omitempty"`
+	Detail           map[string]any `json:"detail,omitempty"`
 }
 
 type Device struct {
@@ -208,21 +229,39 @@ func (f *File) ApplyInventory(dev Device) ([]FimEvent, error) {
 	for _, file := range old.Fim {
 		prev[file.Path] = file.SHA256
 	}
+	curr := map[string]string{}
+	for _, file := range dev.Fim {
+		curr[file.Path] = file.SHA256
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	var created []FimEvent
-	for _, file := range dev.Fim {
-		if last, ok := prev[file.Path]; ok && last != file.SHA256 {
-			ev := FimEvent{
-				ID:         newID(),
-				DeviceID:   dev.ID,
-				Hostname:   merged.Hostname,
-				Path:       file.Path,
-				Previous:   last,
-				Current:    file.SHA256,
-				DetectedAt: now,
+	appendEvent := func(path, previous, current, action string) {
+		ev := FimEvent{
+			ID:         newID(),
+			DeviceID:   dev.ID,
+			Hostname:   merged.Hostname,
+			Path:       path,
+			Previous:   previous,
+			Current:    current,
+			DetectedAt: now,
+			Action:     action,
+			Severity:   FimPathSeverity(path),
+		}
+		created = append(created, ev)
+		doc.FimEvents = append([]FimEvent{ev}, doc.FimEvents...)
+	}
+	for path, hash := range curr {
+		if last, ok := prev[path]; ok {
+			if last != hash {
+				appendEvent(path, last, hash, "modified")
 			}
-			created = append(created, ev)
-			doc.FimEvents = append([]FimEvent{ev}, doc.FimEvents...)
+		} else if len(prev) > 0 {
+			appendEvent(path, "", hash, "created")
+		}
+	}
+	for path, last := range prev {
+		if _, ok := curr[path]; !ok {
+			appendEvent(path, last, "", "deleted")
 		}
 	}
 	if len(doc.FimEvents) > 200 {
