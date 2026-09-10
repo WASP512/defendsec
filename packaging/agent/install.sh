@@ -80,17 +80,33 @@ fetch_binary() {
   if [[ -n "$DOWNLOAD_BASE" ]]; then
     info "Downloading ${name} from ${DOWNLOAD_BASE}"
     curl -fsSL "${DOWNLOAD_BASE%/}/${name}" -o "$TMPDIR/defendsec-agentd"
+    curl -fsSL "${DOWNLOAD_BASE%/}/SHA256SUMS" -o "$TMPDIR/SHA256SUMS"
+    verify_binary "$name"
     chmod 0755 "$TMPDIR/defendsec-agentd"
     return
   fi
 
   info "Downloading latest GitHub release asset (${GITHUB_REPO})"
-  local api url
+  local api release url sums_url
   api="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-  url="$(curl -fsSL "$api" | jq -r --arg n "$name" '.assets[] | select(.name==$n) | .browser_download_url' | head -1)"
+  release="$(curl -fsSL "$api")"
+  url="$(jq -r --arg n "$name" '.assets[] | select(.name==$n) | .browser_download_url' <<<"$release" | head -1)"
+  sums_url="$(jq -r '.assets[] | select(.name=="SHA256SUMS") | .browser_download_url' <<<"$release" | head -1)"
   [[ -n "$url" && "$url" != "null" ]] || die "no release asset named ${name}; pass --download-base or --binary"
+  [[ -n "$sums_url" && "$sums_url" != "null" ]] || die "release has no SHA256SUMS asset"
   curl -fsSL "$url" -o "$TMPDIR/defendsec-agentd"
+  curl -fsSL "$sums_url" -o "$TMPDIR/SHA256SUMS"
+  verify_binary "$name"
   chmod 0755 "$TMPDIR/defendsec-agentd"
+}
+
+verify_binary() {
+  local name="$1" expected actual
+  expected="$(awk -v n="$name" '$2 == n || $2 == "*" n {print $1; exit}' "$TMPDIR/SHA256SUMS")"
+  [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "SHA256SUMS has no valid entry for ${name}"
+  actual="$(sha256sum "$TMPDIR/defendsec-agentd" | awk '{print $1}')"
+  [[ "$actual" == "$expected" ]] || die "checksum mismatch for ${name}"
+  info "Verified ${name} SHA256"
 }
 
 install_packages_light() {
@@ -141,6 +157,20 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable --now defendsec-agentd
+
+  local ok=0
+  for _ in $(seq 1 30); do
+    if systemctl is-active --quiet defendsec-agentd && [[ -s "${STATE_DIR}/device-id" ]]; then
+      ok=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$ok" -ne 1 ]]; then
+    systemctl --no-pager --full status defendsec-agentd || true
+    journalctl -u defendsec-agentd --no-pager -n 50 || true
+    die "defendsec-agentd failed to enroll and start"
+  fi
 }
 
 install_packages_light

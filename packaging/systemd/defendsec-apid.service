@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 User=defendsec
 Group=defendsec
+WorkingDirectory=/opt/defendsec
 # Copy packaging/systemd/apid.env.example → /etc/defendsec/apid.env
 EnvironmentFile=-/etc/defendsec/apid.env
 ExecStart=/usr/local/bin/defendsec-apid \

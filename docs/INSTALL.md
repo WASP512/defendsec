@@ -58,6 +58,26 @@ When it finishes you get:
 
 Enter the CT anytime with `pct enter <CTID>`.
 
+### First login and credential recovery
+
+Open the console with the explicit HTTP scheme: `http://<ct-ip>:47261`. Port `47261` does not
+serve TLS; browsing to `https://…:47261` causes `SSL_ERROR_RX_RECORD_TOO_LONG`. The admin token
+travels over plain HTTP, so expose this port only on a trusted admin network or put the console
+behind an HTTPS reverse proxy. When HTTPS terminates at a proxy, set
+`DEFENDSEC_COOKIE_SECURE=true` in `/etc/defendsec/console.env`.
+
+There is no username. Paste the admin token printed by the installer. Recover the application
+credentials from the Proxmox host with:
+
+```bash
+pct exec <CTID> -- cat /var/lib/defendsec/admin-token.txt
+pct exec <CTID> -- jq -r .enrollSecret /var/lib/defendsec/defendsec.json
+```
+
+The generated CT root password is printed by the helper but is not stored. You normally do not
+need it: `pct enter <CTID>` opens a root shell. Reset it with
+`pct exec <CTID> -- passwd root`.
+
 ### Server-only (no Proxmox)
 
 On a Debian/Ubuntu (or Fedora) VM as root:

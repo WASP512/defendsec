@@ -211,6 +211,19 @@ if [[ -f /root/.ssh/authorized_keys ]]; then
 fi
 
 pct create "${CREATE_ARGS[@]}"
+install_succeeded=0
+on_exit() {
+  local rc=$?
+  if [[ "$rc" -ne 0 && "$install_succeeded" -ne 1 ]]; then
+    cat >&2 <<EOF
+
+DefendSec install stopped, but CT ${CTID} was left in place.
+Inspect it: pct enter ${CTID}
+Remove it:  pct stop ${CTID}; pct destroy ${CTID}
+EOF
+  fi
+}
+trap on_exit EXIT
 pct start "$CTID"
 
 info "Waiting for network inside CT ${CTID}"
@@ -270,6 +283,7 @@ pct exec "$CTID" -- env \
   --advertise-hostname "$CT_HOSTNAME"
 
 IP="$(pct exec "$CTID" -- bash -c "hostname -I 2>/dev/null | awk '{print \$1}'" | tr -d '\r')"
+install_succeeded=1
 info "DefendSec CT ${CTID} is ready"
 cat <<EOF
 

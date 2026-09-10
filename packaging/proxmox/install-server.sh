@@ -16,6 +16,11 @@
 
 set -euo pipefail
 
+# Minimal Debian templates do not include en_US.UTF-8 even when the host passes
+# that locale through pct exec. C.UTF-8 is always available on Debian 12.
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Run as root (or via sudo)." >&2
   exit 1
@@ -29,6 +34,7 @@ DOWNLOADS_DIR="${DOWNLOADS_DIR:-${DATA_DIR}/downloads}"
 ADVERTISE_HOSTNAME="${ADVERTISE_HOSTNAME:-}"
 PG_PASSWORD="${PG_PASSWORD:-}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-}"
+ENROLL_SECRET="${ENROLL_SECRET:-}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 # native = system postgresql (default, works in Proxmox LXC). docker = optional.
 POSTGRES_MODE="${POSTGRES_MODE:-native}"
@@ -91,6 +97,9 @@ if [[ -z "$PG_PASSWORD" ]]; then
 fi
 if [[ -z "$ADMIN_TOKEN" ]]; then
   ADMIN_TOKEN="$(openssl rand -base64 32 | tr -d '/+=' | cut -c1-40)"
+fi
+if [[ -z "$ENROLL_SECRET" ]]; then
+  ENROLL_SECRET="$(openssl rand -hex 12)"
 fi
 if [[ -z "$ADVERTISE_HOSTNAME" ]]; then
   ADVERTISE_HOSTNAME="$(hostname -f 2>/dev/null || hostname)"
@@ -280,7 +289,7 @@ ensure_node() {
 
 ensure_toolchains() {
   if [[ "$SKIP_BUILD" == "1" ]]; then
-    NODE_BIN="${NODE_BIN:-$(command -v node || echo /usr/bin/node)}"
+    ensure_node
     return
   fi
   ensure_go
@@ -418,28 +427,35 @@ start_postgres() {
 }
 
 build_binaries() {
-  if [[ "$SKIP_BUILD" == "1" ]]; then
+  if [[ "$SKIP_BUILD" != "1" ]]; then
+    info "Building apid + agent (${GOARCH}) with $("$GO_BIN" version | awk '{print $3}')"
+    su -s /bin/bash defendsec -c "
+      set -euo pipefail
+      cd $(printf %q "$INSTALL_ROOT")
+      export GOTOOLCHAIN=local
+      export PATH=$(printf %q "$(dirname "$GO_BIN")"):\$PATH
+      export GOPATH=$(printf %q "${DATA_DIR}/go")
+      export GOCACHE=$(printf %q "${DATA_DIR}/go/cache")
+      go build -o bin/defendsec-apid ./cmd/defendsec-apid
+      go build -o bin/defendsec-agentd ./cmd/defendsec-agentd
+      GOOS=linux GOARCH=amd64 go build -o bin/defendsec-agentd-linux-amd64 ./cmd/defendsec-agentd
+      GOOS=linux GOARCH=arm64 go build -o bin/defendsec-agentd-linux-arm64 ./cmd/defendsec-agentd
+    "
+  else
     info "Skipping build (--skip-build)"
-    return
   fi
-  info "Building apid + agent (${GOARCH}) with $("$GO_BIN" version | awk '{print $3}')"
-  su -s /bin/bash defendsec -c "
-    set -euo pipefail
-    cd $(printf %q "$INSTALL_ROOT")
-    export GOTOOLCHAIN=local
-    export PATH=$(printf %q "$(dirname "$GO_BIN")"):\$PATH
-    export GOPATH=$(printf %q "${DATA_DIR}/go")
-    export GOCACHE=$(printf %q "${DATA_DIR}/go/cache")
-    go build -o bin/defendsec-apid ./cmd/defendsec-apid
-    go build -o bin/defendsec-agentd ./cmd/defendsec-agentd
-    GOOS=linux GOARCH=${GOARCH} go build -o bin/defendsec-agentd-linux-${GOARCH} ./cmd/defendsec-agentd
-  "
+  [[ -x "${INSTALL_ROOT}/bin/defendsec-apid" ]] || die "missing prebuilt bin/defendsec-apid"
+  [[ -x "${INSTALL_ROOT}/bin/defendsec-agentd" ]] || die "missing prebuilt bin/defendsec-agentd"
+  [[ -x "${INSTALL_ROOT}/bin/defendsec-agentd-linux-amd64" ]] || die "missing prebuilt amd64 agent"
+  [[ -x "${INSTALL_ROOT}/bin/defendsec-agentd-linux-arm64" ]] || die "missing prebuilt arm64 agent"
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-apid" /usr/local/bin/defendsec-apid
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-agentd" /usr/local/bin/defendsec-agentd
 }
 
 build_console() {
   if [[ "$SKIP_BUILD" == "1" ]]; then
+    [[ -f "${INSTALL_ROOT}/.next/standalone/server.js" ]] \
+      || die "--skip-build requested but .next/standalone/server.js is missing"
     return
   fi
   info "Building console (Next.js standalone) with Node $("$NODE_BIN" --version)"
@@ -466,10 +482,27 @@ seed_secrets_and_downloads() {
   info "Writing env files + agent download bundle"
   local db_url="postgres://defendsec:${PG_PASSWORD}@127.0.0.1:5432/defendsec?sslmode=disable"
 
+  # apid needs the enroll secret before it can start, while the console requires
+  # apid. Seed their shared store to avoid a first-boot dependency cycle.
+  if [[ -f "${DATA_DIR}/defendsec.json" ]]; then
+    local existing_enroll
+    existing_enroll="$(jq -er '.enrollSecret | select(type == "string" and length > 0)' \
+      "${DATA_DIR}/defendsec.json" 2>/dev/null)" \
+      || die "${DATA_DIR}/defendsec.json exists but has no valid enrollSecret; restore or remove it"
+    ENROLL_SECRET="$existing_enroll"
+  else
+    jq -n --arg secret "$ENROLL_SECRET" \
+      '{schemaVersion: 2, enrollSecret: $secret, devices: [], fimEvents: [], triages: []}' \
+      >"${DATA_DIR}/defendsec.json"
+    chown defendsec:defendsec "${DATA_DIR}/defendsec.json"
+    chmod 640 "${DATA_DIR}/defendsec.json"
+  fi
+
   cat >/etc/defendsec/apid.env <<EOF
 DEFENDSEC_DATABASE_URL=${db_url}
 DEFENDSEC_TLS_HOSTNAME=${TLS_HOSTS}
 DEFENDSEC_ADMIN_TOKEN=${ADMIN_TOKEN}
+DEFENDSEC_ENROLL_SECRET=${ENROLL_SECRET}
 EOF
   chmod 640 /etc/defendsec/apid.env
   chown root:defendsec /etc/defendsec/apid.env
@@ -483,6 +516,9 @@ DEFENDSEC_DATABASE_URL=${db_url}
 DEFENDSEC_ADMIN_TOKEN=${ADMIN_TOKEN}
 DEFENDSEC_APID_ADMIN=http://127.0.0.1:47264
 DEFENDSEC_DOWNLOADS_DIR=${DOWNLOADS_DIR}
+DEFENDSEC_DATA_DIR=${DATA_DIR}
+# The packaged console is served directly over HTTP. Set true behind an HTTPS proxy.
+DEFENDSEC_COOKIE_SECURE=false
 EOF
   chmod 640 /etc/defendsec/console.env
   chown root:defendsec /etc/defendsec/console.env
@@ -493,17 +529,21 @@ EOF
   chmod 600 "${DATA_DIR}/admin-token.txt"
 
   mkdir -p "$DOWNLOADS_DIR"
-  if [[ -f "${INSTALL_ROOT}/bin/defendsec-agentd-linux-${GOARCH}" ]]; then
-    install -m 0755 "${INSTALL_ROOT}/bin/defendsec-agentd-linux-${GOARCH}" \
-      "${DOWNLOADS_DIR}/defendsec-agentd-linux-${GOARCH}"
-  fi
+  local agent_arch
+  for agent_arch in amd64 arm64; do
+    if [[ -f "${INSTALL_ROOT}/bin/defendsec-agentd-linux-${agent_arch}" ]]; then
+      install -m 0755 "${INSTALL_ROOT}/bin/defendsec-agentd-linux-${agent_arch}" \
+        "${DOWNLOADS_DIR}/defendsec-agentd-linux-${agent_arch}"
+    fi
+  done
   if [[ -f "${INSTALL_ROOT}/packaging/agent/install.sh" ]]; then
     install -m 0644 "${INSTALL_ROOT}/packaging/agent/install.sh" \
       "${DOWNLOADS_DIR}/install-agent.sh"
   fi
   (
     cd "$DOWNLOADS_DIR"
-    sha256sum defendsec-agentd-linux-${GOARCH} install-agent.sh >SHA256SUMS 2>/dev/null || true
+    sha256sum defendsec-agentd-linux-amd64 defendsec-agentd-linux-arm64 install-agent.sh \
+      >SHA256SUMS
   )
   chown -R defendsec:defendsec "$DOWNLOADS_DIR"
 }
@@ -517,13 +557,16 @@ install_systemd_units() {
   mkdir -p /etc/systemd/system/defendsec-console.service.d
   cat >/etc/systemd/system/defendsec-console.service.d/override.conf <<EOF
 [Service]
+WorkingDirectory=${INSTALL_ROOT}/.next/standalone
 ExecStart=
 ExecStart=${NODE_BIN} server.js
+ReadWritePaths=${INSTALL_ROOT} ${DATA_DIR}
 EOF
 
   mkdir -p /etc/systemd/system/defendsec-apid.service.d
   cat >/etc/systemd/system/defendsec-apid.service.d/override.conf <<EOF
 [Service]
+WorkingDirectory=${INSTALL_ROOT}
 EnvironmentFile=/etc/defendsec/apid.env
 ExecStart=
 ExecStart=/usr/local/bin/defendsec-apid \\
@@ -551,19 +594,39 @@ EOF
   systemctl enable --now defendsec-apid
   systemctl enable --now defendsec-console
 
+  local apid_ok=0 console_ok=0
   for _ in $(seq 1 30); do
-    if [[ -f "${DATA_DIR}/defendsec.json" ]]; then
+    if systemctl is-active --quiet defendsec-apid \
+      && curl -kfsS https://127.0.0.1:47262/healthz >/dev/null; then
+      apid_ok=1
       break
     fi
     sleep 1
   done
+  if [[ "$apid_ok" -ne 1 ]]; then
+    systemctl --no-pager --full status defendsec-apid || true
+    journalctl -u defendsec-apid --no-pager -n 50 || true
+    die "defendsec-apid failed its startup health check"
+  fi
+
+  for _ in $(seq 1 30); do
+    if systemctl is-active --quiet defendsec-console \
+      && curl -fsS http://127.0.0.1:47261/login >/dev/null; then
+      console_ok=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$console_ok" -ne 1 ]]; then
+    systemctl --no-pager --full status defendsec-console || true
+    journalctl -u defendsec-console --no-pager -n 50 || true
+    die "defendsec-console failed its startup health check"
+  fi
+
+  [[ -s "${DATA_DIR}/defendsec.json" ]] || die "apid is healthy but ${DATA_DIR}/defendsec.json is missing"
 }
 
 print_summary() {
-  local enroll=""
-  if [[ -f "${DATA_DIR}/defendsec.json" ]]; then
-    enroll="$(jq -r .enrollSecret "${DATA_DIR}/defendsec.json" 2>/dev/null || true)"
-  fi
   local host="${PRIMARY_IP:-$ADVERTISE_HOSTNAME}"
   cat <<EOF
 
@@ -575,7 +638,7 @@ DefendSec server install complete.
   Admin token: ${ADMIN_TOKEN}
   Postgres:    user=defendsec  password=${PG_PASSWORD}  (127.0.0.1 only, mode=${POSTGRES_MODE})
 
-  Enroll secret: ${enroll:-"(start apid / check ${DATA_DIR}/defendsec.json)"}
+  Enroll secret: ${ENROLL_SECRET}
 
 Agent install (separate download — run on each host):
 
@@ -583,7 +646,7 @@ Agent install (separate download — run on each host):
     --server-http "https://${host}:47262" \\
     --server-grpc "${host}:47263" \\
     --tls-server-name "${ADVERTISE_HOSTNAME}" \\
-    --enroll-secret "${enroll:-YOUR_ENROLL_SECRET}" \\
+    --enroll-secret "${ENROLL_SECRET}" \\
     --download-base "http://${host}:47261/downloads"
 
 Docs: ${INSTALL_ROOT}/docs/INSTALL.md
