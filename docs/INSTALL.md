@@ -1,121 +1,161 @@
-# Install DefendSec (server + agent)
+# Install DefendSec
 
-Two separate installers:
+This is the first-time install guide. Follow it in order.
 
-1. **Server** — Proxmox VE helper (creates an LXC) or `install-server.sh` on a Linux VM
-2. **Agent** — separate download/install on each host you want to inventory
+You install **two different things**:
 
-Repo default: [`WASP512/defendsec`](https://github.com/WASP512/defendsec) (public). Clone and curl work without a token. Optional `GH_TOKEN` is only for private forks or GitHub API rate limits.
+1. **Server** — the console, API, and database. Install this once.
+2. **Agent** — a small program on each machine you want to inventory. Install this separately on every host.
 
-## 1) Proxmox VE — create the server CT
+The repository is public: [github.com/WASP512/defendsec](https://github.com/WASP512/defendsec). You do **not** need a GitHub token.
 
-Run on the **Proxmox host** as root:
+---
+
+## Pick an install path
+
+| Your setup | What to run |
+| --- | --- |
+| You have a **Proxmox VE** host | [Path A](#path-a--proxmox-creates-the-server-container) (recommended) |
+| You have a **Debian/Ubuntu/Fedora VM** and no Proxmox | [Path B](#path-b--linux-vm-no-proxmox) |
+| You already have a half-broken container | [Start over](#start-over-after-a-failed-install) |
+
+Then go to [First login](#first-login) and [Enroll hosts](#enroll-hosts).
+
+---
+
+## Path A — Proxmox creates the server container
+
+Run this **on the Proxmox VE host**, as **root**. It creates a Debian 12 LXC, installs Postgres, builds the server, and starts the services.
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
 ```
 
-If you already have a checkout on the Proxmox host, run `bash packaging/proxmox/ct/defendsec.sh` from it instead.
+**How long?** Often **15–30 minutes** on first run. Most of that is downloading a Debian template and compiling Go/Node inside the container. Later reinstalls are faster if the template is already cached.
 
-Optional knobs:
+When it finishes, you should see something like:
 
-| Env | Default | Purpose |
+```text
+Container:  200 (defendsec)
+Root pass:  <printed once — not stored>
+Console:    http://192.168.1.50:47261
+Enroll TLS: https://192.168.1.50:47262
+gRPC:       192.168.1.50:47263
+
+Admin token: pct exec 200 -- cat /var/lib/defendsec/admin-token.txt
+```
+
+Write down the **CTID** (here `200`) and the **console URL**. The admin token is **not** printed; retrieve it in the next section.
+
+### Optional settings (only if auto-detect is wrong)
+
+Prefix the same command with environment variables. Common ones:
+
+```bash
+CTID=210 \
+CT_HOSTNAME=defendsec \
+TEMPLATE_STORAGE=local \
+STORAGE=local-lvm \
+BRIDGE=vmbr0 \
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
+```
+
+| Setting | Default | When to set it |
 | --- | --- | --- |
-| `CTID` | next free ≥200 | Container ID |
-| `CT_HOSTNAME` | `defendsec` | CT hostname (+ TLS SAN) |
-| `STORAGE` | auto (`rootdir`) | CT disk storage (often `local-lvm`) |
-| `TEMPLATE_STORAGE` | auto (`vztmpl`) | LXC template storage for `pveam` (usually `local`) |
-| `BRIDGE` | `vmbr0` | Network bridge |
-| `CORES` / `MEMORY` / `DISK` | `2` / `4096` / `24` | Resources (room for first source build) |
-| `REPO_URL` / `REPO_REF` | this repo / `main` | Source to build |
-| `GH_TOKEN` | unset | Optional; not required for the public repo |
+| `CTID` | next free ID ≥ 200 | You want a specific container ID |
+| `CT_HOSTNAME` | `defendsec` | TLS certificate name / hostname inside the CT |
+| `STORAGE` | first storage that can hold CT disks (`rootdir`, often `local-lvm`) | Auto-detect picked the wrong disk storage |
+| `TEMPLATE_STORAGE` | first storage that can hold LXC templates (`vztmpl`, usually `local`) | `pveam download` failed against LVM-thin |
+| `BRIDGE` | `vmbr0` | Your LAN bridge is not `vmbr0` |
+| `CORES` / `MEMORY` / `DISK` | `2` / `4096` / `24` | First source build needs about 4 GB RAM and 24 GB disk |
+| `REPO_REF` | `main` | Install a branch other than `main` |
 
-Do **not** point `pveam download` at LVM-thin. Templates need directory storage with content type `vztmpl` (`TEMPLATE_STORAGE`, typically `local`). The CT rootfs uses `STORAGE`, which must support `rootdir` (typically `local-lvm`). Auto-detect reads content types from `pvesm config` and fails fast with the storage name if the choice cannot hold that content. Override when it picks wrong:
+Use **`CT_HOSTNAME`**, not `HOSTNAME`. Bash already sets `HOSTNAME` to the Proxmox host’s own name.
 
-```bash
-TEMPLATE_STORAGE=local STORAGE=local-lvm CTID=210 bash packaging/proxmox/ct/defendsec.sh
-```
+Templates **must** live on directory storage with content type `vztmpl` (usually `local`). The container disk **must** live on storage with content type `rootdir` (usually `local-lvm`). Do not point template download at LVM-thin.
 
-Use `CT_HOSTNAME`, not `HOSTNAME`, to name the container. Bash always sets `HOSTNAME` to the Proxmox host's own name, so the script ignores an inherited value that matches the host:
+---
 
-```bash
-CT_HOSTNAME=defendsec CTID=210 bash packaging/proxmox/ct/defendsec.sh
-```
+## Path B — Linux VM (no Proxmox)
 
-The script creates a Debian 12 LXC, then runs `packaging/proxmox/install-server.sh` inside it.
-
-Postgres uses **native packages** by default (no Docker). That avoids Docker-in-LXC failures on Proxmox. Optional: `--postgres docker` on `install-server.sh` if you really want containers.
-
-Debian 12 ships Go 1.19 and Node 18, which are too old for this repo (`go.mod` needs Go 1.22+, Next.js needs Node 20.9+). When the distro toolchain is behind, the installer downloads upstream Go and Node into `/usr/local`, verifying the published SHA256 first. Pin them with `GO_VERSION=go1.24.6` / `NODE_VERSION=v22.20.0` if you need specific builds.
-
-When it finishes you get:
-
-- Console on `http://<ct-ip>:47261`
-- Enroll HTTPS on `https://<ct-ip>:47262`
-- mTLS gRPC on `<ct-ip>:47263`
-- Admin token + enroll secret
-- Agent download bundle served from `http://<ct-ip>:47261/downloads/…`
-
-Enter the CT anytime with `pct enter <CTID>`.
-
-### First login and credential recovery
-
-Open the console with the explicit HTTP scheme: `http://<ct-ip>:47261`. Port `47261` does not
-serve TLS; browsing to `https://…:47261` causes `SSL_ERROR_RX_RECORD_TOO_LONG`. The admin token
-travels over plain HTTP, so expose this port only on a trusted admin network or put the console
-behind an HTTPS reverse proxy. When HTTPS terminates at a proxy, set
-`DEFENDSEC_COOKIE_SECURE=true` and
-`DEFENDSEC_PUBLIC_CONSOLE_URL=https://defendsec.example.com` in
-`/etc/defendsec/console.env`, then restart `defendsec-console`.
-
-There is no username. Retrieve the application credentials from the Proxmox host with:
-
-```bash
-pct exec <CTID> -- cat /var/lib/defendsec/admin-token.txt
-pct exec <CTID> -- jq -r .enrollSecret /var/lib/defendsec/defendsec.json
-```
-
-The generated CT root password is printed by the helper but is not stored. You normally do not
-need it: `pct enter <CTID>` opens a root shell. Reset it with
-`pct exec <CTID> -- passwd root`.
-
-### Server-only (no Proxmox)
-
-On a Debian/Ubuntu (or Fedora) VM as root:
+On a Debian, Ubuntu, or Fedora machine as **root**:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh | bash
 ```
 
-Same layout: `/opt/defendsec` source, `/var/lib/defendsec` data, systemd units `defendsec-apid` + `defendsec-console`. Postgres is native by default.
+That installs:
 
-Re-running `install-server.sh` preserves the existing Postgres password, admin token, viewer
-token, and enroll secret unless you pass replacements explicitly. Enable a read-only login with
-`--viewer-token TOKEN`.
+- source in `/opt/defendsec`
+- data in `/var/lib/defendsec`
+- systemd units `defendsec-apid` and `defendsec-console`
+- native Postgres (not Docker)
 
-### Re-run after a failed CT install
+Re-running this script **keeps** the existing Postgres password, admin token, viewer token, and enroll secret unless you pass replacements.
 
-If the first run left a half-installed CT, destroy it on the Proxmox host, then re-run `ct/defendsec.sh`:
-
-```bash
-pct stop <CTID>
-pct destroy <CTID>
-```
-
-Typical failures:
-
-- `pveam download` against disk storage (`local-lvm`) instead of template storage. Re-run with `TEMPLATE_STORAGE=local`.
-- `bash: curl: command not found` inside the CT — Debian 12 standard has no curl. Current helper fetches `install-server.sh` on the **Proxmox host** and `pct push`es it. If you already have an empty CT 200, skip recreate and finish the install from the host:
+Useful flags:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh -o /tmp/defendsec-install-server.sh
-pct push 200 /tmp/defendsec-install-server.sh /tmp/defendsec-install-server.sh
-pct exec 200 -- bash /tmp/defendsec-install-server.sh --advertise-hostname defendsec
+bash install-server.sh --help
+# --advertise-hostname NAME   TLS name the agents will verify
+# --admin-token TOKEN         set / replace the console token
+# --viewer-token TOKEN        enable a read-only login
+# --pg-password PASSWORD      set / replace the database password
+# --postgres native|docker    default is native
 ```
 
-## 2) Agent — separate download per host
+---
 
-Do **not** re-run the Proxmox/server script on endpoints. On each Linux host:
+## First login
+
+1. Open **`http://<server-ip>:47261`**. Type **http**. Port `47261` is not HTTPS. Using `https://…:47261` produces `SSL_ERROR_RX_RECORD_TOO_LONG`.
+2. There is **no username**. Paste the admin token.
+3. Get the token from the Proxmox host (replace `200` with your CTID):
+
+   ```bash
+   pct exec 200 -- cat /var/lib/defendsec/admin-token.txt
+   ```
+
+   On a non-Proxmox VM:
+
+   ```bash
+   sudo cat /var/lib/defendsec/admin-token.txt
+   ```
+
+The enroll secret (needed only if you build an agent command by hand) is:
+
+```bash
+pct exec 200 -- jq -r .enrollSecret /var/lib/defendsec/defendsec.json
+```
+
+You usually do **not** need the container root password. `pct enter 200` gives you a root shell. If you do need to reset it:
+
+```bash
+pct exec 200 -- passwd root
+```
+
+### Keep the console on a trusted network
+
+The admin token travels over plain HTTP on port `47261`. Use a trusted LAN, or put an HTTPS reverse proxy in front. If you terminate TLS at a proxy, set both of these in `/etc/defendsec/console.env` and restart `defendsec-console`:
+
+```bash
+DEFENDSEC_COOKIE_SECURE=true
+DEFENDSEC_PUBLIC_CONSOLE_URL=https://defendsec.example.com
+```
+
+---
+
+## Enroll hosts
+
+Do **not** run the Proxmox helper on the machines you want to inventory.
+
+On each Linux host (amd64 or arm64):
+
+1. Sign in to the console as admin.
+2. Open **Enroll**.
+3. Copy **Agent install** and run it with `sudo` on that host.
+
+The command looks like this (the Enroll page fills in the right values):
 
 ```bash
 curl -fsSL "http://SERVER:47261/downloads/install-agent.sh" | sudo bash -s -- \
@@ -126,16 +166,31 @@ curl -fsSL "http://SERVER:47261/downloads/install-agent.sh" | sudo bash -s -- \
   --download-base "http://SERVER:47261/downloads"
 ```
 
-Replace `SERVER` with the CT hostname or IP (must match a TLS SAN from install). Copy the exact one-liner from the Enroll page after sign-in.
+`--tls-server-name` must match a name or IP on the server certificate (the hostname you advertised at install, often `defendsec`).
 
-What the agent installer does:
+The agent installer:
 
-- Downloads `defendsec-agentd-linux-<arch>` from your server’s `/downloads` (or GitHub Releases if `--download-base` is omitted and a release exists)
-- Installs `/usr/local/bin/defendsec-agentd`
-- Writes `/etc/defendsec/enroll-secret` + `agentd.env`
-- Enables `defendsec-agentd.service`
+- downloads `defendsec-agentd` from **your** server
+- installs `/usr/local/bin/defendsec-agentd`
+- writes `/etc/defendsec/enroll-secret` and `agentd.env`
+- enables `defendsec-agentd.service`
 
-Offline:
+Then open **Hosts**. The machine should appear within about a minute.
+
+### After you sign in
+
+| Page | Use it for |
+| --- | --- |
+| **Fleet** | Counts and a host table |
+| **Hosts** | One machine: inventory, patches, integrity, signed response |
+| **Enroll** | Copy the agent install command (admin only) |
+| **Advisories / Alerts** | CVE matches and detections (Alerts needs Postgres, which packaged installs have) |
+| **Integrity** | File-hash drift |
+| **Policies** | Snapshot checks (check-in, firewall, encryption, …) |
+
+### Offline agent install
+
+Copy `defendsec-agentd-linux-amd64` (or `arm64`) from `/var/lib/defendsec/downloads` on the server, then:
 
 ```bash
 sudo bash install-agent.sh \
@@ -146,72 +201,108 @@ sudo bash install-agent.sh \
   --enroll-secret SECRET
 ```
 
+---
+
+## Check that it worked
+
+| Check | How |
+| --- | --- |
+| Console loads | `http://<ip>:47261/login` in a browser |
+| Services up (inside the CT/VM) | `systemctl status defendsec-apid defendsec-console` |
+| Host enrolled | Console → **Hosts**; status online within ~2 minutes |
+| Logs | `journalctl -u defendsec-apid -u defendsec-console -u defendsec-agentd -f` |
+
+---
+
+## Start over after a failed install
+
+On the **Proxmox host**, destroy the leftover container, then run Path A again:
+
+```bash
+pct stop 200
+pct destroy 200
+```
+
+Replace `200` with your CTID.
+
+If the container exists but the **server install** never finished, you can finish it without recreating the CT:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh \
+  -o /tmp/defendsec-install-server.sh
+pct push 200 /tmp/defendsec-install-server.sh /tmp/defendsec-install-server.sh
+pct exec 200 -- bash /tmp/defendsec-install-server.sh --advertise-hostname defendsec
+```
+
+---
+
 ## Uninstall
 
-### Proxmox CT (control plane)
+### Whole Proxmox server
 
-On the **Proxmox host**:
+On the Proxmox host this deletes the container and everything in it:
 
 ```bash
-pct stop <CTID>
-pct destroy <CTID>
+pct stop 200
+pct destroy 200
 ```
 
-That removes the whole server VM (apid, console, native Postgres data inside the CT).
-
-### Server on a Linux VM (no Proxmox)
-
-Inside the host that ran `install-server.sh`:
+### Server on a Linux VM
 
 ```bash
-sudo bash packaging/proxmox/uninstall-server.sh
-# also delete data + source tree:
-sudo bash packaging/proxmox/uninstall-server.sh --purge-data
+curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/uninstall-server.sh | sudo bash
+# also delete /var/lib/defendsec, /opt/defendsec, /etc/defendsec:
+curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/uninstall-server.sh | sudo bash -s -- --purge-data
 # also drop the native Postgres database/role named defendsec:
-sudo bash packaging/proxmox/uninstall-server.sh --purge-data --purge-postgres
+curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/uninstall-server.sh | sudo bash -s -- --purge-data --purge-postgres
 ```
 
-`--purge-postgres` does not uninstall the PostgreSQL packages.
+`--purge-postgres` does not uninstall PostgreSQL packages.
 
-### Agent
-
-On each enrolled host:
+### Agent on an enrolled host
 
 ```bash
-sudo bash packaging/agent/uninstall.sh
-sudo bash packaging/agent/uninstall.sh --purge-data
+curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/agent/uninstall.sh | sudo bash
+# also remove /var/lib/defendsec-agent:
+curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/agent/uninstall.sh | sudo bash -s -- --purge-data
 ```
 
-`--purge-data` removes `/var/lib/defendsec-agent`. Agent uninstall leaves a control-plane `/etc/defendsec` tree alone (it only deletes `enroll-secret` and `agentd.env`).
+---
 
 ## Ports
 
-| Port | Service |
-| --- | --- |
-| `47261` | Console + agent download HTTP |
-| `47262` | Apid HTTPS enroll / CA |
-| `47263` | mTLS gRPC |
-| `47264` | Admin API (loopback only) |
-| `5432` | Postgres (loopback only) |
+| Port | What | Who needs it |
+| --- | --- | --- |
+| `47261` | Console + agent downloads (HTTP) | Your browser, agent installer |
+| `47262` | Enroll / CA (HTTPS) | Agents |
+| `47263` | mTLS gRPC | Agents |
+| `47264` | Admin API | Localhost only |
+| `5432` | Postgres | Localhost only |
 
-Open `47261–47263` from your admin network / agents. Keep `47264` and Postgres on localhost.
+Open `47261–47263` from your admin network and from agents. Leave `47264` and Postgres bound to localhost.
 
-## Publishing agent binaries (maintainers)
-
-```bash
-./scripts/build-release.sh
-# artifacts in dist/:
-#   defendsec-apid-linux-amd64
-#   defendsec-agentd-linux-amd64
-#   defendsec-agentd-linux-arm64
-#   SHA256SUMS
-```
-
-Server install already copies the matching agent binary + `install-agent.sh` into `/var/lib/defendsec/downloads`. Attach the `dist/` agent binaries to a GitHub Release if you want public curl-from-GitHub installs.
+---
 
 ## Troubleshooting
 
-- **Agent TLS verify failed** — `--tls-server-name` must match a SAN on the apid cert (`DEFENDSEC_TLS_HOSTNAME` / wipe `/var/lib/defendsec/pki` once and restart `defendsec-apid`).
-- **Downloads 404** — confirm `DEFENDSEC_DOWNLOADS_DIR` and that files exist under `/var/lib/defendsec/downloads`.
-- **LXC + Docker** — CT needs `features nesting=1` (set by the Proxmox script).
-- **Logs** — `journalctl -u defendsec-apid -u defendsec-console -u defendsec-agentd -f`
+| Symptom | Likely cause | What to do |
+| --- | --- | --- |
+| `ostemplate: value may only be 255 characters long` | Template storage mixed with disk storage, or a noisy template path | Set `TEMPLATE_STORAGE=local` and `STORAGE=local-lvm`. Current helper auto-splits these. |
+| `pveam download` fails on `local-lvm` | LVM-thin cannot store LXC templates | `TEMPLATE_STORAGE=local` |
+| `bash: curl: command not found` **inside** the CT | Debian 12 template has no curl | Current helper downloads on the **Proxmox host** and pushes the script in. Update to latest `main` and re-run, or use the “finish install” commands above. |
+| `package log/slog is not in GOROOT` (Go 1.19) | Distro Go is too old | Current installer installs verified upstream Go/Node. Re-run `install-server.sh` from `main`. |
+| Browser `SSL_ERROR_RX_RECORD_TOO_LONG` | Used `https://` on port 47261 | Use `http://<ip>:47261` |
+| Cannot reach the UI | Install failed before services started, or wrong IP/port | `systemctl status defendsec-console defendsec-apid` inside the CT; confirm port 47261 |
+| Agent TLS verify failed | `--tls-server-name` does not match the cert | Use the CT hostname (`defendsec` by default), or wipe `/var/lib/defendsec/pki` once and restart `defendsec-apid` so SANs refresh |
+| Downloads 404 | Agent installer pointed at the wrong host | Confirm files exist in `/var/lib/defendsec/downloads` |
+| Forgot the admin token | Token is on disk, not printed at the end | `pct exec <CTID> -- cat /var/lib/defendsec/admin-token.txt` |
+
+---
+
+## Notes for operators
+
+- Debian 12’s packaged Go 1.19 and Node 18 are too old. The installer downloads upstream Go and Node into `/usr/local` and checks the published SHA256. Pin with `GO_VERSION=go1.24.6` / `NODE_VERSION=v22.20.0` if you need specific builds.
+- Postgres is **native packages** by default so Proxmox LXC does not need Docker. Use `--postgres docker` only if you know you want it (`nesting=1` is already set on the CT).
+- Sample demo hosts are **off** in production. Set `DEFENDSEC_ENABLE_SAMPLE_DATA=true` in `console.env` only if you want them.
+
+Day-to-day backup, viewer tokens, and reverse proxy: [OPERATIONS.md](./OPERATIONS.md).

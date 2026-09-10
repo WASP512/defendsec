@@ -1,70 +1,115 @@
-# DefendSec operations runbook
+# Operate DefendSec
 
-Self-hosted Fleet-like inventory + Wazuh-shaped host detection. **Not MDM:** no wipe, lock, DEP, profiles, or CSP management.
+Use this after a successful install. First-time setup is in [INSTALL.md](./INSTALL.md).
 
-Fedora workstation hands-on (dnf, firewalld, systemd, SELinux notes): [`FEDORA.md`](./FEDORA.md).
+DefendSec is inventory plus host detection. It is **not** MDM: no wipe, lock, DEP, profiles, or CSP.
 
-Production install and uninstall (Proxmox VE CT + separate agent download): [`INSTALL.md`](./INSTALL.md).
+---
 
-## Quick start (compose + apid + console + agent)
+## Where things live
 
-1. Start Postgres:
+On a packaged server / Proxmox container:
+
+| Path | What |
+| --- | --- |
+| `/opt/defendsec` | Source tree used to build the server |
+| `/var/lib/defendsec` | Admin token, enroll secret, JSON store, PKI, downloads |
+| `/etc/defendsec/apid.env` | API, database URL, tokens |
+| `/etc/defendsec/console.env` | Console port, cookie, public URL |
+| `defendsec-apid` / `defendsec-console` | systemd units |
+
+On an enrolled host:
+
+| Path | What |
+| --- | --- |
+| `/usr/local/bin/defendsec-agentd` | Agent binary |
+| `/etc/defendsec/enroll-secret` | Enrollment secret |
+| `/etc/defendsec/agentd.env` | Server addresses |
+| `/var/lib/defendsec-agent` | Node key and agent state |
+
+---
+
+## Credentials
+
+There is no username. Tokens are secrets.
+
+| Role | How to retrieve (Proxmox) | Console access |
+| --- | --- | --- |
+| Admin | `pct exec <CTID> -- cat /var/lib/defendsec/admin-token.txt` | Full |
+| Viewer (optional) | value of `DEFENDSEC_VIEWER_TOKEN` in `/etc/defendsec/apid.env` | Read-only |
+| Enroll secret | `pct exec <CTID> -- jq -r .enrollSecret /var/lib/defendsec/defendsec.json` | Not a login; used only to enroll agents |
+
+Set the **same** viewer token in both `apid.env` and `console.env`, then restart both units:
 
 ```bash
-docker compose up -d postgres
-export DATABASE_URL=postgres://defendsec:defendsec@127.0.0.1:5432/defendsec?sslmode=disable
+sudo systemctl restart defendsec-apid defendsec-console
 ```
 
-2. Build and run the control plane:
+Viewers sign in at `/login` with that token. They cannot enroll hosts, rotate the secret, change findings, or issue signed commands.
+
+To enable a viewer on the next `install-server.sh` run:
 
 ```bash
-go build -o bin/defendsec-apid ./cmd/defendsec-apid
-go build -o bin/defendsec-agentd ./cmd/defendsec-agentd
-DEFENDSEC_DATABASE_URL="$DATABASE_URL" ./bin/defendsec-apid
+sudo bash /tmp/defendsec-install-server.sh --viewer-token 'a-long-random-string'
 ```
 
-3. Start the console (separate terminal):
+Existing admin token and database password are kept on re-run unless you pass replacements.
+
+---
+
+## Logs and health
+
+Inside the server:
 
 ```bash
-npm install
-npm run dev
+systemctl status defendsec-apid defendsec-console
+journalctl -u defendsec-apid -u defendsec-console -f
+curl -fsS http://127.0.0.1:47261/login >/dev/null && echo console-ok
 ```
 
-Sign in with the admin token from `data/admin-token.txt` or `DEFENDSEC_ADMIN_TOKEN`.
-
-4. Enroll one agent:
+On an agent host:
 
 ```bash
-DEFENDSEC_APID=https://127.0.0.1:47262 \
-DEFENDSEC_ENROLL_SECRET="$(jq -r .enrollSecret data/defendsec.json)" \
-  ./bin/defendsec-agentd
+systemctl status defendsec-agentd
+journalctl -u defendsec-agentd -f
 ```
 
-Agents connect over mTLS gRPC on `:47263`. Signed commands are issued on loopback admin HTTP `:47264`.
+---
 
-## RBAC (admin vs viewer)
+## Reverse proxy (HTTPS)
 
-| Token | Source | Console | Admin API (`:47264`) |
-| --- | --- | --- | --- |
-| Admin | `DEFENDSEC_ADMIN_TOKEN` or `data/admin-token.txt` | Full | GET + POST (commands, revoke, alert status, …) |
-| Viewer | Optional `DEFENDSEC_VIEWER_TOKEN` | Read-only (no response buttons, no alert status changes) | GET only; POST commands/revoke/alerts status → 403 |
+Port `47261` is HTTP. If users reach the console through HTTPS:
 
-Set the same viewer token in both apid and the Next.js process. Viewers sign in with that token at `/login`.
+1. Terminate TLS on the proxy.
+2. Forward to `http://127.0.0.1:47261`.
+3. Send `X-Forwarded-Host` and `X-Forwarded-Proto`.
+4. In `/etc/defendsec/console.env`:
+
+   ```bash
+   DEFENDSEC_COOKIE_SECURE=true
+   DEFENDSEC_PUBLIC_CONSOLE_URL=https://defendsec.example.com
+   ```
+
+5. `sudo systemctl restart defendsec-console`
+
+`DEFENDSEC_PUBLIC_CONSOLE_URL` is what the **Enroll** page prints for download URLs.
+
+Keep `47262`/`47263` reachable by agents (or proxy them separately). Do not expose Postgres or port `47264`.
+
+---
 
 ## Backup and restore
 
-Create a tarball (JSON presence, PKI, optional Postgres dump):
+Backup (JSON store, PKI, admin token, optional Postgres dump):
 
 ```bash
-# Packaged server / Proxmox CT:
 sudo bash -c 'set -a; . /etc/defendsec/apid.env; \
   DEFENDSEC_DATA_DIR=/var/lib/defendsec /opt/defendsec/scripts/backup.sh'
-
-# Source checkout:
-DEFENDSEC_DATA_DIR="$PWD/data" DATABASE_URL=postgres://... ./scripts/backup.sh
 ```
 
-Restore on a clean VM (stop apid/console first):
+The script prints the `.tar.gz` path.
+
+Restore on a server that already has DefendSec installed:
 
 ```bash
 sudo systemctl stop defendsec-console defendsec-apid
@@ -73,56 +118,85 @@ sudo bash -c 'set -a; . /etc/defendsec/apid.env; \
 sudo systemctl start defendsec-apid defendsec-console
 ```
 
-Verify: hosts appear in the console, alerts/commands tables present, agents reconnect with existing certs.
+Confirm hosts show in the console and agents reconnect with existing certificates.
 
-## CA revoke and re-enroll
+From a source checkout instead of `/opt/defendsec`:
 
-1. From host detail → **Revoke certificate** (or `POST /v1/revoke` on admin API).
-2. Revoked fingerprints are stored in `revoked_certs`; live gRPC connections receive `PermissionDenied`.
-3. On the host, remove agent state under the agent data dir and re-run enroll with the enroll secret.
-4. Audit log records `cert_revoke`; old device row remains for history.
+```bash
+DEFENDSEC_DATA_DIR="$PWD/data" DATABASE_URL=postgres://... ./scripts/backup.sh
+```
 
-## Agent update apply
+---
 
-1. Publish a release: `POST /v1/agent-releases` with `version`, `url`, `sha256`, optional `channel`.
-2. From host **Signed response** → **Push agent update**, or issue `agent_update` command manually.
-3. Agent downloads, verifies SHA256, replaces its binary, and exits; systemd (or your supervisor) should restart it.
+## Revoke a host certificate and re-enroll
 
-## Alert triage
+1. Open the host page → **Revoke certificate**.
+2. Live gRPC connections are dropped.
+3. On the host, remove agent state and re-run the Enroll install command:
 
-- **Alerts** page filters by status/kind/device.
-- Each alert carries **detected** vs **ingested** time plus a **generator** id (`defendsec.fim` / `.sca` / `.vuln`) and a stable `detail` contract (`file.path`, `event.action`, `sca.*`, `package.*`, `advisory.*`, plus `raw` for replay).
-- Acknowledge / resolve / reopen (admin only). Open FIM drift and SCA findings auto-resolve when the host returns to baseline / checks pass.
-- **FIM critical/high:** use **Suggest isolate** (confirmation required; does not auto-run).
-- **SCA high/critical:** open the host response panel or filter SCA alerts for that device.
-- **Vuln:** link to **Advisories** for package/CVE context (Fedora RPM aliases such as `openssh-server` ↔ `openssh`, `openssl-libs` ↔ `openssl`).
-- Every signed command is audited as `command_issue` (admin) and `command_ack` (agent).
+   ```bash
+   sudo systemctl stop defendsec-agentd
+   sudo rm -rf /var/lib/defendsec-agent
+   # then paste the current Enroll command
+   ```
+
+---
+
+## Alerts and signed commands
+
+- **Alerts** lists FIM, SCA, and vulnerability findings when Postgres is running (packaged installs include Postgres).
+- Acknowledge / resolve / reopen is admin-only.
+- Open FIM drift and SCA findings can auto-resolve when the host returns to baseline.
+- Host mutation is always Ed25519-signed: isolate, release, kill-by-name, live query, agent update, allowlisted scripts, quarantine path.
+- Isolate only drops network if the agent is root **and** `DEFENDSEC_ISOLATE_NET=1`. Otherwise it is a flag in the console.
+
+---
+
+## Advisory ingest (optional)
+
+The packaged server ships a local advisory catalog. To refresh from OSV on a timer, see [../scripts/ingest-osv.timer.md](../scripts/ingest-osv.timer.md) and `packaging/systemd/defendsec-ingest-osv.timer`. This is **not** enabled automatically.
+
+---
 
 ## Data retention
 
-On apid startup (when Postgres is enabled), old rows are pruned:
+When Postgres is enabled, apid prunes on startup:
 
-| Data | Env | Default |
+| Data | Environment variable | Default |
 | --- | --- | --- |
 | Resolved alerts | `DEFENDSEC_ALERT_RETENTION_DAYS` | 90 days |
 | Live query results | `DEFENDSEC_LIVE_QUERY_RETENTION_DAYS` | 30 days |
 
-Optional OSV ingest timer: see `packaging/systemd/defendsec-ingest-osv.timer`.
+---
 
-## Active response commands
+## Developer lab (not production)
 
-All host mutation is Ed25519-signed via apid. Allowlisted types include `isolate`, `release`, `kill_process`, `live_query`, `agent_update`, `run_script` (allowlisted script ids only), and `quarantine_path` (FIM watch paths or `/tmp/defendsec-quarantine` staging only).
+Console + apid + agent on one machine:
 
-## Explicit non-MDM wall
+```bash
+docker compose up -d postgres
+export DATABASE_URL=postgres://defendsec:defendsec@127.0.0.1:5432/defendsec?sslmode=disable
+go build -o bin/defendsec-apid ./cmd/defendsec-apid
+go build -o bin/defendsec-agentd ./cmd/defendsec-agentd
+DEFENDSEC_DATABASE_URL="$DATABASE_URL" ./bin/defendsec-apid
+```
 
-DefendSec does **not** implement mobile device management. Device lock/wipe, supervision profiles, configuration profiles, and enterprise policy delivery are out of scope. Use Scope page and this runbook to set expectations for operators.
+Another terminal:
 
-## Packaging (systemd sketches)
+```bash
+npm install
+npm run dev
+```
 
-Example units live under `packaging/systemd/`:
+Sign in with `data/admin-token.txt`. Enroll:
 
-- `defendsec-apid.service` — control plane + admin API
-- `defendsec-agentd.service` — enrolled host agent
-- `defendsec-ingest-osv.timer` + `.service` — optional advisory refresh
+```bash
+./bin/defendsec-agentd \
+  --server-http https://127.0.0.1:47262 \
+  --server-grpc 127.0.0.1:47263 \
+  --tls-server-name localhost \
+  --enroll-secret "$(jq -r .enrollSecret data/defendsec.json)" \
+  --state-dir data/agent-mtls
+```
 
-Adjust paths, users, and environment files for your distribution.
+Fedora-specific lab notes: [FEDORA.md](./FEDORA.md).

@@ -10,7 +10,7 @@
 #   TEMPLATE_STORAGE=local STORAGE=local-lvm bash packaging/proxmox/ct/defendsec.sh
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
 #
-# After install, enroll hosts with the printed agent one-liner (separate download).
+# After install, sign in at http://<ct-ip>:47261 and copy Agent install from Enroll.
 
 set -euo pipefail
 

@@ -23,26 +23,26 @@ export default async function EnrollPage() {
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Enroll a host</h1>
         <p className="mt-1 text-muted-foreground">
-          Prefer the Go agent for mTLS inventory and signed response. Fedora workstation steps are in{" "}
-          <code className="text-foreground">docs/FEDORA.md</code>.
+          Run the Agent install command on each host you want to inventory. Do not re-run the
+          Proxmox server helper on those machines.
         </p>
       </div>
       <EnrollPanel enrollSecret={store.enrollSecret} serverUrl={serverUrl} />
       <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
         <li>
-          Prefer the <strong>Agent install</strong> one-liner above (downloads binary + systemd). Full
-          Proxmox/server setup is in <code className="text-foreground">docs/INSTALL.md</code>.
+          Copy <strong>Agent install</strong> and run it with sudo on the host. The command downloads
+          the agent from this server and enables systemd.
         </li>
         <li>
-          Start <code className="text-foreground">defendsec-apid</code> with a TLS hostname/SAN the
-          agent can verify (<code className="text-foreground">--tls-server-name</code> must match).
+          <code className="text-foreground">--tls-server-name</code> must match the server hostname
+          or IP on the certificate (default Proxmox hostname is <code className="text-foreground">defendsec</code>).
         </li>
         <li>
-          Confirm the host on <strong>Devices</strong>, then try a live query from Signed response.
+          Confirm the host on <strong>Hosts</strong>, then open it and try a live query from Signed
+          response.
         </li>
         <li>
-          Optional units: <code className="text-foreground">packaging/systemd</code>. Fedora lab notes
-          in <code className="text-foreground">docs/FEDORA.md</code>.
+          Server install, ports, and uninstall: <code className="text-foreground">docs/INSTALL.md</code>.
         </li>
       </ol>
     </div>

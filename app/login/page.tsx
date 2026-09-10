@@ -19,8 +19,10 @@ export default async function LoginPage({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">DefendSec</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Sign in with the admin or viewer token. Agent check-in still uses the enroll secret and
-            node key only.
+            There is no username. Paste the admin token from{" "}
+            <code className="text-foreground">/var/lib/defendsec/admin-token.txt</code> (on Proxmox:{" "}
+            <code className="text-foreground">pct exec &lt;CTID&gt; -- cat /var/lib/defendsec/admin-token.txt</code>
+            ). Use <span className="text-foreground">http://</span> on port 47261, not https.
           </p>
         </div>
         <LoginForm showDevHint={await isDevFallbackToken()} failed={params.error === "1"} />

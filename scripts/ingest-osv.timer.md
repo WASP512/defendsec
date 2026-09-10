@@ -1,6 +1,8 @@
 # Scheduling OSV ingest
 
-Run `scripts/ingest-osv.py` on a timer so advisories stay current. Requires
+Optional. Packaged installs do **not** enable this timer automatically.
+
+Run `scripts/ingest-osv.py` on a schedule so advisories stay current. Requires
 `DEFENDSEC_DATABASE_URL` (or `DATABASE_URL`) and `psycopg`.
 
 ## Cron

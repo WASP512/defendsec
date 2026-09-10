@@ -1,12 +1,20 @@
 # Agent packaging
 
-Separate from the Proxmox/server installer.
+Install this on **each machine you want to inventory**. Do not run the Proxmox helper here.
+
+After the server is up, sign in and copy **Agent install** from the **Enroll** page. That command is the supported path.
 
 | File | Purpose |
 | --- | --- |
-| [`install.sh`](./install.sh) | Download binary, install systemd unit, enroll |
-| [`uninstall.sh`](./uninstall.sh) | Stop the agent; optional `--purge-data` |
+| [`install.sh`](./install.sh) | Download `defendsec-agentd`, install systemd, enroll |
+| [`uninstall.sh`](./uninstall.sh) | Stop the agent; `--purge-data` removes `/var/lib/defendsec-agent` |
 
-Served from the console after server install as `/downloads/install-agent.sh`.
+The server also publishes `install.sh` as `http://<server>:47261/downloads/install-agent.sh`.
 
-See [`../../docs/INSTALL.md`](../../docs/INSTALL.md).
+Full guide: [../../docs/INSTALL.md](../../docs/INSTALL.md).
+
+Uninstall without a git checkout:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/agent/uninstall.sh | sudo bash
+```

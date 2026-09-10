@@ -1,6 +1,6 @@
-# Windows service (Phase 1)
+# Windows service
 
-The agent is a single binary. Run it as a service with [WinSW](https://github.com/winsw/winsw) or `sc.exe` after installing `defendsec-agentd.exe`.
+Linux agents are the supported production path ([docs/INSTALL.md](../../docs/INSTALL.md)). On Windows, the agent is still a single binary you run as a service with [WinSW](https://github.com/winsw/winsw) or `sc.exe` after installing `defendsec-agentd.exe`.
 
 Example `defendsec-agentd.xml` next to WinSW:
 

@@ -112,10 +112,8 @@ export function EnrollPanel({
           {copied === "install" ? "Copied command" : "Copy install command"}
         </Button>
         <p className="mt-1 text-sm text-muted-foreground">
-          Separate from the Proxmox/server installer. Pulls{" "}
-          <code className="text-foreground">install-agent.sh</code> and the matching agent binary
-          from this console&apos;s <code className="text-foreground">/downloads</code> after a
-          server install. See <code className="text-foreground">docs/INSTALL.md</code>.
+          Run this on each host you want to watch — not on the Proxmox server. It downloads the
+          agent from this console and enables systemd.
         </p>
       </div>
 
@@ -135,7 +133,7 @@ export function EnrollPanel({
           Build with <code className="text-foreground">make agent</code> (or copy{" "}
           <code className="text-foreground">bin/defendsec-agentd</code>). On Fedora, use your LAN
           hostname/IP and match <code className="text-foreground">--tls-server-name</code> to a
-          certificate SAN. See <code className="text-foreground">docs/FEDORA.md</code>.
+          certificate SAN. Developer lab notes: <code className="text-foreground">docs/FEDORA.md</code>.
         </p>
       </div>
 

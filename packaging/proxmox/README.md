@@ -1,13 +1,22 @@
-# Proxmox VE packaging
+# Proxmox / server packaging
 
-| Script | Where to run | Purpose |
+These scripts install the **server** (console + API + Postgres). They do **not** enroll laptops or VMs. Agents use [`../agent/README.md`](../agent/README.md).
+
+Step-by-step: [../../docs/INSTALL.md](../../docs/INSTALL.md).
+
+| Script | Run where | Does |
 | --- | --- | --- |
-| [`ct/defendsec.sh`](./ct/defendsec.sh) | Proxmox **host** | Create Debian 12 LXC + run server install |
-| [`install-server.sh`](./install-server.sh) | Inside CT / any Linux VM | Install Postgres, apid, console, agent downloads |
-| [`uninstall-server.sh`](./uninstall-server.sh) | Inside CT / Linux VM | Stop units; optional `--purge-data` / `--purge-postgres` |
+| [`ct/defendsec.sh`](./ct/defendsec.sh) | Proxmox **host**, as root | Creates a Debian 12 LXC, then runs the server installer inside it |
+| [`install-server.sh`](./install-server.sh) | Inside that CT, or any Linux VM | Installs Postgres, apid, console, and agent download files |
+| [`uninstall-server.sh`](./uninstall-server.sh) | Inside the CT / Linux VM | Stops units; `--purge-data` / `--purge-postgres` are optional |
 
-`ct/defendsec.sh` uses `TEMPLATE_STORAGE` (vztmpl, usually `local`) for `pveam` and `STORAGE` (rootdir/images, often `local-lvm`) for the CT disk.
+`ct/defendsec.sh` uses two storages:
 
-Agent install is **separate**: [`../agent/install.sh`](../agent/install.sh).
+- `TEMPLATE_STORAGE` — LXC templates (`vztmpl`), usually `local`
+- `STORAGE` — the container disk (`rootdir`), often `local-lvm`
 
-Full walkthrough: [`../../docs/INSTALL.md`](../../docs/INSTALL.md).
+Copy-paste for a Proxmox host:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
+```

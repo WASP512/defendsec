@@ -1,6 +1,6 @@
-# Fedora workstation hands-on
+# Fedora workstation lab
 
-DefendSec on a Fedora laptop/desktop for local testing. This is the path we expect you to follow.
+This is a **developer lab** on a Fedora laptop or desktop. Production installs belong in [INSTALL.md](./INSTALL.md) (Proxmox container or a Linux VM).
 
 ## What you need
 
