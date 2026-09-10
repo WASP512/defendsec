@@ -40,6 +40,7 @@ export function AppShell({
   readOnly?: boolean;
 }) {
   const pathname = usePathname();
+  const visibleNav = readOnly ? nav.filter((item) => item.href !== "/enroll") : nav;
 
   return (
     <div className="flex min-h-full flex-col bg-background lg:flex-row">
@@ -49,7 +50,7 @@ export function AppShell({
           DefendSec
         </Link>
         <nav className="flex gap-1 overflow-x-auto">
-          {nav.map((item) => (
+          {visibleNav.map((item) => (
             <Link
               key={item.href}
               href={item.href}
@@ -71,7 +72,7 @@ export function AppShell({
           DefendSec
         </Link>
         <nav className="flex flex-col gap-1 px-3">
-          {nav.map((item) => {
+          {visibleNav.map((item) => {
             const Icon = item.icon;
             const active =
               item.href === "/"

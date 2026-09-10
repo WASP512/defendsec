@@ -5,13 +5,12 @@ import { APID_ADMIN_URL } from "@/lib/commands";
 import {
   storeErrorResponse,
   unauthorizedIfNotAdmin,
-  unauthorizedIfNotAuthenticated,
 } from "@/lib/api-auth";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
-  const denied = await unauthorizedIfNotAuthenticated(request);
+  const denied = await unauthorizedIfNotAdmin(request);
   if (denied) return denied;
   try {
     const store = await ensureStore();

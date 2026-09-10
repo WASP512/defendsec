@@ -1,10 +1,15 @@
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { EnrollPanel } from "@/components/enroll-panel";
+import { isReadOnlySession } from "@/lib/auth";
 import { ensureStore } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 export default async function EnrollPage() {
+  if (await isReadOnlySession()) {
+    redirect("/");
+  }
   const store = await ensureStore();
   const headerList = await headers();
   const host = headerList.get("x-forwarded-host") ?? headerList.get("host") ?? "127.0.0.1:47261";
