@@ -35,7 +35,9 @@ Optional knobs:
 | `CORES` / `MEMORY` / `DISK` | `2` / `2048` / `16` | Resources |
 | `REPO_URL` / `REPO_REF` | this repo / `main` | Source to build |
 
-The script creates a Debian 12 LXC (nesting enabled for Docker Postgres), then runs `packaging/proxmox/install-server.sh` inside it.
+The script creates a Debian 12 LXC, then runs `packaging/proxmox/install-server.sh` inside it.
+
+Postgres uses **native packages** by default (no Docker). That avoids Docker-in-LXC failures on Proxmox. Optional: `--postgres docker` on `install-server.sh` if you really want containers.
 
 When it finishes you get:
 
@@ -55,7 +57,24 @@ On a Debian/Ubuntu (or Fedora) VM as root:
 curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh | bash
 ```
 
-Same layout: `/opt/defendsec` source, `/var/lib/defendsec` data, systemd units `defendsec-apid` + `defendsec-console`.
+Same layout: `/opt/defendsec` source, `/var/lib/defendsec` data, systemd units `defendsec-apid` + `defendsec-console`. Postgres is native by default.
+
+### Re-run after a failed CT install
+
+If the first run left a half-installed CT:
+
+```bash
+pct stop <CTID>
+pct destroy <CTID>
+# then re-run ct/defendsec.sh
+```
+
+Or enter the CT and re-run only the server installer:
+
+```bash
+pct enter <CTID>
+curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh | bash
+```
 
 ## 2) Agent — separate download per host
 
