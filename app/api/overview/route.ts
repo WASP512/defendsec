@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ensureStore, publicDevice } from "@/lib/store";
+import { loadMtlsDevices, mergeDevices } from "@/lib/mtls-agents";
 import { isOnline } from "@/lib/policies";
 import { storeErrorResponse, unauthorizedIfNotAdmin } from "@/lib/api-auth";
 
@@ -10,18 +11,19 @@ export async function GET(request: Request) {
   if (denied) return denied;
   try {
     const store = await ensureStore();
-    const devices = store.devices.map(publicDevice);
-    const online = store.devices.filter((d) => isOnline(d)).length;
+    const fleet = mergeDevices(store.devices, await loadMtlsDevices());
+    const devices = fleet.map(publicDevice);
+    const online = fleet.filter((d) => isOnline(d)).length;
     return NextResponse.json({
-      total: store.devices.length,
+      total: fleet.length,
       online,
-      offline: store.devices.length - online,
-      samples: store.devices.filter((d) => d.sample).length,
-      live: store.devices.filter((d) => !d.sample).length,
+      offline: fleet.length - online,
+      samples: fleet.filter((d) => d.sample).length,
+      live: fleet.filter((d) => !d.sample).length,
       platforms: {
-        darwin: store.devices.filter((d) => d.platform === "darwin").length,
-        windows: store.devices.filter((d) => d.platform === "windows").length,
-        linux: store.devices.filter((d) => d.platform === "linux").length,
+        darwin: fleet.filter((d) => d.platform === "darwin").length,
+        windows: fleet.filter((d) => d.platform === "windows").length,
+        linux: fleet.filter((d) => d.platform === "linux").length,
       },
       devices,
     });

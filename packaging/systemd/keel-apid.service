@@ -1,0 +1,21 @@
+# keel-apid — control plane (agent transport)
+[Unit]
+Description=Keel agent control plane (mTLS gRPC + enroll)
+After=network.target
+
+[Service]
+Type=simple
+User=keel
+Group=keel
+WorkingDirectory=/var/lib/keel
+ExecStart=/usr/local/bin/keel-apid --data-dir /var/lib/keel --http-addr 0.0.0.0:47262 --grpc-addr 0.0.0.0:47263
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/keel
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

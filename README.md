@@ -61,3 +61,34 @@ KEEL_FIM_PATHS=/etc/hostname python3 agent/keel-agent.py --server URL --enroll-s
 - Enterprise FIM (inotify, signed baselines, noisy-path tuning)
 
 If you need stolen-device wipe, keep a real MDM next to this plane.
+
+## Phase 1: mTLS agent transport
+
+The Python HTTP agent still reports inventory. Phase 1 adds a Go control plane and daemon that enroll over HTTPS, pin the CA, then keep an mTLS gRPC heartbeat and bidirectional stream.
+
+Unsigned control commands are **acked and ignored**. Isolate/kill and signed commands are a later phase.
+
+```bash
+# Go 1.22+
+make apid agent
+# Console must have created data/keel.json first (npm run dev), or pass --enroll-secret
+./bin/keel-apid --data-dir data
+./bin/keel-agentd \
+  --server-http https://127.0.0.1:47262 \
+  --server-grpc 127.0.0.1:47263 \
+  --tls-server-name localhost \
+  --enroll-secret YOUR_ENROLL_SECRET \
+  --state-dir data/agent-mtls
+```
+
+- HTTPS enroll/health: `:47262` (`GET /healthz`, `GET /v1/ca`, `POST /v1/enroll`)
+- gRPC mTLS: `:47263` (`Heartbeat`, `Connect` stream with server pings)
+- Presence file: `data/mtls-agents.json` (the console merges these hosts into Fleet)
+- PKI: `data/pki/` (ECDSA P-256 CA + server cert, TLS 1.3)
+- Packaging sketches: `packaging/systemd`, `packaging/launchd`, `packaging/windows`
+
+First `GET /v1/ca` is trust-on-first-use. After that the agent verifies the control plane with the pinned CA and presents a client certificate whose CN is the device id.
+
+```bash
+make test-go
+```

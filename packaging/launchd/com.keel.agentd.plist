@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.keel.agentd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/keel-agentd</string>
+    <string>--server-http</string>
+    <string>https://CONTROL_PLANE:47262</string>
+    <string>--server-grpc</string>
+    <string>CONTROL_PLANE:47263</string>
+    <string>--enroll-secret-file</string>
+    <string>/etc/keel/enroll-secret</string>
+    <string>--state-dir</string>
+    <string>/usr/local/var/keel-agent</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/usr/local/var/log/keel-agentd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/usr/local/var/log/keel-agentd.err</string>
+</dict>
+</plist>

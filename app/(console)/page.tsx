@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DeviceTable } from "@/components/device-table";
 import { SampleToggle } from "@/components/sample-toggle";
 import { ensureStore, publicDevice } from "@/lib/store";
+import { loadMtlsDevices, mergeDevices } from "@/lib/mtls-agents";
 import { isOnline, policySummary } from "@/lib/policies";
 import { allFindings } from "@/lib/advisories";
 import Link from "next/link";
@@ -10,8 +11,9 @@ export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const store = await ensureStore();
-  const devices = store.devices.map(publicDevice);
-  const online = store.devices.filter((d) => isOnline(d)).length;
+  const fleet = mergeDevices(store.devices, await loadMtlsDevices());
+  const devices = fleet.map(publicDevice);
+  const online = fleet.filter((d) => isOnline(d)).length;
   const failing = policySummary(store.devices, store.fimEvents, store.triages).reduce(
     (n, p) => n + p.failing,
     0,
@@ -55,7 +57,7 @@ export default async function HomePage() {
           <CardContent className="text-3xl font-semibold">
             {online}
             <span className="ml-2 text-base font-normal text-muted-foreground">
-              / {store.devices.length}
+              / {fleet.length}
             </span>
           </CardContent>
         </Card>

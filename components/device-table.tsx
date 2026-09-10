@@ -53,6 +53,11 @@ export function DeviceTable({ devices }: { devices: PublicDevice[] }) {
                     sample
                   </Badge>
                 ) : null}
+                {device.hardwareModel === "mTLS gRPC agent" ? (
+                  <Badge variant="outline" className="ml-2">
+                    mTLS
+                  </Badge>
+                ) : null}
               </TableCell>
               <TableCell>
                 {platformLabel(device.platform)}

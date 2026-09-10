@@ -1,0 +1,356 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/json"
+	"encoding/pem"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
+
+	keelv1 "keel/internal/gen/keel/v1"
+)
+
+const agentVersion = "0.1.0-phase1"
+
+func main() {
+	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	if err := run(log); err != nil {
+		log.Error("keel-agentd", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run(log *slog.Logger) error {
+	serverHTTP := flag.String("server-http", "https://127.0.0.1:47262", "control plane HTTPS base URL")
+	serverGRPC := flag.String("server-grpc", "127.0.0.1:47263", "control plane gRPC host:port")
+	enrollSecret := flag.String("enroll-secret", os.Getenv("KEEL_ENROLL_SECRET"), "enroll secret")
+	enrollFile := flag.String("enroll-secret-file", "", "file containing the enroll secret")
+	stateDir := flag.String("state-dir", "data/agent-mtls", "where to store CA, client cert, and key")
+	tlsServerName := flag.String("tls-server-name", "localhost", "SNI / hostname to verify on the server certificate")
+	heartbeatEvery := flag.Duration("heartbeat", 20*time.Second, "unary heartbeat interval")
+	flag.Parse()
+
+	secret := *enrollSecret
+	if *enrollFile != "" {
+		raw, err := os.ReadFile(*enrollFile)
+		if err != nil {
+			return fmt.Errorf("enroll secret file: %w", err)
+		}
+		secret = strings.TrimSpace(string(raw))
+	}
+
+	if err := os.MkdirAll(*stateDir, 0o700); err != nil {
+		return err
+	}
+
+	if err := ensureEnrolled(log, *serverHTTP, *tlsServerName, *stateDir, secret); err != nil {
+		return err
+	}
+
+	tlsCfg, err := clientTLS(*stateDir, *tlsServerName)
+	if err != nil {
+		return err
+	}
+
+	conn, err := grpc.NewClient(
+		*serverGRPC,
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 10 * time.Second, PermitWithoutStream: true}),
+	)
+	if err != nil {
+		return fmt.Errorf("grpc dial: %w", err)
+	}
+	defer conn.Close()
+	client := keelv1.NewAgentControlClient(conn)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go runStream(ctx, log, client)
+	runHeartbeats(ctx, log, client, *heartbeatEvery)
+	return nil
+}
+
+func ensureEnrolled(log *slog.Logger, httpBase, serverName, stateDir, secret string) error {
+	certPath := filepath.Join(stateDir, "client.pem")
+	keyPath := filepath.Join(stateDir, "client.key")
+	caPath := filepath.Join(stateDir, "ca.pem")
+	if fileExists(certPath) && fileExists(keyPath) && fileExists(caPath) {
+		return nil
+	}
+	if secret == "" {
+		return fmt.Errorf("missing enroll secret (and no existing client cert in %s)", stateDir)
+	}
+	log.Info("bootstrapping CA (TOFU) then enrolling")
+	caPEM, err := fetchCA(httpBase)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(caPath, caPEM, 0o644); err != nil {
+		return err
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+	host, _ := os.Hostname()
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: host, Organization: []string{"Keel agent"}},
+	}, key)
+	if err != nil {
+		return err
+	}
+	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return fmt.Errorf("invalid CA from control plane")
+	}
+	body, err := json.Marshal(map[string]string{
+		"enrollSecret": secret,
+		"hostname":     host,
+		"csrPem":       string(csrPEM),
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, httpBase+"/v1/enroll", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	httpClient := &http.Client{
+		Timeout: 20 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion: tls.VersionTLS13,
+				RootCAs:    pool,
+				ServerName: serverName,
+			},
+		},
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("enroll: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("enroll failed: %s %s", resp.Status, raw)
+	}
+	var out struct {
+		DeviceID string `json:"deviceId"`
+		CertPEM  string `json:"certPem"`
+		CAPEM    string `json:"caPem"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return err
+	}
+	if err := os.WriteFile(certPath, []byte(out.CertPEM), 0o644); err != nil {
+		return err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return err
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return err
+	}
+	if out.CAPEM != "" {
+		_ = os.WriteFile(caPath, []byte(out.CAPEM), 0o644)
+	}
+	_ = os.WriteFile(filepath.Join(stateDir, "device-id"), []byte(out.DeviceID+"\n"), 0o644)
+	log.Info("enrolled", "device", out.DeviceID)
+	return nil
+}
+
+func fetchCA(httpBase string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, httpBase+"/v1/ca", nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion:         tls.VersionTLS13,
+				InsecureSkipVerify: true, // TOFU: pin the downloaded CA immediately after
+			},
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch ca: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch ca: %s", resp.Status)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+}
+
+func clientTLS(stateDir, serverName string) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(filepath.Join(stateDir, "client.pem"), filepath.Join(stateDir, "client.key"))
+	if err != nil {
+		return nil, err
+	}
+	caPEM, err := os.ReadFile(filepath.Join(stateDir, "ca.pem"))
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("invalid ca.pem")
+	}
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      pool,
+		ServerName:   serverName,
+	}, nil
+}
+
+func runHeartbeats(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	send := func() {
+		hctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		resp, err := client.Heartbeat(hctx, heartbeat())
+		if err != nil {
+			log.Warn("heartbeat", "err", err)
+			return
+		}
+		log.Info("heartbeat ok", "server_time", resp.GetServerTimeUnix())
+	}
+	send()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			send()
+		}
+	}
+}
+
+func runStream(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient) {
+	backoff := time.Second
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := attachStream(ctx, log, client); err != nil && ctx.Err() == nil {
+			log.Warn("control stream", "err", err, "retry", backoff)
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+		return
+	}
+}
+
+func attachStream(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient) error {
+	stream, err := client.Connect(ctx)
+	if err != nil {
+		return err
+	}
+	host, _ := os.Hostname()
+	if err := stream.Send(&keelv1.AgentToServer{
+		Body: &keelv1.AgentToServer_Hello{Hello: &keelv1.Hello{Hostname: host, AgentVersion: agentVersion}},
+	}); err != nil {
+		return err
+	}
+	log.Info("control stream up")
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		switch body := msg.GetBody().(type) {
+		case *keelv1.ServerToAgent_Ping:
+			ack := &keelv1.CommandAck{CommandId: msg.GetRequestId(), Accepted: true, Message: "pong"}
+			if err := stream.Send(&keelv1.AgentToServer{
+				RequestId: msg.GetRequestId(),
+				Body:      &keelv1.AgentToServer_Ack{Ack: ack},
+			}); err != nil {
+				return err
+			}
+			log.Info("pong", "server_time", body.Ping.GetServerTimeUnix())
+		case *keelv1.ServerToAgent_Command:
+			cmd := body.Command
+			accepted := false
+			message := "unsigned commands are ignored until Ed25519 control signing ships"
+			if len(cmd.GetSignature()) > 0 {
+				message = "signature present but command execution is not implemented in phase 1"
+			}
+			if err := stream.Send(&keelv1.AgentToServer{
+				RequestId: msg.GetRequestId(),
+				Body: &keelv1.AgentToServer_Ack{Ack: &keelv1.CommandAck{
+					CommandId: cmd.GetCommandId(),
+					Accepted:  accepted,
+					Message:   message,
+				}},
+			}); err != nil {
+				return err
+			}
+			log.Warn("ignored control command", "type", cmd.GetType(), "id", cmd.GetCommandId())
+		}
+	}
+}
+
+func heartbeat() *keelv1.HeartbeatRequest {
+	host, _ := os.Hostname()
+	platform := runtime.GOOS
+	osName := runtime.GOOS
+	switch runtime.GOOS {
+	case "darwin":
+		osName = "macOS"
+	case "linux":
+		osName = "Linux"
+	case "windows":
+		osName = "Windows"
+	}
+	return &keelv1.HeartbeatRequest{
+		Hostname:      host,
+		OsName:        osName,
+		OsVersion:     runtime.Version(),
+		Arch:          runtime.GOARCH,
+		Platform:      platform,
+		UptimeSeconds: 0,
+	}
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}

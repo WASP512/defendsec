@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package keel.v1;
+
+option go_package = "keel/internal/gen/keel/v1;keelv1";
+
+service AgentControl {
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc Connect(stream AgentToServer) returns (stream ServerToAgent);
+}
+
+message HeartbeatRequest {
+  string hostname = 1;
+  string os_name = 2;
+  string os_version = 3;
+  string arch = 4;
+  string platform = 5;
+  int64 uptime_seconds = 6;
+}
+
+message HeartbeatResponse {
+  bool ok = 1;
+  int64 server_time_unix = 2;
+}
+
+message Hello {
+  string hostname = 1;
+  string agent_version = 2;
+}
+
+message CommandAck {
+  string command_id = 1;
+  bool accepted = 2;
+  string message = 3;
+}
+
+message AgentToServer {
+  string request_id = 1;
+  oneof body {
+    HeartbeatRequest heartbeat = 2;
+    CommandAck ack = 3;
+    Hello hello = 4;
+  }
+}
+
+message Ping {
+  int64 server_time_unix = 1;
+}
+
+// Commands are reserved for later phases. Phase 1 only sends pings.
+// signature is empty until signed control (Ed25519) is implemented.
+message ControlCommand {
+  string command_id = 1;
+  string type = 2;
+  bytes payload = 3;
+  bytes signature = 4;
+}
+
+message ServerToAgent {
+  string request_id = 1;
+  oneof body {
+    Ping ping = 2;
+    ControlCommand command = 3;
+  }
+}

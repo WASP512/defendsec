@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { PolicyBadge, OnlineBadge, SeverityBadge } from "@/components/status-badge";
 import { FindingActions } from "@/components/finding-actions";
 import { ensureStore } from "@/lib/store";
+import { loadMtlsDevices, mergeDevices } from "@/lib/mtls-agents";
 import { evaluateDevice, fimDriftPaths, isOnline } from "@/lib/policies";
 import { findingsForDevice } from "@/lib/advisories";
 import {
@@ -24,7 +25,7 @@ export default async function DeviceDetailPage({
 }) {
   const { id } = await params;
   const store = await ensureStore();
-  const device = store.devices.find((d) => d.id === id);
+  const device = mergeDevices(store.devices, await loadMtlsDevices()).find((d) => d.id === id);
   if (!device) notFound();
   const policies = evaluateDevice(device, store.fimEvents, store.triages);
   const findings = findingsForDevice(device, store.triages);
@@ -54,6 +55,9 @@ export default async function DeviceDetailPage({
           <h1 className="text-3xl font-semibold tracking-tight">{device.hostname}</h1>
           <OnlineBadge online={isOnline(device)} />
           {device.sample ? <Badge variant="outline">sample</Badge> : null}
+          {device.hardwareModel === "mTLS gRPC agent" ? (
+            <Badge variant="outline">mTLS</Badge>
+          ) : null}
         </div>
         <p className="mt-1 text-muted-foreground">
           {device.osName} {device.osVersion} · {device.arch || "unknown arch"}
