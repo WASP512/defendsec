@@ -30,10 +30,17 @@ Optional knobs:
 | --- | --- | --- |
 | `CTID` | next free ≥200 | Container ID |
 | `HOSTNAME` | `defendsec` | CT hostname (+ TLS SAN) |
-| `STORAGE` | auto | Proxmox storage |
+| `STORAGE` | auto (`rootdir`/`images`) | CT disk storage (often `local-lvm`) |
+| `TEMPLATE_STORAGE` | auto (`vztmpl`) | LXC template storage for `pveam` (usually `local`) |
 | `BRIDGE` | `vmbr0` | Network bridge |
 | `CORES` / `MEMORY` / `DISK` | `2` / `2048` / `16` | Resources |
 | `REPO_URL` / `REPO_REF` | this repo / `main` | Source to build |
+
+Do **not** point `pveam download` at LVM-thin. Templates need directory storage with content type `vztmpl` (`TEMPLATE_STORAGE`, typically `local`). The CT rootfs uses `STORAGE` (typically `local-lvm`). Override when auto-detect is wrong:
+
+```bash
+TEMPLATE_STORAGE=local STORAGE=local-lvm CTID=210 bash packaging/proxmox/ct/defendsec.sh
+```
 
 The script creates a Debian 12 LXC, then runs `packaging/proxmox/install-server.sh` inside it.
 
@@ -61,13 +68,14 @@ Same layout: `/opt/defendsec` source, `/var/lib/defendsec` data, systemd units `
 
 ### Re-run after a failed CT install
 
-If the first run left a half-installed CT:
+If the first run left a half-installed CT, destroy it on the Proxmox host, then re-run `ct/defendsec.sh`:
 
 ```bash
 pct stop <CTID>
 pct destroy <CTID>
-# then re-run ct/defendsec.sh
 ```
+
+Typical failure: `pveam download` against disk storage (`local-lvm`) instead of template storage. Re-run with `TEMPLATE_STORAGE=local`.
 
 Or enter the CT and re-run only the server installer:
 
@@ -108,6 +116,44 @@ sudo bash install-agent.sh \
   --tls-server-name SERVER \
   --enroll-secret SECRET
 ```
+
+## Uninstall
+
+### Proxmox CT (control plane)
+
+On the **Proxmox host**:
+
+```bash
+pct stop <CTID>
+pct destroy <CTID>
+```
+
+That removes the whole server VM (apid, console, native Postgres data inside the CT).
+
+### Server on a Linux VM (no Proxmox)
+
+Inside the host that ran `install-server.sh`:
+
+```bash
+sudo bash packaging/proxmox/uninstall-server.sh
+# also delete data + source tree:
+sudo bash packaging/proxmox/uninstall-server.sh --purge-data
+# also drop the native Postgres database/role named defendsec:
+sudo bash packaging/proxmox/uninstall-server.sh --purge-data --purge-postgres
+```
+
+`--purge-postgres` does not uninstall the PostgreSQL packages.
+
+### Agent
+
+On each enrolled host:
+
+```bash
+sudo bash packaging/agent/uninstall.sh
+sudo bash packaging/agent/uninstall.sh --purge-data
+```
+
+`--purge-data` removes `/var/lib/defendsec-agent`. Agent uninstall leaves a control-plane `/etc/defendsec` tree alone (it only deletes `enroll-secret` and `agentd.env`).
 
 ## Ports
 

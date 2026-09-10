@@ -7,6 +7,7 @@
 # Usage:
 #   bash packaging/proxmox/ct/defendsec.sh
 #   CTID=120 HOSTNAME=defendsec bash packaging/proxmox/ct/defendsec.sh
+#   TEMPLATE_STORAGE=local STORAGE=local-lvm bash packaging/proxmox/ct/defendsec.sh
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
 #
 # After install, enroll hosts with the printed agent one-liner (separate download).
@@ -26,6 +27,9 @@ fi
 CTID="${CTID:-}"
 HOSTNAME="${HOSTNAME:-defendsec}"
 STORAGE="${STORAGE:-}"
+# LXC templates need directory storage with content=vztmpl (usually "local").
+# CT disks typically live on LVM-thin (local-lvm). Do not reuse STORAGE for pveam.
+TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-}"
 BRIDGE="${BRIDGE:-vmbr0}"
 CORES="${CORES:-2}"
 MEMORY="${MEMORY:-2048}"
@@ -54,20 +58,72 @@ pick_ctid() {
   echo "$id"
 }
 
+storage_exists() {
+  local name="$1"
+  pvesm status 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$name"
+}
+
+storage_has_content() {
+  local name="$1" want="$2"
+  pvesm config "$name" 2>/dev/null | awk -v w="$want" '
+    $1 == "content" || $1 == "content:" {
+      line = $0
+      sub(/^[[:space:]]*content:[[:space:]]*/, "", line)
+      sub(/^[[:space:]]*content[[:space:]]+/, "", line)
+      n = split(line, a, /[,;[:space:]]+/)
+      for (i = 1; i <= n; i++) if (a[i] == w) found = 1
+    }
+    END { exit found ? 0 : 1 }
+  '
+}
+
+first_storage_with_content() {
+  local want="$1" s
+  while read -r s; do
+    [[ -n "$s" ]] || continue
+    echo "$s"
+    return 0
+  done < <(pvesm status --content "$want" 2>/dev/null | awk 'NR>1 && $1!="" && $1!="Name" {print $1}')
+  while read -r s; do
+    [[ -n "$s" ]] || continue
+    if storage_has_content "$s" "$want"; then
+      echo "$s"
+      return 0
+    fi
+  done < <(pvesm status 2>/dev/null | awk 'NR>1 && $1!="" && $1!="Name" {print $1}')
+  return 1
+}
+
 pick_storage() {
   if [[ -n "$STORAGE" ]]; then
     echo "$STORAGE"
     return
   fi
-  # Prefer common local storages that support containers.
+  # Prefer storages that can hold CT disks (rootdir/images).
   local s
   for s in local-lvm local-zfs local; do
-    if pvesm status 2>/dev/null | awk '{print $1}' | grep -qx "$s"; then
+    if storage_exists "$s" && { storage_has_content "$s" rootdir || storage_has_content "$s" images; }; then
       echo "$s"
       return
     fi
   done
-  pvesm status 2>/dev/null | awk 'NR>1 && $1!="" {print $1; exit}'
+  first_storage_with_content rootdir || first_storage_with_content images || true
+}
+
+pick_template_storage() {
+  if [[ -n "$TEMPLATE_STORAGE" ]]; then
+    echo "$TEMPLATE_STORAGE"
+    return
+  fi
+  # pveam download requires content=vztmpl (typically the "local" dir storage).
+  local s
+  for s in local; do
+    if storage_exists "$s" && storage_has_content "$s" vztmpl; then
+      echo "$s"
+      return
+    fi
+  done
+  first_storage_with_content vztmpl || true
 }
 
 ensure_template() {
@@ -83,16 +139,18 @@ ensure_template() {
   local remote
   remote="$(pveam available -section system 2>/dev/null | awk '/debian-12-standard_.*_amd64\.tar\.(xz|zst)/ {print $2; exit}')"
   [[ -n "$remote" ]] || die "could not find debian-12-standard template in pveam available"
-  pveam download "$storage" "$remote"
+  pveam download "$storage" "$remote" || die "pveam download failed on ${storage} (set TEMPLATE_STORAGE to a vztmpl storage, usually local)"
   pveam list "$storage" 2>/dev/null | awk -v r="$remote" '$0 ~ r {print $1; exit}'
 }
 
 CTID="$(pick_ctid)"
 STORAGE="$(pick_storage)"
-[[ -n "$STORAGE" ]] || die "could not detect a Proxmox storage (set STORAGE=...)"
+[[ -n "$STORAGE" ]] || die "could not detect a Proxmox disk storage (set STORAGE=...)"
+TEMPLATE_STORAGE="$(pick_template_storage)"
+[[ -n "$TEMPLATE_STORAGE" ]] || die "could not detect a Proxmox template storage (set TEMPLATE_STORAGE=local)"
 
-TEMPLATE="$(ensure_template "$STORAGE")"
-[[ -n "$TEMPLATE" ]] || die "Debian 12 template missing"
+TEMPLATE="$(ensure_template "$TEMPLATE_STORAGE")"
+[[ -n "$TEMPLATE" ]] || die "Debian 12 template missing on ${TEMPLATE_STORAGE}"
 
 if pct status "$CTID" >/dev/null 2>&1; then
   die "CT ${CTID} already exists — pick another CTID=..."
@@ -100,7 +158,7 @@ fi
 
 ROOT_PW="${PASSWORD:-$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-20)}"
 
-info "Creating CT ${CTID} (${HOSTNAME}) on ${STORAGE}"
+info "Creating CT ${CTID} (${HOSTNAME}) disk=${STORAGE} template=${TEMPLATE_STORAGE}"
 CREATE_ARGS=(
   "$CTID"
   "$TEMPLATE"
