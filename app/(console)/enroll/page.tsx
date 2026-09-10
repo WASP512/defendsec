@@ -22,7 +22,7 @@ export default async function EnrollPage() {
       </div>
       <EnrollPanel enrollSecret={store.enrollSecret} serverUrl={serverUrl} />
       <div className="space-y-2 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">Phase 1 Go agent (mTLS)</p>
+        <p className="font-medium text-foreground">Go agent (mTLS + signed commands)</p>
         <p>
           Start <code className="text-foreground">keel-apid</code>, then enroll with the same secret.
           First HTTPS call trust-on-first-use pins the CA; after that all gRPC is mTLS.

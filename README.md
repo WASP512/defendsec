@@ -66,7 +66,7 @@ If you need stolen-device wipe, keep a real MDM next to this plane.
 
 The Python HTTP agent still reports inventory. Phase 1 adds a Go control plane and daemon that enroll over HTTPS, pin the CA, then keep an mTLS gRPC heartbeat and bidirectional stream.
 
-Unsigned control commands are **acked and ignored**. Isolate/kill and signed commands are a later phase.
+Unsigned control commands are **rejected**. Isolate, release, and kill-by-name are signed (Phase 2).
 
 ```bash
 # Go 1.22+
@@ -88,6 +88,18 @@ make apid agent
 - Packaging sketches: `packaging/systemd`, `packaging/launchd`, `packaging/windows`
 
 First `GET /v1/ca` is trust-on-first-use. After that the agent verifies the control plane with the pinned CA and presents a client certificate whose CN is the device id.
+
+## Phase 2: signed isolate and kill
+
+The control plane keeps an Ed25519 key in `data/pki/control-ed25519.key`. The console (admin cookie) posts to Next.js, which calls loopback `http://127.0.0.1:47264/v1/commands` with the admin token. `keel-apid` signs the command; `keel-agentd` verifies device id, expiry, and signature before acting.
+
+| Type | Effect |
+| --- | --- |
+| `isolate` | Sets an isolation flag the console shows. Network drop only if the agent is root **and** `KEEL_ISOLATE_NET=1`. |
+| `release` | Clears that flag. |
+| `kill_process` | `SIGTERM` to processes whose `/proc/pid/comm` matches a strict name. Refuses systemd, sshd, keel-agentd, keel-apid, init, next-server. |
+
+Unsigned or wrong-device commands are rejected. Open a host that has an mTLS agent and use **Signed response**.
 
 ```bash
 make test-go

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
@@ -28,10 +29,12 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
+	"keel/internal/agentcmd"
 	keelv1 "keel/internal/gen/keel/v1"
+	"keel/internal/sign"
 )
 
-const agentVersion = "0.1.0-phase1"
+const agentVersion = "0.2.0-phase2"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -67,6 +70,14 @@ func run(log *slog.Logger) error {
 	if err := ensureEnrolled(log, *serverHTTP, *tlsServerName, *stateDir, secret); err != nil {
 		return err
 	}
+	if err := ensureControlPub(log, *serverHTTP, *tlsServerName, *stateDir); err != nil {
+		return err
+	}
+	pub, err := loadControlPub(*stateDir)
+	if err != nil {
+		return err
+	}
+	deviceID := strings.TrimSpace(readString(filepath.Join(*stateDir, "device-id")))
 
 	tlsCfg, err := clientTLS(*stateDir, *tlsServerName)
 	if err != nil {
@@ -87,8 +98,8 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go runStream(ctx, log, client)
-	runHeartbeats(ctx, log, client, *heartbeatEvery)
+	go runStream(ctx, log, client, pub, deviceID, *stateDir)
+	runHeartbeats(ctx, log, client, *heartbeatEvery, *stateDir)
 	return nil
 }
 
@@ -159,9 +170,10 @@ func ensureEnrolled(log *slog.Logger, httpBase, serverName, stateDir, secret str
 		return fmt.Errorf("enroll failed: %s %s", resp.Status, raw)
 	}
 	var out struct {
-		DeviceID string `json:"deviceId"`
-		CertPEM  string `json:"certPem"`
-		CAPEM    string `json:"caPem"`
+		DeviceID      string `json:"deviceId"`
+		CertPEM       string `json:"certPem"`
+		CAPEM         string `json:"caPem"`
+		ControlPubPEM string `json:"controlPubPem"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return err
@@ -179,6 +191,9 @@ func ensureEnrolled(log *slog.Logger, httpBase, serverName, stateDir, secret str
 	}
 	if out.CAPEM != "" {
 		_ = os.WriteFile(caPath, []byte(out.CAPEM), 0o644)
+	}
+	if out.ControlPubPEM != "" {
+		_ = os.WriteFile(filepath.Join(stateDir, "control.pub"), []byte(out.ControlPubPEM), 0o644)
 	}
 	_ = os.WriteFile(filepath.Join(stateDir, "device-id"), []byte(out.DeviceID+"\n"), 0o644)
 	log.Info("enrolled", "device", out.DeviceID)
@@ -231,13 +246,13 @@ func clientTLS(stateDir, serverName string) (*tls.Config, error) {
 	}, nil
 }
 
-func runHeartbeats(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient, every time.Duration) {
+func runHeartbeats(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient, every time.Duration, stateDir string) {
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	send := func() {
 		hctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		resp, err := client.Heartbeat(hctx, heartbeat())
+		resp, err := client.Heartbeat(hctx, heartbeat(stateDir))
 		if err != nil {
 			log.Warn("heartbeat", "err", err)
 			return
@@ -255,13 +270,13 @@ func runHeartbeats(ctx context.Context, log *slog.Logger, client keelv1.AgentCon
 	}
 }
 
-func runStream(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient) {
+func runStream(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient, pub ed25519.PublicKey, deviceID, stateDir string) {
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := attachStream(ctx, log, client); err != nil && ctx.Err() == nil {
+		if err := attachStream(ctx, log, client, pub, deviceID, stateDir); err != nil && ctx.Err() == nil {
 			log.Warn("control stream", "err", err, "retry", backoff)
 			timer := time.NewTimer(backoff)
 			select {
@@ -279,7 +294,7 @@ func runStream(ctx context.Context, log *slog.Logger, client keelv1.AgentControl
 	}
 }
 
-func attachStream(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient) error {
+func attachStream(ctx context.Context, log *slog.Logger, client keelv1.AgentControlClient, pub ed25519.PublicKey, deviceID, stateDir string) error {
 	stream, err := client.Connect(ctx)
 	if err != nil {
 		return err
@@ -291,6 +306,7 @@ func attachStream(ctx context.Context, log *slog.Logger, client keelv1.AgentCont
 		return err
 	}
 	log.Info("control stream up")
+	replay := newReplay()
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
@@ -307,28 +323,23 @@ func attachStream(ctx context.Context, log *slog.Logger, client keelv1.AgentCont
 			}
 			log.Info("pong", "server_time", body.Ping.GetServerTimeUnix())
 		case *keelv1.ServerToAgent_Command:
-			cmd := body.Command
-			accepted := false
-			message := "unsigned commands are ignored until Ed25519 control signing ships"
-			if len(cmd.GetSignature()) > 0 {
-				message = "signature present but command execution is not implemented in phase 1"
-			}
+			ack := executeCommand(log, pub, deviceID, stateDir, replay, body.Command)
 			if err := stream.Send(&keelv1.AgentToServer{
 				RequestId: msg.GetRequestId(),
-				Body: &keelv1.AgentToServer_Ack{Ack: &keelv1.CommandAck{
-					CommandId: cmd.GetCommandId(),
-					Accepted:  accepted,
-					Message:   message,
-				}},
+				Body:      &keelv1.AgentToServer_Ack{Ack: ack},
 			}); err != nil {
 				return err
 			}
-			log.Warn("ignored control command", "type", cmd.GetType(), "id", cmd.GetCommandId())
+			if ack.Accepted {
+				log.Info("command accepted", "type", body.Command.GetType(), "id", body.Command.GetCommandId(), "msg", ack.Message)
+			} else {
+				log.Warn("command rejected", "type", body.Command.GetType(), "id", body.Command.GetCommandId(), "msg", ack.Message)
+			}
 		}
 	}
 }
 
-func heartbeat() *keelv1.HeartbeatRequest {
+func heartbeat(stateDir string) *keelv1.HeartbeatRequest {
 	host, _ := os.Hostname()
 	platform := runtime.GOOS
 	osName := runtime.GOOS
@@ -347,7 +358,67 @@ func heartbeat() *keelv1.HeartbeatRequest {
 		Arch:          runtime.GOARCH,
 		Platform:      platform,
 		UptimeSeconds: 0,
+		Isolated:      agentcmd.LoadState(stateDir).Isolated,
 	}
+}
+
+func ensureControlPub(log *slog.Logger, httpBase, serverName, stateDir string) error {
+	path := filepath.Join(stateDir, "control.pub")
+	if fileExists(path) {
+		return nil
+	}
+	caPEM, err := os.ReadFile(filepath.Join(stateDir, "ca.pem"))
+	if err != nil {
+		return err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return fmt.Errorf("invalid ca.pem")
+	}
+	req, err := http.NewRequest(http.MethodGet, httpBase+"/v1/control-pub", nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion: tls.VersionTLS13,
+				RootCAs:    pool,
+				ServerName: serverName,
+			},
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("control-pub: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("control-pub: %s %s", resp.Status, raw)
+	}
+	if _, err := sign.ParsePublicPEM(raw); err != nil {
+		return err
+	}
+	log.Info("pinned control-plane Ed25519 public key")
+	return os.WriteFile(path, raw, 0o644)
+}
+
+func loadControlPub(stateDir string) (ed25519.PublicKey, error) {
+	raw, err := os.ReadFile(filepath.Join(stateDir, "control.pub"))
+	if err != nil {
+		return nil, err
+	}
+	return sign.ParsePublicPEM(raw)
+}
+
+func readString(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func fileExists(path string) bool {

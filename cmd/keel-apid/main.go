@@ -18,11 +18,13 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
+	"keel/internal/cmdlog"
 	"keel/internal/control"
 	keelv1 "keel/internal/gen/keel/v1"
 	"keel/internal/pki"
 	"keel/internal/presence"
 	"keel/internal/secret"
+	"keel/internal/sign"
 )
 
 func main() {
@@ -37,7 +39,9 @@ func run(log *slog.Logger) error {
 	dataDir := flag.String("data-dir", "data", "directory for PKI and presence files")
 	httpAddr := flag.String("http-addr", "0.0.0.0:47262", "HTTPS enroll/health listen address")
 	grpcAddr := flag.String("grpc-addr", "0.0.0.0:47263", "mTLS gRPC listen address")
+	adminAddr := flag.String("admin-addr", "127.0.0.1:47264", "loopback HTTP for signed commands (admin token)")
 	enrollSecret := flag.String("enroll-secret", "", "override enroll secret (default: KEEL_ENROLL_SECRET or data/keel.json)")
+	adminTokenFlag := flag.String("admin-token", "", "override admin token (default: KEEL_ADMIN_TOKEN or data/admin-token.txt)")
 	advertise := flag.String("tls-hostname", "", "extra hostname/IP SAN for the server certificate")
 	flag.Parse()
 
@@ -56,8 +60,18 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	signer, err := sign.LoadOrCreate(pkiDir)
+	if err != nil {
+		return fmt.Errorf("control signing key: %w", err)
+	}
+	adminToken, err := secret.ResolveAdmin(*adminTokenFlag, filepath.Join(*dataDir, "admin-token.txt"))
+	if err != nil {
+		return fmt.Errorf("admin token (start the console once so data/admin-token.txt exists): %w", err)
+	}
+
 	store := presence.New(filepath.Join(*dataDir, "mtls-agents.json"))
-	svc := control.New(bundle, secretValue, store, log)
+	commands := cmdlog.New(filepath.Join(*dataDir, "commands.json"))
+	svc := control.New(bundle, secretValue, adminToken, store, commands, signer, log)
 
 	httpTLS, err := bundle.ServerTLS()
 	if err != nil {
@@ -72,6 +86,17 @@ func run(log *slog.Logger) error {
 	mux.HandleFunc("/healthz", svc.HandleHealth)
 	mux.HandleFunc("/v1/ca", svc.HandleCA)
 	mux.HandleFunc("/v1/enroll", svc.HandleEnroll)
+	mux.HandleFunc("/v1/control-pub", svc.HandleControlPub)
+
+	adminMux := http.NewServeMux()
+	adminMux.HandleFunc("/healthz", svc.HandleHealth)
+	adminMux.HandleFunc("/v1/commands", svc.HandleAdminCommands)
+	adminMux.HandleFunc("/v1/control-pub", svc.HandleControlPub)
+	adminSrv := &http.Server{
+		Addr:              *adminAddr,
+		Handler:           adminMux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	httpSrv := &http.Server{
 		Addr:              *httpAddr,
 		Handler:           mux,
@@ -95,7 +120,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("grpc listen: %w", err)
 	}
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() {
 		log.Info("https enroll listening", "addr", *httpAddr, "secret_fp", control.HashSecret(secretValue))
 		errCh <- httpSrv.Serve(tls.NewListener(httpLn, httpTLS))
@@ -103,6 +128,10 @@ func run(log *slog.Logger) error {
 	go func() {
 		log.Info("mtls grpc listening", "addr", *grpcAddr)
 		errCh <- grpcSrv.Serve(grpcLn)
+	}()
+	go func() {
+		log.Info("admin commands listening", "addr", *adminAddr)
+		errCh <- adminSrv.ListenAndServe()
 	}()
 
 	sig := make(chan os.Signal, 1)
@@ -115,6 +144,7 @@ func run(log *slog.Logger) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(ctx)
+		_ = adminSrv.Shutdown(ctx)
 		grpcSrv.GracefulStop()
 		return nil
 	}

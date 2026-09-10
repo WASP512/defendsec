@@ -16,6 +16,7 @@ message HeartbeatRequest {
   string arch = 4;
   string platform = 5;
   int64 uptime_seconds = 6;
+  bool isolated = 7;
 }
 
 message HeartbeatResponse {
@@ -47,13 +48,15 @@ message Ping {
   int64 server_time_unix = 1;
 }
 
-// Commands are reserved for later phases. Phase 1 only sends pings.
-// signature is empty until signed control (Ed25519) is implemented.
+// Signed with the control-plane Ed25519 key. Agents ignore unsigned commands.
 message ControlCommand {
   string command_id = 1;
   string type = 2;
   bytes payload = 3;
   bytes signature = 4;
+  int64 issued_unix = 5;
+  int64 expires_unix = 6;
+  string device_id = 7;
 }
 
 message ServerToAgent {

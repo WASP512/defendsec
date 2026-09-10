@@ -21,24 +21,39 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"keel/internal/cmdlog"
 	keelv1 "keel/internal/gen/keel/v1"
 	"keel/internal/pki"
 	"keel/internal/presence"
+	"keel/internal/sign"
 )
 
 type Server struct {
 	keelv1.UnimplementedAgentControlServer
-	bundle *pki.Bundle
-	secret string
-	store  *presence.File
-	log    *slog.Logger
+	bundle     *pki.Bundle
+	secret     string
+	adminToken string
+	store      *presence.File
+	commands   *cmdlog.File
+	hub        *Hub
+	signer     *sign.Key
+	log        *slog.Logger
 }
 
-func New(bundle *pki.Bundle, secret string, store *presence.File, log *slog.Logger) *Server {
+func New(bundle *pki.Bundle, secret, adminToken string, store *presence.File, commands *cmdlog.File, signer *sign.Key, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{bundle: bundle, secret: secret, store: store, log: log}
+	return &Server{
+		bundle:     bundle,
+		secret:     secret,
+		adminToken: adminToken,
+		store:      store,
+		commands:   commands,
+		hub:        NewHub(),
+		signer:     signer,
+		log:        log,
+	}
 }
 
 type enrollRequest struct {
@@ -48,9 +63,10 @@ type enrollRequest struct {
 }
 
 type enrollResponse struct {
-	DeviceID string `json:"deviceId"`
-	CertPEM  string `json:"certPem"`
-	CAPEM    string `json:"caPem"`
+	DeviceID      string `json:"deviceId"`
+	CertPEM       string `json:"certPem"`
+	CAPEM         string `json:"caPem"`
+	ControlPubPEM string `json:"controlPubPem"`
 }
 
 func (s *Server) HandleCA(w http.ResponseWriter, _ *http.Request) {
@@ -111,9 +127,10 @@ func (s *Server) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		Transport: "mtls-grpc",
 	})
 	resp := enrollResponse{
-		DeviceID: deviceID,
-		CertPEM:  string(certPEM),
-		CAPEM:    string(s.bundle.CACertPEM()),
+		DeviceID:      deviceID,
+		CertPEM:       string(certPEM),
+		CAPEM:         string(s.bundle.CACertPEM()),
+		ControlPubPEM: string(s.signer.PublicPEM()),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
@@ -138,6 +155,7 @@ func (s *Server) Heartbeat(ctx context.Context, req *keelv1.HeartbeatRequest) (*
 		Connected:       true,
 		CertFingerprint: fp,
 		Transport:       "mtls-grpc",
+		Isolated:        req.GetIsolated(),
 	}
 	if err := s.store.Upsert(dev); err != nil {
 		s.log.Error("presence upsert", "err", err)
@@ -158,6 +176,10 @@ func (s *Server) Connect(stream keelv1.AgentControl_ConnectServer) error {
 		s.log.Info("agent disconnected", "device", id)
 	}()
 
+	ch := s.hub.Register(id)
+	defer s.hub.Unregister(id, ch)
+	s.flushQueued(id)
+
 	errCh := make(chan error, 1)
 	go func() {
 		for {
@@ -176,7 +198,8 @@ func (s *Server) Connect(stream keelv1.AgentControl_ConnectServer) error {
 					return
 				}
 			case *keelv1.AgentToServer_Ack:
-				s.log.Info("ack", "device", id, "command", body.Ack.GetCommandId(), "ok", body.Ack.GetAccepted())
+				s.log.Info("ack", "device", id, "command", body.Ack.GetCommandId(), "ok", body.Ack.GetAccepted(), "msg", body.Ack.GetMessage())
+				s.noteAck(id, body.Ack.GetAccepted(), body.Ack.GetCommandId(), body.Ack.GetMessage())
 			}
 		}
 	}()
@@ -192,6 +215,10 @@ func (s *Server) Connect(stream keelv1.AgentControl_ConnectServer) error {
 			return err
 		case <-stream.Context().Done():
 			return stream.Context().Err()
+		case msg := <-ch:
+			if err := stream.Send(msg); err != nil {
+				return err
+			}
 		case <-ticker.C:
 			reqID, err := newDeviceID()
 			if err != nil {

@@ -15,6 +15,8 @@ import {
   relativeTime,
 } from "@/lib/format";
 import { AcceptBaseline } from "@/components/accept-baseline";
+import { ResponsePanel } from "@/components/response-panel";
+import { loadCommands } from "@/lib/commands";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +33,8 @@ export default async function DeviceDetailPage({
   const findings = findingsForDevice(device, store.triages);
   const drifts = fimDriftPaths(device);
   const events = store.fimEvents.filter((event) => event.deviceId === device.id);
+  const mtlsId = device.mtlsDeviceId || "";
+  const commandLog = mtlsId ? await loadCommands(mtlsId) : [];
 
   const facts = [
     ["Platform", `${platformLabel(device.platform)} ${device.osVersion}`.trim()],
@@ -55,9 +59,10 @@ export default async function DeviceDetailPage({
           <h1 className="text-3xl font-semibold tracking-tight">{device.hostname}</h1>
           <OnlineBadge online={isOnline(device)} />
           {device.sample ? <Badge variant="outline">sample</Badge> : null}
-          {device.hardwareModel === "mTLS gRPC agent" ? (
+          {device.hardwareModel === "mTLS gRPC agent" || device.mtlsDeviceId ? (
             <Badge variant="outline">mTLS</Badge>
           ) : null}
+          {device.isolated ? <Badge variant="destructive">isolated</Badge> : null}
         </div>
         <p className="mt-1 text-muted-foreground">
           {device.osName} {device.osVersion} · {device.arch || "unknown arch"}
@@ -76,6 +81,15 @@ export default async function DeviceDetailPage({
           </Card>
         ))}
       </div>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Signed response</h2>
+        <ResponsePanel
+          mtlsDeviceId={mtlsId}
+          isolated={Boolean(device.isolated)}
+          commands={commandLog}
+        />
+      </section>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Policies</h2>

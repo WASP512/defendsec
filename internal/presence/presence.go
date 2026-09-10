@@ -9,17 +9,18 @@ import (
 )
 
 type Device struct {
-	ID               string `json:"id"`
-	Hostname         string `json:"hostname"`
-	Platform         string `json:"platform"`
-	OSName           string `json:"osName"`
-	OSVersion        string `json:"osVersion"`
-	Arch             string `json:"arch"`
-	UptimeSeconds    int64  `json:"uptimeSeconds"`
-	LastSeen         string `json:"lastSeen"`
-	Connected        bool   `json:"connected"`
-	CertFingerprint  string `json:"certFingerprint"`
-	Transport        string `json:"transport"`
+	ID              string `json:"id"`
+	Hostname        string `json:"hostname"`
+	Platform        string `json:"platform"`
+	OSName          string `json:"osName"`
+	OSVersion       string `json:"osVersion"`
+	Arch            string `json:"arch"`
+	UptimeSeconds   int64  `json:"uptimeSeconds"`
+	LastSeen        string `json:"lastSeen"`
+	Connected       bool   `json:"connected"`
+	CertFingerprint string `json:"certFingerprint"`
+	Transport       string `json:"transport"`
+	Isolated        bool   `json:"isolated"`
 }
 
 type File struct {
@@ -58,6 +59,21 @@ func (f *File) Upsert(dev Device) error {
 	return f.write(doc)
 }
 
+func (f *File) Get(id string) (Device, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return Device{}, false
+	}
+	for _, existing := range doc.Devices {
+		if existing.ID == id {
+			return existing, true
+		}
+	}
+	return Device{}, false
+}
+
 func (f *File) SetConnected(id string, connected bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -71,6 +87,23 @@ func (f *File) SetConnected(id string, connected bool) error {
 			if !connected {
 				break
 			}
+		}
+	}
+	doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	return f.write(doc)
+}
+
+func (f *File) SetIsolated(id string, isolated bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return err
+	}
+	for i, existing := range doc.Devices {
+		if existing.ID == id {
+			doc.Devices[i].Isolated = isolated
+			break
 		}
 	}
 	doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)

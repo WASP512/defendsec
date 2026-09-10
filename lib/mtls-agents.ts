@@ -14,6 +14,7 @@ type MtlsFile = {
     lastSeen: string;
     connected?: boolean;
     certFingerprint?: string;
+    isolated?: boolean;
   }[];
 };
 
@@ -51,6 +52,8 @@ export async function loadMtlsDevices(): Promise<Device[]> {
       enrolledAt: item.lastSeen,
       lastSeen: item.lastSeen,
       nodeKey: "",
+      isolated: Boolean(item.isolated),
+      mtlsDeviceId: item.id,
     }));
   } catch {
     return [];
@@ -65,8 +68,14 @@ export function mergeDevices(fromStore: Device[], mtls: Device[]) {
     const live = mtls.find(
       (item) => item.id === device.id || item.hostname.toLowerCase() === device.hostname.toLowerCase(),
     );
-    if (!live) return device;
-    return { ...device, lastSeen: live.lastSeen, hardwareModel: device.hardwareModel || live.hardwareModel };
+    if (!live) return { ...device, isolated: device.isolated ?? false, mtlsDeviceId: device.mtlsDeviceId ?? "" };
+    return {
+      ...device,
+      lastSeen: live.lastSeen,
+      isolated: live.isolated,
+      mtlsDeviceId: live.id,
+      hardwareModel: device.hardwareModel || live.hardwareModel,
+    };
   });
   return [...merged, ...extra];
 }
