@@ -32,6 +32,14 @@ ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 # native = system postgresql (default, works in Proxmox LXC). docker = optional.
 POSTGRES_MODE="${POSTGRES_MODE:-native}"
+# Debian 12 ships Go 1.19 and Node 18, both too old to build this repo. When the
+# distro is behind, install upstream toolchains under /usr/local instead.
+GO_MIN="${GO_MIN:-1.22.0}"
+NODE_MIN="${NODE_MIN:-20.9.0}"
+GO_VERSION="${GO_VERSION:-}"
+NODE_VERSION="${NODE_VERSION:-}"
+GO_BIN=""
+NODE_BIN=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -100,8 +108,7 @@ install_packages() {
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -y
       apt-get install -y --no-install-recommends \
-        ca-certificates curl git jq make openssl \
-        golang-go nodejs npm \
+        ca-certificates curl wget git jq make openssl xz-utils tar \
         iptables
       if [[ "$POSTGRES_MODE" == "native" ]]; then
         apt-get install -y --no-install-recommends postgresql postgresql-contrib
@@ -111,7 +118,7 @@ install_packages() {
       fi
       ;;
     fedora|rhel|centos|rocky|almalinux)
-      dnf install -y git jq make openssl golang nodejs npm iptables-nft
+      dnf install -y ca-certificates curl wget git jq make openssl xz tar iptables-nft
       if [[ "$POSTGRES_MODE" == "native" ]]; then
         dnf install -y postgresql-server postgresql
       else
@@ -120,22 +127,164 @@ install_packages() {
       fi
       ;;
     *)
-      die "unsupported OS id=${OS_ID}; install git jq make go node npm (+ postgresql) manually, then re-run"
+      die "unsupported OS id=${OS_ID}; install git jq make curl tar xz (+ postgresql) manually, then re-run"
       ;;
   esac
 
-  if ! command -v go >/dev/null 2>&1; then
-    die "go toolchain missing after package install"
-  fi
-  if ! command -v npm >/dev/null 2>&1; then
-    die "npm missing after package install"
-  fi
   if [[ "$POSTGRES_MODE" == "docker" ]] && ! command -v docker >/dev/null 2>&1; then
     die "docker missing after package install (use --postgres native)"
   fi
   if [[ "$POSTGRES_MODE" == "native" ]] && ! command -v psql >/dev/null 2>&1; then
     die "postgresql missing after package install"
   fi
+}
+
+# Pad to major.minor.patch so 1.22 and 1.22.0 compare equal.
+normalize_version() {
+  local v="${1#v}"
+  v="${v#go}"
+  v="${v%%[-+ ]*}"
+  local IFS=.
+  read -r -a parts <<<"$v"
+  printf '%s.%s.%s' "${parts[0]:-0}" "${parts[1]:-0}" "${parts[2]:-0}"
+}
+
+# Compare dotted versions: succeeds when $1 >= $2.
+version_ge() {
+  local a b
+  a="$(normalize_version "$1")"
+  b="$(normalize_version "$2")"
+  [[ "$a" == "$b" ]] && return 0
+  [[ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | head -n1)" == "$b" ]]
+}
+
+fetch_to() {
+  local url="$1" dest="$2"
+  curl -fsSL "$url" -o "$dest" || wget -qO "$dest" "$url" || die "download failed: ${url}"
+}
+
+verify_sha256() {
+  local file="$1" want="$2" got
+  [[ -n "$want" ]] || die "no checksum published for $(basename "$file")"
+  got="$(sha256sum "$file" | awk '{print $1}')"
+  [[ "$got" == "$want" ]] || die "checksum mismatch for $(basename "$file")"
+}
+
+installed_go_version() {
+  local go_cmd
+  for go_cmd in /usr/local/go/bin/go "$(command -v go 2>/dev/null || true)"; do
+    if [[ -n "$go_cmd" && -x "$go_cmd" ]]; then
+      GO_BIN="$go_cmd"
+      "$go_cmd" version 2>/dev/null | awk '{print $3}' | sed 's/^go//'
+      return
+    fi
+  done
+}
+
+installed_node_version() {
+  local node_cmd
+  for node_cmd in /usr/local/bin/node "$(command -v node 2>/dev/null || true)"; do
+    if [[ -n "$node_cmd" && -x "$node_cmd" ]]; then
+      NODE_BIN="$node_cmd"
+      "$node_cmd" --version 2>/dev/null | sed 's/^v//'
+      return
+    fi
+  done
+}
+
+ensure_go() {
+  # go.mod is authoritative once the source is present.
+  if [[ -f "${INSTALL_ROOT}/go.mod" ]]; then
+    local want
+    want="$(awk '/^go[[:space:]]+[0-9]/ {print $2; exit}' "${INSTALL_ROOT}/go.mod")"
+    if [[ -n "$want" ]]; then
+      [[ "$want" == *.*.* ]] || want="${want}.0"
+      version_ge "$want" "$GO_MIN" && GO_MIN="$want"
+    fi
+  fi
+
+  local have
+  have="$(installed_go_version)"
+  if [[ -n "$have" ]] && version_ge "$have" "$GO_MIN"; then
+    info "Using Go ${have} (${GO_BIN})"
+    return
+  fi
+
+  local ver="$GO_VERSION"
+  if [[ -z "$ver" ]]; then
+    ver="$(curl -fsSL 'https://go.dev/VERSION?m=text' 2>/dev/null | head -n1 || true)"
+  fi
+  [[ -n "$ver" ]] || ver="go1.24.6"
+  [[ "$ver" == go* ]] || ver="go${ver}"
+
+  info "Installing ${ver} (need >= ${GO_MIN}, found ${have:-none})"
+  local file="${ver}.linux-${GOARCH}.tar.gz"
+  local tmp="/tmp/${file}" sum=""
+  sum="$(curl -fsSL 'https://go.dev/dl/?mode=json&include=all' 2>/dev/null \
+    | jq -r --arg f "$file" '.[].files[]? | select(.filename == $f) | .sha256' | head -n1 || true)"
+  fetch_to "https://go.dev/dl/${file}" "$tmp"
+  verify_sha256 "$tmp" "$sum"
+  rm -rf /usr/local/go
+  tar -C /usr/local -xzf "$tmp"
+  rm -f "$tmp"
+
+  GO_BIN=/usr/local/go/bin/go
+  [[ -x "$GO_BIN" ]] || die "Go install failed"
+  info "Using Go $("$GO_BIN" version | awk '{print $3}') (${GO_BIN})"
+}
+
+ensure_node() {
+  local have
+  have="$(installed_node_version)"
+  if [[ -n "$have" ]] && version_ge "$have" "$NODE_MIN" && command -v npm >/dev/null 2>&1; then
+    info "Using Node ${have} (${NODE_BIN})"
+    return
+  fi
+
+  local node_arch
+  case "$GOARCH" in
+    amd64) node_arch=x64 ;;
+    arm64) node_arch=arm64 ;;
+    *) die "unsupported Node architecture: ${GOARCH}" ;;
+  esac
+
+  local ver="$NODE_VERSION"
+  if [[ -z "$ver" ]]; then
+    ver="$(curl -fsSL https://nodejs.org/dist/index.json 2>/dev/null \
+      | jq -r '[.[] | select(.lts != false)][0].version' 2>/dev/null || true)"
+  fi
+  [[ -n "$ver" && "$ver" != "null" ]] || ver="v22.20.0"
+  [[ "$ver" == v* ]] || ver="v${ver}"
+
+  info "Installing Node ${ver} (need >= ${NODE_MIN}, found ${have:-none})"
+  local name="node-${ver}-linux-${node_arch}"
+  local tmp="/tmp/${name}.tar.xz" sum=""
+  sum="$(curl -fsSL "https://nodejs.org/dist/${ver}/SHASUMS256.txt" 2>/dev/null \
+    | awk -v f="${name}.tar.xz" '$2 == f {print $1; exit}' || true)"
+  fetch_to "https://nodejs.org/dist/${ver}/${name}.tar.xz" "$tmp"
+  verify_sha256 "$tmp" "$sum"
+
+  mkdir -p /usr/local/lib/nodejs
+  rm -rf "/usr/local/lib/nodejs/${name}"
+  tar -C /usr/local/lib/nodejs -xJf "$tmp"
+  rm -f "$tmp"
+
+  ln -sfn "/usr/local/lib/nodejs/${name}/bin/node" /usr/local/bin/node
+  ln -sfn "/usr/local/lib/nodejs/${name}/bin/npm" /usr/local/bin/npm
+  ln -sfn "/usr/local/lib/nodejs/${name}/bin/npx" /usr/local/bin/npx
+
+  NODE_BIN=/usr/local/bin/node
+  [[ -x "$NODE_BIN" ]] || die "Node install failed"
+  info "Using Node $("$NODE_BIN" --version) (${NODE_BIN})"
+}
+
+ensure_toolchains() {
+  if [[ "$SKIP_BUILD" == "1" ]]; then
+    NODE_BIN="${NODE_BIN:-$(command -v node || echo /usr/bin/node)}"
+    return
+  fi
+  ensure_go
+  ensure_node
 }
 
 create_users_dirs() {
@@ -191,7 +340,7 @@ start_postgres_native() {
   esac
 
   for _ in $(seq 1 30); do
-    if su -s /bin/bash postgres -c "psql -tAc 'SELECT 1'" >/dev/null 2>&1; then
+    if su -s /bin/bash postgres -c "cd /tmp && psql -tAc 'SELECT 1'" >/dev/null 2>&1; then
       break
     fi
     sleep 1
@@ -199,7 +348,7 @@ start_postgres_native() {
 
   local esc
   esc="$(printf "%s" "$PG_PASSWORD" | sed "s/'/''/g")"
-  su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1" <<SQL
+  su -s /bin/bash postgres -c "cd /tmp && psql -v ON_ERROR_STOP=1" <<SQL
 DO \$\$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'defendsec') THEN
@@ -216,7 +365,7 @@ SQL
 
   # Allow password auth on local TCP (apid uses 127.0.0.1, not peer/socket).
   local confhba
-  confhba="$(su -s /bin/bash postgres -c "psql -tAc 'SHOW hba_file'" | tr -d '[:space:]')"
+  confhba="$(su -s /bin/bash postgres -c "cd /tmp && psql -tAc 'SHOW hba_file'" | tr -d '[:space:]')"
   if [[ -n "$confhba" && -f "$confhba" ]]; then
     if ! grep -qE '^[[:space:]]*host[[:space:]]+defendsec[[:space:]]+defendsec[[:space:]]+127\.0\.0\.1/32[[:space:]]+(scram-sha-256|md5)' "$confhba"; then
       printf '\nhost defendsec defendsec 127.0.0.1/32 scram-sha-256\n' >>"$confhba"
@@ -273,11 +422,14 @@ build_binaries() {
     info "Skipping build (--skip-build)"
     return
   fi
-  info "Building apid + agent (${GOARCH})"
+  info "Building apid + agent (${GOARCH}) with $("$GO_BIN" version | awk '{print $3}')"
   su -s /bin/bash defendsec -c "
     set -euo pipefail
     cd $(printf %q "$INSTALL_ROOT")
     export GOTOOLCHAIN=local
+    export PATH=$(printf %q "$(dirname "$GO_BIN")"):\$PATH
+    export GOPATH=$(printf %q "${DATA_DIR}/go")
+    export GOCACHE=$(printf %q "${DATA_DIR}/go/cache")
     go build -o bin/defendsec-apid ./cmd/defendsec-apid
     go build -o bin/defendsec-agentd ./cmd/defendsec-agentd
     GOOS=linux GOARCH=${GOARCH} go build -o bin/defendsec-agentd-linux-${GOARCH} ./cmd/defendsec-agentd
@@ -290,10 +442,12 @@ build_console() {
   if [[ "$SKIP_BUILD" == "1" ]]; then
     return
   fi
-  info "Building console (Next.js standalone)"
+  info "Building console (Next.js standalone) with Node $("$NODE_BIN" --version)"
   su -s /bin/bash defendsec -c "
     set -euo pipefail
     cd $(printf %q "$INSTALL_ROOT")
+    export PATH=$(printf %q "$(dirname "$NODE_BIN")"):\$PATH
+    export npm_config_cache=$(printf %q "${DATA_DIR}/npm-cache")
     if [[ -f package-lock.json ]]; then
       npm ci
     else
@@ -358,6 +512,14 @@ install_systemd_units() {
   info "Installing systemd units"
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-apid.service" /etc/systemd/system/defendsec-apid.service
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-console.service" /etc/systemd/system/defendsec-console.service
+
+  # The shipped unit assumes /usr/bin/node; point it at the node we actually use.
+  mkdir -p /etc/systemd/system/defendsec-console.service.d
+  cat >/etc/systemd/system/defendsec-console.service.d/override.conf <<EOF
+[Service]
+ExecStart=
+ExecStart=${NODE_BIN} server.js
+EOF
 
   mkdir -p /etc/systemd/system/defendsec-apid.service.d
   cat >/etc/systemd/system/defendsec-apid.service.d/override.conf <<EOF
@@ -431,6 +593,7 @@ EOF
 install_packages
 create_users_dirs
 clone_or_update_repo
+ensure_toolchains
 start_postgres
 build_binaries
 build_console

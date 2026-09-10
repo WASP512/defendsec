@@ -46,6 +46,8 @@ The script creates a Debian 12 LXC, then runs `packaging/proxmox/install-server.
 
 Postgres uses **native packages** by default (no Docker). That avoids Docker-in-LXC failures on Proxmox. Optional: `--postgres docker` on `install-server.sh` if you really want containers.
 
+Debian 12 ships Go 1.19 and Node 18, which are too old for this repo (`go.mod` needs Go 1.22+, Next.js needs Node 20.9+). When the distro toolchain is behind, the installer downloads upstream Go and Node into `/usr/local`, verifying the published SHA256 first. Pin them with `GO_VERSION=go1.24.6` / `NODE_VERSION=v22.20.0` if you need specific builds.
+
 When it finishes you get:
 
 - Console on `http://<ct-ip>:47261`
