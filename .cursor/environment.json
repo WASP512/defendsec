@@ -1,0 +1,27 @@
+{
+  "name": "DefendSec",
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "console",
+      "description": "Next.js admin console on http://127.0.0.1:47261 (dev admin token: defendsec-local-admin).",
+      "command": "DEFENDSEC_ADMIN_TOKEN=defendsec-local-admin DEFENDSEC_DATABASE_URL='postgres://defendsec:defendsec@127.0.0.1:5432/defendsec?sslmode=disable' npm run dev"
+    },
+    {
+      "name": "apid",
+      "description": "Go control plane: HTTPS enroll :47262, mTLS gRPC :47263, admin loopback :47264. Dual-writes to Postgres.",
+      "command": "DEFENDSEC_ADMIN_TOKEN=defendsec-local-admin DEFENDSEC_ENROLL_SECRET=defendsec-dev-enroll DEFENDSEC_DATABASE_URL='postgres://defendsec:defendsec@127.0.0.1:5432/defendsec?sslmode=disable' ./bin/defendsec-apid --data-dir data"
+    },
+    {
+      "name": "agent",
+      "description": "Local Go mTLS agent enrolled against apid so a live host appears in the console.",
+      "command": "until curl -skf https://127.0.0.1:47262/healthz >/dev/null 2>&1; do sleep 1; done; ./bin/defendsec-agentd --server-http https://127.0.0.1:47262 --server-grpc 127.0.0.1:47263 --tls-server-name localhost --enroll-secret defendsec-dev-enroll --state-dir data/agent-mtls"
+    }
+  ],
+  "ports": [
+    { "name": "console", "port": 47261 },
+    { "name": "apid-https-enroll", "port": 47262 },
+    { "name": "apid-mtls-grpc", "port": 47263 }
+  ]
+}
