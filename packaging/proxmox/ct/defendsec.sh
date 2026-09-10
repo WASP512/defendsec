@@ -40,7 +40,7 @@ REPO_URL="${REPO_URL:-https://github.com/WASP512/defendsec.git}"
 REPO_REF="${REPO_REF:-main}"
 INSTALL_URL="${INSTALL_URL:-}"
 PASSWORD="${PASSWORD:-}"
-# Forward GitHub auth into the CT for private clones.
+# Optional: GitHub auth for private forks or rate limits. Public clones need none.
 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 
 info() { printf '\n==> %s\n' "$*"; }

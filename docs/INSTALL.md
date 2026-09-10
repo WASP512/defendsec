@@ -5,25 +5,18 @@ Two separate installers:
 1. **Server** — Proxmox VE helper (creates an LXC) or `install-server.sh` on a Linux VM
 2. **Agent** — separate download/install on each host you want to inventory
 
-Repo default: [`WASP512/defendsec`](https://github.com/WASP512/defendsec) (private). Pass a GitHub PAT when cloning:
-
-```bash
-export GH_TOKEN=github_pat_...   # Contents: read
-CTID=210 bash packaging/proxmox/ct/defendsec.sh
-# or
-sudo GH_TOKEN=... bash packaging/proxmox/install-server.sh
-```
+Repo default: [`WASP512/defendsec`](https://github.com/WASP512/defendsec) (public). Clone and curl work without a token. Optional `GH_TOKEN` is only for private forks or GitHub API rate limits.
 
 ## 1) Proxmox VE — create the server CT
 
 Run on the **Proxmox host** as root:
 
 ```bash
-export GH_TOKEN=github_pat_...   # needed while the GitHub repo is private
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh)"
 ```
 
-If `curl` of the raw script fails (private repo), copy `packaging/proxmox/` onto the Proxmox host from a checkout and run `bash packaging/proxmox/ct/defendsec.sh` locally.
+If you already have a checkout on the Proxmox host, run `bash packaging/proxmox/ct/defendsec.sh` from it instead.
+
 Optional knobs:
 
 | Env | Default | Purpose |

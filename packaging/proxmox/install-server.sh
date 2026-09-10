@@ -156,6 +156,7 @@ clone_or_update_repo() {
   info "Fetching source ${REPO_URL}@${REPO_REF}"
   local auth_url="$REPO_URL"
   local token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+  # Token is optional; public github.com/WASP512/defendsec clones unauthenticated.
   if [[ -n "$token" && "$REPO_URL" =~ github.com[:/]+([^/]+)/([^/.]+) ]]; then
     local owner="${BASH_REMATCH[1]}"
     local name="${BASH_REMATCH[2]}"
