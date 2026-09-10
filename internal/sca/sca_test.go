@@ -65,3 +65,45 @@ func TestEvalInventoryField_firewall(t *testing.T) {
 		t.Fatalf("expected pass: %s", got.Detail)
 	}
 }
+
+func TestEvalFileRegex_dropIns(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "sshd_config")
+	if err := os.WriteFile(main, []byte("Include sshd_config.d/*.conf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	drop := filepath.Join(dir, "sshd_config.d")
+	if err := os.Mkdir(drop, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(drop, "50-harden.conf"), []byte("PasswordAuthentication no\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check := Check{
+		ID:        "sshd-password-auth",
+		Title:     "PasswordAuthentication should be no",
+		Severity:  "high",
+		Type:      "file_regex",
+		Path:      main,
+		MustMatch: `(?i)^PasswordAuthentication\s+no`,
+	}
+	got := EvalFileRegex(check)
+	if !got.Pass {
+		t.Fatalf("expected drop-in match, got: %s", got.Detail)
+	}
+}
+
+func TestEvalFileRegex_missingSkipped(t *testing.T) {
+	check := Check{
+		ID:        "sshd-password-auth",
+		Title:     "PasswordAuthentication should be no",
+		Severity:  "high",
+		Type:      "file_regex",
+		Path:      filepath.Join(t.TempDir(), "no-such-sshd_config"),
+		MustMatch: `(?i)^PasswordAuthentication\s+no`,
+	}
+	got := EvalFileRegex(check)
+	if !got.Pass {
+		t.Fatalf("expected skip/pass for missing file, got: %s", got.Detail)
+	}
+}

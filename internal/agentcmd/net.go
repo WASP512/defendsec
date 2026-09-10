@@ -60,11 +60,27 @@ func ensureChain() error {
 	return nil
 }
 
+func iptablesBin() string {
+	for _, name := range []string{"iptables", "iptables-nft", "iptables-legacy"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path
+		}
+	}
+	return "iptables"
+}
+
 func iptables(args ...string) error {
-	cmd := exec.Command("iptables", args...)
+	bin := iptablesBin()
+	cmd := exec.Command(bin, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("iptables %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		msg := strings.TrimSpace(string(out))
+		hint := ""
+		if strings.Contains(strings.ToLower(err.Error()), "executable file not found") ||
+			strings.Contains(strings.ToLower(msg), "no such file") {
+			hint = " (on Fedora install iptables-nft: sudo dnf install -y iptables-nft)"
+		}
+		return fmt.Errorf("%s %s: %w (%s)%s", bin, strings.Join(args, " "), err, msg, hint)
 	}
 	return nil
 }

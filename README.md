@@ -8,6 +8,8 @@ The in-app [Scope](/scope) page maps what is easy, what is ordinary (OSV/NVD ing
 
 The detailed post–Phase-6 roadmap (Fleet-like ops + Wazuh-like detection, still not MDM) lives in [`docs/NEXT-PHASES.md`](docs/NEXT-PHASES.md).
 
+**Fedora workstation hands-on:** [`docs/FEDORA.md`](docs/FEDORA.md) (dnf inventory, firewalld, systemd units, isolate notes).
+
 ## Run the console
 
 ```bash

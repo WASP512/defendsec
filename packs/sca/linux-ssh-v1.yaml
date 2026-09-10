@@ -38,12 +38,7 @@ checks:
     type: file_regex
     path: /etc/ssh/sshd_config
     must_match: '(?i)^MaxAuthTries\s+([1-4])\s*$'
-  - id: sshd-protocol
-    title: Protocol 2 only (no legacy Protocol 1)
-    severity: medium
-    type: file_regex
-    path: /etc/ssh/sshd_config
-    must_match: '(?i)^Protocol\s+2'
+  # Note: OpenSSH on Fedora/RHEL no longer uses the Protocol directive; Protocol 1 is gone.
   - id: firewall-enabled
     title: Host firewall reported enabled
     severity: medium

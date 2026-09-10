@@ -2,6 +2,8 @@
 
 Self-hosted Fleet-like inventory + Wazuh-shaped host detection. **Not MDM:** no wipe, lock, DEP, profiles, or CSP management.
 
+Fedora workstation hands-on (dnf, firewalld, systemd, SELinux notes): [`FEDORA.md`](./FEDORA.md).
+
 ## Quick start (compose + apid + console + agent)
 
 1. Start Postgres:

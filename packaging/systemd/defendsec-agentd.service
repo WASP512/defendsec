@@ -6,10 +6,14 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-EnvironmentFile=-/etc/defendsec/agentd.env
+# Copy packaging/systemd/agentd.env.example → /etc/defendsec/agentd.env
+EnvironmentFile=/etc/defendsec/agentd.env
 ExecStart=/usr/local/bin/defendsec-agentd \
-  -state-dir /var/lib/defendsec-agent \
-  -apid https://127.0.0.1:47262
+  -server-http ${DEFENDSEC_SERVER_HTTP} \
+  -server-grpc ${DEFENDSEC_SERVER_GRPC} \
+  -tls-server-name ${DEFENDSEC_TLS_SERVER_NAME} \
+  -enroll-secret-file /etc/defendsec/enroll-secret \
+  -state-dir /var/lib/defendsec-agent
 Restart=always
 RestartSec=10
 

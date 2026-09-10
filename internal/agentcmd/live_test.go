@@ -42,3 +42,14 @@ func TestRunLiveQueryOSInfo(t *testing.T) {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }
+
+func TestLoggedInUsersEmptyOK(t *testing.T) {
+	out, err := RunLiveQuery("logged_in_users")
+	if err != nil {
+		t.Fatalf("expected no error on empty who: %v", err)
+	}
+	if out == "" {
+		t.Fatal("expected output")
+	}
+	t.Log(out)
+}

@@ -55,14 +55,36 @@ type Snapshot struct {
 	Fim            []FimFile
 }
 
-func Collect() Snapshot {
+// HostIdentity is a cheap hostname/OS snapshot for heartbeats (no package queries).
+type HostIdentity struct {
+	Hostname      string
+	Platform      string
+	OSName        string
+	OSVersion     string
+	Arch          string
+	UptimeSeconds int64
+}
+
+func Identity() HostIdentity {
 	host, _ := os.Hostname()
+	return HostIdentity{
+		Hostname:      host,
+		Platform:      runtime.GOOS,
+		OSName:        osName(),
+		OSVersion:     osVersion(),
+		Arch:          runtime.GOARCH,
+		UptimeSeconds: uptimeSeconds(),
+	}
+}
+
+func Collect() Snapshot {
+	id := Identity()
 	snap := Snapshot{
-		Hostname:       host,
-		Platform:       runtime.GOOS,
-		Arch:           runtime.GOARCH,
-		OSName:         osName(),
-		OSVersion:      osVersion(),
+		Hostname:       id.Hostname,
+		Platform:       id.Platform,
+		Arch:           id.Arch,
+		OSName:         id.OSName,
+		OSVersion:      id.OSVersion,
 		Serial:         serial(),
 		HardwareModel:  hardwareModel(),
 		CPU:            cpuLabel(),
@@ -71,7 +93,7 @@ func Collect() Snapshot {
 		Firewall:       firewallOn(),
 		IPAddresses:    ipAddresses(),
 		Username:       username(),
-		UptimeSeconds:  uptimeSeconds(),
+		UptimeSeconds:  id.UptimeSeconds,
 		Software:       softwareList(),
 	}
 	updates, status := pendingUpdates()
@@ -202,8 +224,15 @@ func firewallOn() *bool {
 		v := false
 		return &v
 	}
-	if strings.ToLower(run("firewall-cmd", "--state")) == "running" {
+	// firewalld (Fedora/RHEL): --state exits non-zero when not running.
+	fw, code := runAllowExit("firewall-cmd", []int{252}, "--state")
+	fw = strings.ToLower(fw)
+	if fw == "running" || code == 0 && strings.Contains(fw, "running") {
 		v := true
+		return &v
+	}
+	if strings.Contains(fw, "not running") || code == 252 {
+		v := false
 		return &v
 	}
 	return nil
@@ -290,6 +319,19 @@ func cpuLabel() string {
 	return runtime.GOARCH
 }
 
+func rpmBased() bool {
+	kv := osRelease()
+	blob := strings.ToLower(kv["ID"] + " " + kv["ID_LIKE"])
+	for _, token := range []string{"fedora", "rhel", "centos", "rocky", "alma", "amzn", "suse", "sles"} {
+		if strings.Contains(blob, token) {
+			return true
+		}
+	}
+	_, hasRPM := exec.LookPath("rpm")
+	_, hasDPKG := exec.LookPath("dpkg-query")
+	return hasRPM == nil && hasDPKG != nil
+}
+
 func softwareList() []Software {
 	items := make([]Software, 0)
 	seen := map[string]struct{}{}
@@ -304,7 +346,25 @@ func softwareList() []Software {
 		seen[key] = struct{}{}
 		items = append(items, Software{Name: name, Version: version})
 	}
-	priority := []string{"openssh-server", "openssl", "docker.io", "docker-ce", "containerd", "git", "python3"}
+	priority := []string{"openssh-server", "openssh", "openssl", "docker.io", "docker-ce", "containerd", "git", "python3"}
+	if rpmBased() {
+		for _, pkg := range priority {
+			raw := run("rpm", "-q", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}", pkg)
+			if name, ver, ok := strings.Cut(raw, "\t"); ok && !strings.Contains(raw, "not installed") {
+				add(name, ver)
+			}
+		}
+		raw := run("rpm", "-qa", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}\n")
+		for _, line := range strings.Split(raw, "\n") {
+			if name, ver, ok := strings.Cut(line, "\t"); ok {
+				add(name, ver)
+				if len(items) >= 80 {
+					break
+				}
+			}
+		}
+		return items
+	}
 	for _, pkg := range priority {
 		raw := run("dpkg-query", "-W", "-f=${Package}\t${Version}", pkg)
 		if name, ver, ok := strings.Cut(raw, "\t"); ok {
@@ -321,7 +381,7 @@ func softwareList() []Software {
 		}
 	}
 	if len(items) <= 7 {
-		raw = run("rpm", "-qa", "--queryformat", "%{NAME}\t%{VERSION}\n")
+		raw = run("rpm", "-qa", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}\n")
 		for _, line := range strings.Split(raw, "\n") {
 			if name, ver, ok := strings.Cut(line, "\t"); ok {
 				add(name, ver)
@@ -334,13 +394,44 @@ func softwareList() []Software {
 	return items
 }
 
+func runAllowExit(name string, allowExit []int, args ...string) (string, int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+			for _, allowed := range allowExit {
+				if code == allowed {
+					return strings.TrimSpace(string(out)), code
+				}
+			}
+		}
+		return "", -1
+	}
+	return strings.TrimSpace(string(out)), code
+}
+
 func pendingUpdates() ([]Update, string) {
 	if runtime.GOOS != "linux" {
 		return nil, "unsupported"
 	}
-	if _, err := exec.LookPath("apt"); err != nil {
-		return nil, "error"
+	if _, err := exec.LookPath("apt"); err == nil {
+		return pendingApt()
 	}
+	if _, err := exec.LookPath("dnf"); err == nil {
+		return pendingDNF("dnf")
+	}
+	if _, err := exec.LookPath("yum"); err == nil {
+		return pendingDNF("yum")
+	}
+	return nil, "unsupported"
+}
+
+func pendingApt() ([]Update, string) {
 	raw := run("apt", "list", "--upgradable")
 	var updates []Update
 	for _, line := range strings.Split(raw, "\n") {
@@ -358,6 +449,38 @@ func pendingUpdates() ([]Update, string) {
 			current = strings.Trim(rest, " ]")
 		}
 		updates = append(updates, Update{Name: name, Current: current, Available: available})
+		if len(updates) >= 40 {
+			break
+		}
+	}
+	return updates, "ok"
+}
+
+func pendingDNF(bin string) ([]Update, string) {
+	// dnf/yum check-update exits 100 when updates are available.
+	raw, code := runAllowExit(bin, []int{100}, "check-update", "-q")
+	if code < 0 {
+		return nil, "error"
+	}
+	var updates []Update
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "Obsoleting") || strings.HasPrefix(line, "Security:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		name := fields[0]
+		if i := strings.LastIndex(name, "."); i > 0 {
+			// strip arch suffix: openssl.x86_64 → openssl
+			arch := name[i+1:]
+			if arch == "x86_64" || arch == "aarch64" || arch == "noarch" || arch == "i686" {
+				name = name[:i]
+			}
+		}
+		updates = append(updates, Update{Name: name, Available: fields[1]})
 		if len(updates) >= 40 {
 			break
 		}

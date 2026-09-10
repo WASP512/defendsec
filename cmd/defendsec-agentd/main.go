@@ -20,7 +20,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -351,24 +350,14 @@ func attachStream(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 }
 
 func heartbeat(stateDir string) *defendsecv1.HeartbeatRequest {
-	host, _ := os.Hostname()
-	platform := runtime.GOOS
-	osName := runtime.GOOS
-	switch runtime.GOOS {
-	case "darwin":
-		osName = "macOS"
-	case "linux":
-		osName = "Linux"
-	case "windows":
-		osName = "Windows"
-	}
+	id := hostinv.Identity()
 	return &defendsecv1.HeartbeatRequest{
-		Hostname:      host,
-		OsName:        osName,
-		OsVersion:     runtime.Version(),
-		Arch:          runtime.GOARCH,
-		Platform:      platform,
-		UptimeSeconds: 0,
+		Hostname:      id.Hostname,
+		OsName:        id.OSName,
+		OsVersion:     id.OSVersion,
+		Arch:          id.Arch,
+		Platform:      id.Platform,
+		UptimeSeconds: id.UptimeSeconds,
 		Isolated:      agentcmd.LoadState(stateDir).Isolated,
 	}
 }

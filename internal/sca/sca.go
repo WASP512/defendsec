@@ -83,8 +83,14 @@ func EvalFileRegex(check Check) Result {
 		res.Detail = "check missing path or must_match"
 		return res
 	}
-	raw, err := os.ReadFile(check.Path)
+	content, sources, err := readConfigWithDropIns(check.Path)
 	if err != nil {
+		// Missing sshd_config is common on workstations without openssh-server.
+		if os.IsNotExist(err) {
+			res.Pass = true
+			res.Detail = fmt.Sprintf("skipped: %s not present", check.Path)
+			return res
+		}
 		res.Detail = fmt.Sprintf("read %s: %v", check.Path, err)
 		return res
 	}
@@ -93,19 +99,59 @@ func EvalFileRegex(check Check) Result {
 		res.Detail = fmt.Sprintf("invalid regex: %v", err)
 		return res
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
 		if re.MatchString(trimmed) {
 			res.Pass = true
-			res.Detail = "matched " + check.Path
+			res.Detail = "matched " + strings.Join(sources, ", ")
 			return res
 		}
 	}
-	res.Detail = fmt.Sprintf("no line in %s matched %q", check.Path, check.MustMatch)
+	res.Detail = fmt.Sprintf("no line in %s matched %q", strings.Join(sources, ", "), check.MustMatch)
 	return res
+}
+
+// readConfigWithDropIns loads path plus sibling path.d/*.conf (Fedora/RHEL sshd drop-ins).
+func readConfigWithDropIns(path string) (string, []string, error) {
+	var b strings.Builder
+	sources := []string{}
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return "", nil, err
+	}
+	if err == nil {
+		b.Write(raw)
+		b.WriteByte('\n')
+		sources = append(sources, path)
+	}
+	dropDir := path + ".d"
+	entries, dirErr := os.ReadDir(dropDir)
+	if dirErr == nil {
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || (!strings.HasSuffix(name, ".conf") && !strings.HasSuffix(name, ".cfg")) {
+				continue
+			}
+			p := filepath.Join(dropDir, name)
+			dropRaw, readErr := os.ReadFile(p)
+			if readErr != nil {
+				continue
+			}
+			b.Write(dropRaw)
+			b.WriteByte('\n')
+			sources = append(sources, p)
+		}
+	}
+	if len(sources) == 0 {
+		if err != nil {
+			return "", nil, err
+		}
+		return "", nil, os.ErrNotExist
+	}
+	return b.String(), sources, nil
 }
 
 func EvalInventoryField(check Check, dev presence.Device) Result {

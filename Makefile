@@ -1,6 +1,7 @@
 .PHONY: proto apid agent test-go
 
 export PATH := $(shell go env GOPATH)/bin:$(PATH)
+export GOTOOLCHAIN ?= local
 
 proto:
 	mkdir -p internal/gen

@@ -309,12 +309,13 @@ func listUsers() (string, error) {
 
 func listLoggedInUsers() (string, error) {
 	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
-		if out, err := exec.Command("who").CombinedOutput(); err == nil {
-			text := strings.TrimSpace(string(out))
-			if text != "" {
-				return text, nil
-			}
+		out, err := exec.Command("who").CombinedOutput()
+		text := strings.TrimSpace(string(out))
+		if err == nil && text != "" {
+			return text, nil
 		}
+		// Empty or unavailable (headless/container) is still a successful snapshot.
+		return "(no logged-in users)", nil
 	}
 	return "", fmt.Errorf("logged_in_users not available")
 }
@@ -334,9 +335,12 @@ func listCrontab() (string, error) {
 			appendFileLines(&b, filepath.Join("/etc/cron.d", entry.Name()), entry.Name())
 		}
 	}
-	spool := "/var/spool/cron/crontabs"
-	users, err := os.ReadDir(spool)
-	if err == nil {
+	// Debian/Ubuntu: /var/spool/cron/crontabs ; Fedora/RHEL: /var/spool/cron
+	for _, spool := range []string{"/var/spool/cron/crontabs", "/var/spool/cron"} {
+		users, err := os.ReadDir(spool)
+		if err != nil {
+			continue
+		}
 		for _, entry := range users {
 			if entry.IsDir() {
 				continue

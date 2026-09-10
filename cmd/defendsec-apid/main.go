@@ -46,12 +46,18 @@ func run(log *slog.Logger) error {
 	adminAddr := flag.String("admin-addr", "127.0.0.1:47264", "loopback HTTP for signed commands (admin token)")
 	enrollSecret := flag.String("enroll-secret", "", "override enroll secret (default: DEFENDSEC_ENROLL_SECRET or data/defendsec.json)")
 	adminTokenFlag := flag.String("admin-token", "", "override admin token (default: DEFENDSEC_ADMIN_TOKEN or data/admin-token.txt)")
-	advertise := flag.String("tls-hostname", "", "extra hostname/IP SAN for the server certificate")
+	advertise := flag.String("tls-hostname", strings.TrimSpace(os.Getenv("DEFENDSEC_TLS_HOSTNAME")), "extra hostname/IP SAN for the server certificate (or DEFENDSEC_TLS_HOSTNAME)")
 	dbURL := flag.String("db-url", "", "Postgres URL (or DATABASE_URL / DEFENDSEC_DATABASE_URL)")
 	flag.Parse()
 
 	pkiDir := filepath.Join(*dataDir, "pki")
-	hosts := []string{*advertise}
+	hosts := []string{}
+	for _, part := range strings.Split(*advertise, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			hosts = append(hosts, part)
+		}
+	}
 	if h, err := os.Hostname(); err == nil {
 		hosts = append(hosts, h)
 	}
