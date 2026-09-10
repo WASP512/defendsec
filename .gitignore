@@ -43,3 +43,5 @@ next-env.d.ts
 # keel local state
 /data
 agent/.keel-node-key
+**/__pycache__/
+*.pyc
