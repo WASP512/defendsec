@@ -254,7 +254,9 @@ host_http_get() {
 push_install_script() {
   local src="" tmp=""
   local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+  if ! script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"; then
+    script_dir=""
+  fi
   if [[ -n "$INSTALL_URL" ]]; then
     tmp="$(mktemp)"
     host_http_get "$INSTALL_URL" "$tmp"
