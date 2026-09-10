@@ -8,6 +8,9 @@
 #   sudo bash packaging/proxmox/install-server.sh
 #   sudo bash packaging/proxmox/install-server.sh --repo-url https://github.com/WASP512/defendsec.git
 #
+# Postgres defaults to native packages (recommended for Proxmox LXC). Optional:
+#   --postgres docker
+#
 # Produces agent download artifacts under /var/lib/defendsec/downloads so hosts
 # can install with packaging/agent/install.sh (separate from this server script).
 
@@ -27,6 +30,8 @@ ADVERTISE_HOSTNAME="${ADVERTISE_HOSTNAME:-}"
 PG_PASSWORD="${PG_PASSWORD:-}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
+# native = system postgresql (default, works in Proxmox LXC). docker = optional.
+POSTGRES_MODE="${POSTGRES_MODE:-native}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -37,9 +42,10 @@ while [[ $# -gt 0 ]]; do
     --advertise-hostname) ADVERTISE_HOSTNAME="$2"; shift 2 ;;
     --pg-password) PG_PASSWORD="$2"; shift 2 ;;
     --admin-token) ADMIN_TOKEN="$2"; shift 2 ;;
+    --postgres) POSTGRES_MODE="$2"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     -h|--help)
-      sed -n '1,20p' "$0"
+      sed -n '1,22p' "$0"
       exit 0
       ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -48,6 +54,11 @@ done
 
 info() { printf '\n==> %s\n' "$*"; }
 die() { echo "error: $*" >&2; exit 1; }
+
+case "$POSTGRES_MODE" in
+  native|docker) ;;
+  *) die "--postgres must be 'native' or 'docker' (got: ${POSTGRES_MODE})" ;;
+esac
 
 detect_os() {
   if [[ -f /etc/os-release ]]; then
@@ -83,24 +94,33 @@ if [[ -n "$PRIMARY_IP" ]]; then
 fi
 
 install_packages() {
-  info "Installing packages (${OS_ID})"
+  info "Installing packages (${OS_ID}, postgres=${POSTGRES_MODE})"
   case "$OS_ID" in
     debian|ubuntu)
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -y
       apt-get install -y --no-install-recommends \
         ca-certificates curl git jq make openssl \
-        docker.io \
         golang-go nodejs npm \
         iptables
-      systemctl enable --now docker || true
+      if [[ "$POSTGRES_MODE" == "native" ]]; then
+        apt-get install -y --no-install-recommends postgresql postgresql-contrib
+      else
+        apt-get install -y --no-install-recommends docker.io
+        systemctl enable --now docker || true
+      fi
       ;;
     fedora|rhel|centos|rocky|almalinux)
-      dnf install -y git jq make openssl golang nodejs npm docker iptables-nft
-      systemctl enable --now docker || true
+      dnf install -y git jq make openssl golang nodejs npm iptables-nft
+      if [[ "$POSTGRES_MODE" == "native" ]]; then
+        dnf install -y postgresql-server postgresql
+      else
+        dnf install -y docker
+        systemctl enable --now docker || true
+      fi
       ;;
     *)
-      die "unsupported OS id=${OS_ID}; install git jq make go node npm docker manually, then re-run"
+      die "unsupported OS id=${OS_ID}; install git jq make go node npm (+ postgresql) manually, then re-run"
       ;;
   esac
 
@@ -110,8 +130,11 @@ install_packages() {
   if ! command -v npm >/dev/null 2>&1; then
     die "npm missing after package install"
   fi
-  if ! command -v docker >/dev/null 2>&1; then
-    die "docker missing after package install"
+  if [[ "$POSTGRES_MODE" == "docker" ]] && ! command -v docker >/dev/null 2>&1; then
+    die "docker missing after package install (use --postgres native)"
+  fi
+  if [[ "$POSTGRES_MODE" == "native" ]] && ! command -v psql >/dev/null 2>&1; then
+    die "postgresql missing after package install"
   fi
 }
 
@@ -120,8 +143,9 @@ create_users_dirs() {
   if ! id defendsec >/dev/null 2>&1; then
     useradd --system --home "$DATA_DIR" --shell /usr/sbin/nologin defendsec
   fi
-  # Docker group for compose as defendsec if needed; apid runs as defendsec without docker.
-  usermod -aG docker defendsec 2>/dev/null || true
+  if [[ "$POSTGRES_MODE" == "docker" ]]; then
+    usermod -aG docker defendsec 2>/dev/null || true
+  fi
   mkdir -p "$DATA_DIR" "$DOWNLOADS_DIR" /etc/defendsec "$INSTALL_ROOT"
   chown -R defendsec:defendsec "$DATA_DIR"
   chmod 750 "$DATA_DIR"
@@ -146,13 +170,70 @@ clone_or_update_repo() {
   else
     rm -rf "$INSTALL_ROOT"
     git clone --depth 1 --branch "$REPO_REF" "$auth_url" "$INSTALL_ROOT"
-    # Do not leave the token in the remotes file.
     git -C "$INSTALL_ROOT" remote set-url origin "$REPO_URL"
   fi
   chown -R defendsec:defendsec "$INSTALL_ROOT"
 }
 
-start_postgres() {
+start_postgres_native() {
+  info "Starting Postgres (native)"
+  case "$OS_ID" in
+    fedora|rhel|centos|rocky|almalinux)
+      if [[ ! -f /var/lib/pgsql/data/PG_VERSION ]] && [[ ! -f /var/lib/pgsql/data/postgresql.conf ]]; then
+        postgresql-setup --initdb 2>/dev/null || /usr/bin/postgresql-setup --initdb || true
+      fi
+      systemctl enable --now postgresql
+      ;;
+    *)
+      systemctl enable --now postgresql
+      ;;
+  esac
+
+  for _ in $(seq 1 30); do
+    if su -s /bin/bash postgres -c "psql -tAc 'SELECT 1'" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+
+  local esc
+  esc="$(printf "%s" "$PG_PASSWORD" | sed "s/'/''/g")"
+  su -s /bin/bash postgres -c "psql -v ON_ERROR_STOP=1" <<SQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'defendsec') THEN
+    CREATE ROLE defendsec LOGIN PASSWORD '${esc}';
+  ELSE
+    ALTER ROLE defendsec WITH LOGIN PASSWORD '${esc}';
+  END IF;
+END
+\$\$;
+SELECT 'CREATE DATABASE defendsec OWNER defendsec'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'defendsec')\gexec
+GRANT ALL PRIVILEGES ON DATABASE defendsec TO defendsec;
+SQL
+
+  # Allow password auth on local TCP (apid uses 127.0.0.1, not peer/socket).
+  local confhba
+  confhba="$(su -s /bin/bash postgres -c "psql -tAc 'SHOW hba_file'" | tr -d '[:space:]')"
+  if [[ -n "$confhba" && -f "$confhba" ]]; then
+    if ! grep -qE '^[[:space:]]*host[[:space:]]+defendsec[[:space:]]+defendsec[[:space:]]+127\.0\.0\.1/32[[:space:]]+(scram-sha-256|md5)' "$confhba"; then
+      printf '\nhost defendsec defendsec 127.0.0.1/32 scram-sha-256\n' >>"$confhba"
+      systemctl reload postgresql || systemctl restart postgresql
+      sleep 2
+    fi
+  fi
+
+  for _ in $(seq 1 30); do
+    if PGPASSWORD="$PG_PASSWORD" psql -h 127.0.0.1 -U defendsec -d defendsec -tAc 'SELECT 1' >/dev/null 2>&1; then
+      return
+    fi
+    sleep 1
+  done
+  die "native Postgres did not accept defendsec@127.0.0.1 connections"
+}
+
+start_postgres_docker() {
   info "Starting Postgres (Docker)"
   mkdir -p "${DATA_DIR}/postgres"
   chown -R 999:999 "${DATA_DIR}/postgres" 2>/dev/null || true
@@ -176,6 +257,14 @@ start_postgres() {
     sleep 1
   done
   die "Postgres did not become ready"
+}
+
+start_postgres() {
+  if [[ "$POSTGRES_MODE" == "docker" ]]; then
+    start_postgres_docker
+  else
+    start_postgres_native
+  fi
 }
 
 build_binaries() {
@@ -243,13 +332,11 @@ EOF
   chmod 640 /etc/defendsec/console.env
   chown root:defendsec /etc/defendsec/console.env
 
-  # Ensure admin token file exists for operators who read the data dir.
   install -d -o defendsec -g defendsec -m 750 "$DATA_DIR"
   printf '%s\n' "$ADMIN_TOKEN" >"${DATA_DIR}/admin-token.txt"
   chown defendsec:defendsec "${DATA_DIR}/admin-token.txt"
   chmod 600 "${DATA_DIR}/admin-token.txt"
 
-  # Agent download artifacts (separate from server install).
   mkdir -p "$DOWNLOADS_DIR"
   if [[ -f "${INSTALL_ROOT}/bin/defendsec-agentd-linux-${GOARCH}" ]]; then
     install -m 0755 "${INSTALL_ROOT}/bin/defendsec-agentd-linux-${GOARCH}" \
@@ -271,7 +358,6 @@ install_systemd_units() {
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-apid.service" /etc/systemd/system/defendsec-apid.service
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-console.service" /etc/systemd/system/defendsec-console.service
 
-  # Point apid at DATA_DIR via drop-in.
   mkdir -p /etc/systemd/system/defendsec-apid.service.d
   cat >/etc/systemd/system/defendsec-apid.service.d/override.conf <<EOF
 [Service]
@@ -288,11 +374,20 @@ ExecStart=/usr/local/bin/defendsec-apid \\
 ReadWritePaths=${DATA_DIR}
 EOF
 
+  # After=postgresql when using native packages.
+  if [[ "$POSTGRES_MODE" == "native" ]]; then
+    mkdir -p /etc/systemd/system/defendsec-apid.service.d
+    cat >/etc/systemd/system/defendsec-apid.service.d/postgres.conf <<EOF
+[Unit]
+After=postgresql.service
+Wants=postgresql.service
+EOF
+  fi
+
   systemctl daemon-reload
   systemctl enable --now defendsec-apid
   systemctl enable --now defendsec-console
 
-  # Wait for enroll secret file to appear.
   for _ in $(seq 1 30); do
     if [[ -f "${DATA_DIR}/defendsec.json" ]]; then
       break
@@ -315,7 +410,7 @@ DefendSec server install complete.
   Enroll TLS:  https://${host}:47262
   gRPC:        ${host}:47263
   Admin token: ${ADMIN_TOKEN}
-  Postgres:    user=defendsec  password=${PG_PASSWORD}  (loopback only)
+  Postgres:    user=defendsec  password=${PG_PASSWORD}  (127.0.0.1 only, mode=${POSTGRES_MODE})
 
   Enroll secret: ${enroll:-"(start apid / check ${DATA_DIR}/defendsec.json)"}
 
