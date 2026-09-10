@@ -41,9 +41,14 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Next.js auto-generated agent rule files (created at dev runtime)
+/AGENTS.md
+/CLAUDE.md
+
 # keel local state
 /data
 agent/.keel-node-key
+agent/.defendsec-node-key
 **/__pycache__/
 *.pyc
 
