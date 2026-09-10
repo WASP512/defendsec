@@ -17,6 +17,9 @@
 /.next/
 /out/
 /bin/
+# Next 16 generates editor-agent instruction files during builds.
+/AGENTS.md
+/CLAUDE.md
 
 # production
 /build
