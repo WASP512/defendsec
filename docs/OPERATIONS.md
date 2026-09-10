@@ -4,6 +4,8 @@ Self-hosted Fleet-like inventory + Wazuh-shaped host detection. **Not MDM:** no 
 
 Fedora workstation hands-on (dnf, firewalld, systemd, SELinux notes): [`FEDORA.md`](./FEDORA.md).
 
+Production install (Proxmox VE CT + separate agent download): [`INSTALL.md`](./INSTALL.md).
+
 ## Quick start (compose + apid + console + agent)
 
 1. Start Postgres:

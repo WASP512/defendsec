@@ -23,18 +23,19 @@ export default async function EnrollPage() {
       <EnrollPanel enrollSecret={store.enrollSecret} serverUrl={serverUrl} />
       <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
         <li>
-          Build binaries with <code className="text-foreground">make apid agent</code> (or copy{" "}
-          <code className="text-foreground">bin/defendsec-agentd</code> to the host).
+          Prefer the <strong>Agent install</strong> one-liner above (downloads binary + systemd). Full
+          Proxmox/server setup is in <code className="text-foreground">docs/INSTALL.md</code>.
         </li>
         <li>
           Start <code className="text-foreground">defendsec-apid</code> with a TLS hostname/SAN the
-          agent can verify, then run the Go enroll command from the panel.
+          agent can verify (<code className="text-foreground">--tls-server-name</code> must match).
         </li>
         <li>
           Confirm the host on <strong>Devices</strong>, then try a live query from Signed response.
         </li>
         <li>
-          Optional systemd units: <code className="text-foreground">packaging/systemd</code>.
+          Optional units: <code className="text-foreground">packaging/systemd</code>. Fedora lab notes
+          in <code className="text-foreground">docs/FEDORA.md</code>.
         </li>
       </ol>
     </div>

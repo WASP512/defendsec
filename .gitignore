@@ -46,3 +46,6 @@ next-env.d.ts
 agent/.keel-node-key
 **/__pycache__/
 *.pyc
+
+# release artifacts
+/dist/

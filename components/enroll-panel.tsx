@@ -13,7 +13,7 @@ export function EnrollPanel({
   serverUrl: string;
 }) {
   const [secret, setSecret] = useState(enrollSecret);
-  const [copied, setCopied] = useState<"secret" | "go" | "py" | null>(null);
+  const [copied, setCopied] = useState<"secret" | "install" | "go" | "py" | null>(null);
 
   const host = (() => {
     try {
@@ -22,6 +22,24 @@ export function EnrollPanel({
       return "127.0.0.1";
     }
   })();
+
+  const downloadBase = (() => {
+    try {
+      const u = new URL(serverUrl);
+      return `${u.protocol}//${u.host}/downloads`;
+    } catch {
+      return `http://${host}:47261/downloads`;
+    }
+  })();
+
+  const installCommand = [
+    `curl -fsSL "${downloadBase}/install-agent.sh" | sudo bash -s -- \\`,
+    `  --server-http https://${host}:47262 \\`,
+    `  --server-grpc ${host}:47263 \\`,
+    `  --tls-server-name ${host} \\`,
+    `  --enroll-secret ${secret} \\`,
+    `  --download-base "${downloadBase}"`,
+  ].join("\n");
 
   const goCommand = [
     `./bin/defendsec-agentd \\`,
@@ -40,7 +58,7 @@ export function EnrollPanel({
     setSecret(data.enrollSecret);
   }
 
-  async function copy(kind: "secret" | "go" | "py", value: string) {
+  async function copy(kind: "secret" | "install" | "go" | "py", value: string) {
     await navigator.clipboard.writeText(value);
     setCopied(kind);
     setTimeout(() => setCopied(null), 1500);
@@ -68,7 +86,27 @@ export function EnrollPanel({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="go-cmd">Go agent (recommended — mTLS + signed response)</Label>
+        <Label htmlFor="install-cmd">Agent install (recommended — curl download + systemd)</Label>
+        <textarea
+          id="install-cmd"
+          readOnly
+          rows={7}
+          className="w-full rounded-lg border bg-muted/40 p-3 font-mono text-sm"
+          value={installCommand}
+        />
+        <Button type="button" onClick={() => copy("install", installCommand)}>
+          {copied === "install" ? "Copied command" : "Copy install command"}
+        </Button>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Separate from the Proxmox/server installer. Pulls{" "}
+          <code className="text-foreground">install-agent.sh</code> and the matching agent binary
+          from this console&apos;s <code className="text-foreground">/downloads</code> after a
+          server install. See <code className="text-foreground">docs/INSTALL.md</code>.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="go-cmd">Go agent (manual binary)</Label>
         <textarea
           id="go-cmd"
           readOnly
@@ -76,7 +114,7 @@ export function EnrollPanel({
           className="w-full rounded-lg border bg-muted/40 p-3 font-mono text-sm"
           value={goCommand}
         />
-        <Button type="button" onClick={() => copy("go", goCommand)}>
+        <Button type="button" variant="outline" onClick={() => copy("go", goCommand)}>
           {copied === "go" ? "Copied command" : "Copy Go command"}
         </Button>
         <p className="mt-1 text-sm text-muted-foreground">

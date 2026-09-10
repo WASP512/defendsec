@@ -10,6 +10,8 @@ The detailed post–Phase-6 roadmap (Fleet-like ops + Wazuh-like detection, stil
 
 **Fedora workstation hands-on:** [`docs/FEDORA.md`](docs/FEDORA.md) (dnf inventory, firewalld, systemd units, isolate notes).
 
+**Install (Proxmox CT + separate agent download):** [`docs/INSTALL.md`](docs/INSTALL.md).
+
 ## Run the console
 
 ```bash

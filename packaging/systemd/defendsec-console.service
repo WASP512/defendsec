@@ -1,0 +1,23 @@
+[Unit]
+Description=DefendSec console (Next.js)
+After=network-online.target defendsec-apid.service
+Wants=network-online.target
+Requires=defendsec-apid.service
+
+[Service]
+Type=simple
+User=defendsec
+Group=defendsec
+WorkingDirectory=/opt/defendsec/.next/standalone
+EnvironmentFile=-/etc/defendsec/console.env
+# Prefer standalone server produced by `next build` (output: "standalone").
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/defendsec /var/lib/defendsec
+
+[Install]
+WantedBy=multi-user.target
