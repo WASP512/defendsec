@@ -270,7 +270,9 @@ push_install_script() {
   fi
   [[ -s "$src" ]] || die "install-server.sh is empty"
   pct push "$CTID" "$src" "$TMP_INSTALL"
-  [[ -n "$tmp" ]] && rm -f "$tmp"
+  if [[ -n "$tmp" ]]; then
+    rm -f "$tmp"
+  fi
 }
 
 info "Copying server installer into CT ${CTID}"
