@@ -79,7 +79,7 @@ export function AppShell({
                   <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                     <Anchor className="size-4" />
                   </span>
-                  <span className="grid flex-1 text-left leading-tight">
+                  <span className="grid flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
                     <span className="truncate font-semibold">DefendSec</span>
                     <span className="truncate text-xs text-muted-foreground">Security inventory</span>
                   </span>
@@ -106,7 +106,7 @@ export function AppShell({
                         <SidebarMenuItem key={item.href}>
                           <SidebarMenuButton render={<Link href={item.href} />} isActive={active} tooltip={item.label}>
                               <Icon />
-                              <span>{item.label}</span>
+                              <span className="group-data-[collapsible=icon]:hidden">{item.label}</span>
                           </SidebarMenuButton>
                         </SidebarMenuItem>
                       );
@@ -123,7 +123,7 @@ export function AppShell({
               <form action="/api/logout" method="post">
                 <SidebarMenuButton type="submit" tooltip="Sign out">
                   <LogOut />
-                  <span>Sign out</span>
+                  <span className="group-data-[collapsible=icon]:hidden">Sign out</span>
                 </SidebarMenuButton>
               </form>
             </SidebarMenuItem>
