@@ -30,15 +30,15 @@ export default async function AlertsPage({
 
   let alerts: Alert[] = [];
   let error = "";
+  let storageSetupRequired = false;
   if (configured) {
     try {
       alerts = await listAlerts({ status, kind, deviceId, limit: 200 });
     } catch (cause) {
-      error = isMissingRelationError(cause)
-        ? "Postgres is configured, but alert tables are missing. Apply DefendSec migrations (or start the full stack) so detections can be stored."
-        : cause instanceof Error
-          ? cause.message
-          : "Could not read alerts";
+      storageSetupRequired = isMissingRelationError(cause);
+      if (!storageSetupRequired) {
+        error = cause instanceof Error ? cause.message : "Could not read alerts";
+      }
     }
   }
 
@@ -121,7 +121,17 @@ export default async function AlertsPage({
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-      {configured && !error && alerts.length === 0 ? (
+      {storageSetupRequired ? (
+        <EmptyState
+          title="Alert storage needs setup"
+          description="Restart the control plane with DEFENDSEC_DATABASE_URL configured. DefendSec now applies embedded migrations automatically at startup."
+          icon={BellRing}
+          action={<code className="rounded-md bg-muted px-3 py-2 text-xs">sudo systemctl restart defendsec-apid</code>}
+          compact
+        />
+      ) : null}
+
+      {configured && !error && !storageSetupRequired && alerts.length === 0 ? (
         <EmptyState
           title="No matching alerts"
           description="No detections match the current status, kind, and device filters."

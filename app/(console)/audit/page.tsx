@@ -10,15 +10,15 @@ export default async function AuditPage() {
   const configured = Boolean(databaseURL());
   let events: Awaited<ReturnType<typeof listAudit>> = [];
   let error = "";
+  let storageSetupRequired = false;
   if (configured) {
     try {
       events = await listAudit(150);
     } catch (cause) {
-      error = isMissingRelationError(cause)
-        ? "Postgres is configured, but the audit_log table is missing. Apply DefendSec migrations (or start the full stack) so control-plane actions can be recorded."
-        : cause instanceof Error
-          ? cause.message
-          : "Could not read audit log";
+      storageSetupRequired = isMissingRelationError(cause);
+      if (!storageSetupRequired) {
+        error = cause instanceof Error ? cause.message : "Could not read audit log";
+      }
     }
   }
 
@@ -53,7 +53,17 @@ export default async function AuditPage() {
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-      {configured && !error && events.length === 0 ? (
+      {storageSetupRequired ? (
+        <EmptyState
+          title="Audit storage needs setup"
+          description="Restart the control plane with DEFENDSEC_DATABASE_URL configured. DefendSec now applies embedded migrations automatically at startup."
+          icon={ScrollText}
+          action={<code className="rounded-md bg-muted px-3 py-2 text-xs">sudo systemctl restart defendsec-apid</code>}
+          compact
+        />
+      ) : null}
+
+      {configured && !error && !storageSetupRequired && events.length === 0 ? (
         <EmptyState
           title="No audit events"
           description="Control-plane activity appears here after an admin action."
