@@ -22,7 +22,9 @@ export default async function AdvisoriesPage() {
   const [advisories, osvLastIngest, vulnAlerts] = await Promise.all([
     loadAdvisories(),
     getOsvLastIngest(),
-    listAlerts({ kind: "vuln", status: "open", limit: 500 }),
+    listAlerts({ kind: "vuln", status: "open", limit: 500 }).catch(() => [] as Awaited<
+      ReturnType<typeof listAlerts>
+    >),
   ]);
   const alertBySource = new Map(
     vulnAlerts.map((alert) => [`${alert.deviceId}:${alert.sourceId}`, alert]),

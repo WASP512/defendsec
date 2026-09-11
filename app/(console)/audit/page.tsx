@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { databaseURL, listAudit } from "@/lib/pg";
+import { databaseURL, isMissingRelationError, listAudit } from "@/lib/pg";
 import { relativeTime } from "@/lib/format";
 import { ActivityItem, ActivityList, EmptyState, PageHeader } from "@/components/console-ui";
 import { ScrollText } from "lucide-react";
@@ -14,7 +14,11 @@ export default async function AuditPage() {
     try {
       events = await listAudit(150);
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Could not read audit log";
+      error = isMissingRelationError(cause)
+        ? "Postgres is configured, but the audit_log table is missing. Apply DefendSec migrations (or start the full stack) so control-plane actions can be recorded."
+        : cause instanceof Error
+          ? cause.message
+          : "Could not read audit log";
     }
   }
 

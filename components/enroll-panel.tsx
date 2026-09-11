@@ -15,6 +15,7 @@ export function EnrollPanel({
   serverUrl: string;
 }) {
   const [secret, setSecret] = useState(enrollSecret);
+  const [snippetTab, setSnippetTab] = useState("install");
   const [copied, setCopied] = useState<"secret" | "install" | "go" | "py" | null>(null);
   const [rotateError, setRotateError] = useState("");
   const [rotating, setRotating] = useState(false);
@@ -110,7 +111,11 @@ export function EnrollPanel({
             Choose the deployment method that matches the target host.
           </p>
         </div>
-        <Tabs defaultValue="install" className="overflow-hidden rounded-xl border bg-card">
+        <Tabs
+          value={snippetTab}
+          onValueChange={(value) => setSnippetTab(String(value))}
+          className="overflow-hidden rounded-xl border bg-card"
+        >
           <div className="flex flex-col gap-3 border-b bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
             <TabsList>
               <TabsTrigger value="install">Agent install</TabsTrigger>

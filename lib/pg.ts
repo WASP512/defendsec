@@ -10,6 +10,15 @@ export function databaseURL(): string {
   );
 }
 
+/** True when Postgres is reachable but a queried relation was never migrated. */
+export function isMissingRelationError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? String(error.code) : "";
+  if (code === "42P01") return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /relation ["'].+["'] does not exist/i.test(message);
+}
+
 export function getPool(): Pool | null {
   if (pool !== undefined) return pool;
   const url = databaseURL();

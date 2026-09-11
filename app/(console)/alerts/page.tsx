@@ -6,7 +6,7 @@ import { AlertActions } from "@/components/alert-actions";
 import { AlertSuggestActions } from "@/components/alert-suggest-actions";
 import { isReadOnlySession } from "@/lib/auth";
 import { SeverityBadge } from "@/components/status-badge";
-import { databaseURL } from "@/lib/pg";
+import { databaseURL, isMissingRelationError } from "@/lib/pg";
 import { listAlerts, type Alert, type AlertStatus } from "@/lib/alerts";
 import { relativeTime } from "@/lib/format";
 import { BellRing, Filter } from "lucide-react";
@@ -34,7 +34,11 @@ export default async function AlertsPage({
     try {
       alerts = await listAlerts({ status, kind, deviceId, limit: 200 });
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Could not read alerts";
+      error = isMissingRelationError(cause)
+        ? "Postgres is configured, but alert tables are missing. Apply DefendSec migrations (or start the full stack) so detections can be stored."
+        : cause instanceof Error
+          ? cause.message
+          : "Could not read alerts";
     }
   }
 

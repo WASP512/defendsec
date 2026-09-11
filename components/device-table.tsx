@@ -3,13 +3,16 @@
 import Link from "next/link";
 import {
   type ColumnDef,
-  flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
+  columnFilteringFeature,
+  createFilteredRowModel,
+  createPaginatedRowModel,
+  createSortedRowModel,
+  globalFilteringFeature,
+  rowPaginationFeature,
+  rowSortingFeature,
+  tableFeatures,
   type SortingState,
-  useReactTable,
+  useTable,
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ChevronsUpDown, Monitor, Search } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -30,11 +33,21 @@ import { formatBytesMb, platformLabel, relativeTime } from "@/lib/format";
 import { isOnline } from "@/lib/policies";
 import type { PublicDevice } from "@/lib/types";
 
+const features = tableFeatures({
+  columnFilteringFeature,
+  globalFilteringFeature,
+  rowSortingFeature,
+  rowPaginationFeature,
+  filteredRowModel: createFilteredRowModel(),
+  sortedRowModel: createSortedRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+});
+
 export function DeviceTable({ devices }: { devices: PublicDevice[] }) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
 
-  const columns = useMemo<ColumnDef<PublicDevice>[]>(
+  const columns = useMemo<ColumnDef<typeof features, PublicDevice>[]>(
     () => [
       {
         accessorKey: "hostname",
@@ -95,17 +108,14 @@ export function DeviceTable({ devices }: { devices: PublicDevice[] }) {
     [],
   );
 
-  const table = useReactTable({
+  const table = useTable({
+    features,
     data: devices,
     columns,
     state: { sorting, globalFilter },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize: 10 } },
+    initialState: { pagination: { pageIndex: 0, pageSize: 10 } },
   });
 
   if (devices.length === 0) {
@@ -147,7 +157,7 @@ export function DeviceTable({ devices }: { devices: PublicDevice[] }) {
                           onClick={header.column.getToggleSortingHandler()}
                           className="inline-flex items-center gap-1.5 font-medium hover:text-foreground"
                         >
-                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          <table.FlexRender header={header} />
                           {sorted === "asc" ? <ArrowUp className="size-3.5" /> : sorted === "desc" ? (
                             <ArrowDown className="size-3.5" />
                           ) : <ChevronsUpDown className="size-3.5 opacity-40" />}
@@ -162,11 +172,11 @@ export function DeviceTable({ devices }: { devices: PublicDevice[] }) {
           <TableBody>
             {table.getRowModel().rows.length ? table.getRowModel().rows.map((row) => (
               <TableRow key={row.id}>
-                {row.getVisibleCells().map((cell) => {
+                {row.getAllCells().map((cell) => {
                   const meta = cell.column.columnDef.meta as { className?: string } | undefined;
                   return (
                     <TableCell key={cell.id} className={meta?.className}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      <table.FlexRender cell={cell} />
                     </TableCell>
                   );
                 })}
@@ -187,7 +197,7 @@ export function DeviceTable({ devices }: { devices: PublicDevice[] }) {
           <Button variant="outline" size="sm" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
             Previous
           </Button>
-          <span>Page {table.getState().pagination.pageIndex + 1} of {Math.max(table.getPageCount(), 1)}</span>
+          <span>Page {table.state.pagination.pageIndex + 1} of {Math.max(table.getPageCount(), 1)}</span>
           <Button variant="outline" size="sm" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
             Next
           </Button>

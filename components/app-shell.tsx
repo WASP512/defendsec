@@ -75,8 +75,7 @@ export function AppShell({
         <SidebarHeader className="border-b">
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton asChild size="lg" tooltip="DefendSec">
-                <Link href="/">
+              <SidebarMenuButton render={<Link href="/" />} size="lg" tooltip="DefendSec">
                   <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                     <Anchor className="size-4" />
                   </span>
@@ -84,7 +83,6 @@ export function AppShell({
                     <span className="truncate font-semibold">DefendSec</span>
                     <span className="truncate text-xs text-muted-foreground">Security inventory</span>
                   </span>
-                </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -106,11 +104,9 @@ export function AppShell({
                           : pathname === item.href || pathname.startsWith(`${item.href}/`);
                       return (
                         <SidebarMenuItem key={item.href}>
-                          <SidebarMenuButton asChild isActive={active} tooltip={item.label}>
-                            <Link href={item.href}>
+                          <SidebarMenuButton render={<Link href={item.href} />} isActive={active} tooltip={item.label}>
                               <Icon />
                               <span>{item.label}</span>
-                            </Link>
                           </SidebarMenuButton>
                         </SidebarMenuItem>
                       );
