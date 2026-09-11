@@ -2,7 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
 
-import { dataDir } from "./data-paths";
+import { dataDir } from "./data-paths.ts";
 
 export const DEFAULT_UPDATE_REPO = "WASP512/defendsec";
 const REQUIRED_RELEASE_ASSETS = [
