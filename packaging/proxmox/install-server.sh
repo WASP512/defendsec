@@ -154,7 +154,7 @@ install_packages() {
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -y
       apt-get install -y --no-install-recommends \
-        ca-certificates curl wget git jq make openssl sudo xz-utils tar \
+        ca-certificates curl wget git jq make openssl xz-utils tar \
         iptables
       if [[ "$POSTGRES_MODE" == "native" ]]; then
         apt-get install -y --no-install-recommends postgresql postgresql-contrib
@@ -164,7 +164,7 @@ install_packages() {
       fi
       ;;
     fedora|rhel|centos|rocky|almalinux)
-      dnf install -y ca-certificates curl wget git jq make openssl sudo xz tar iptables-nft
+      dnf install -y ca-certificates curl wget git jq make openssl xz tar iptables-nft
       if [[ "$POSTGRES_MODE" == "native" ]]; then
         dnf install -y postgresql-server postgresql
       else
@@ -638,16 +638,15 @@ install_systemd_units() {
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-apid.service" /etc/systemd/system/defendsec-apid.service
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-console.service" /etc/systemd/system/defendsec-console.service
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-update.service" /etc/systemd/system/defendsec-update.service
+  install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-update.path" /etc/systemd/system/defendsec-update.path
   install -m 0755 "${INSTALL_ROOT}/packaging/proxmox/update-server.sh" /usr/local/sbin/defendsec-update
 
-  local systemctl_bin
-  systemctl_bin="$(command -v systemctl)"
-  cat >/etc/sudoers.d/defendsec-update <<EOF
-defendsec ALL=(root) NOPASSWD: ${systemctl_bin} --no-block start defendsec-update.service
+  mkdir -p /etc/systemd/system/defendsec-update.path.d
+  cat >/etc/systemd/system/defendsec-update.path.d/override.conf <<EOF
+[Path]
+PathExists=
+PathExists=${DATA_DIR}/update-request.json
 EOF
-  chmod 0440 /etc/sudoers.d/defendsec-update
-  visudo -cf /etc/sudoers.d/defendsec-update >/dev/null \
-    || die "invalid updater sudoers policy"
 
   # The shipped unit assumes /usr/bin/node; point it at the node we actually use.
   mkdir -p /etc/systemd/system/defendsec-console.service.d
@@ -687,6 +686,7 @@ EOF
   fi
 
   systemctl daemon-reload
+  systemctl enable --now defendsec-update.path
   systemctl enable --now defendsec-apid
   systemctl enable --now defendsec-console
 

@@ -139,7 +139,7 @@ export async function getServerUpdateState(): Promise<ServerUpdateState> {
     const helperReady =
       process.platform === "linux" &&
       (await exists("/usr/local/sbin/defendsec-update")) &&
-      (await exists("/etc/sudoers.d/defendsec-update"));
+      (await exists("/etc/systemd/system/defendsec-update.path"));
     const canApply = updateAvailable && release.missingAssets.length === 0 && helperReady;
     let unavailableReason: string | undefined;
     if (current === "dev") unavailableReason = "Development builds cannot be upgraded in place.";

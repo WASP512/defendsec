@@ -153,7 +153,7 @@ apply_release() {
 
   local work version apid_name release_dir previous_console=""
   work="$(mktemp -d "${DATA_DIR}/update-work.XXXXXX")"
-  trap 'rm -rf "$work"' EXIT
+  trap 'rm -f "$REQUEST_FILE"; rm -rf "$work"' EXIT
   write_status downloading "Downloading and verifying release"
   mapfile -t prepared < <(prepare_release "$REQUEST_FILE" "$work")
   version="${prepared[0]:-}"

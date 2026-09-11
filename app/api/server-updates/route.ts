@@ -1,7 +1,5 @@
-import { execFile } from "node:child_process";
 import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import { unauthorizedIfNotAdmin, unauthorizedIfNotAuthenticated } from "@/lib/api-auth";
 import { dataDir } from "@/lib/data-paths";
@@ -9,8 +7,6 @@ import { getServerUpdateState } from "@/lib/server-updates";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const execFileAsync = promisify(execFile);
 
 export async function GET(request: Request) {
   const denied = await unauthorizedIfNotAuthenticated(request);
@@ -49,32 +45,35 @@ export async function POST(request: Request) {
   const requestPath = join(directory, "update-request.json");
   const temporaryPath = `${requestPath}.tmp`;
   await mkdir(directory, { recursive: true });
-  await writeFile(
-    temporaryPath,
-    `${JSON.stringify({
-      repo: state.repo,
-      tag: state.tag,
-      version: state.latestVersion,
-      requestedAt: new Date().toISOString(),
-    })}\n`,
-    { encoding: "utf8", mode: 0o600 },
-  );
-  await rename(temporaryPath, requestPath);
-
   try {
-    const sudo = process.env.DEFENDSEC_SUDO_PATH?.trim() || "/usr/bin/sudo";
-    const systemctl = process.env.DEFENDSEC_SYSTEMCTL_PATH?.trim() || "/usr/bin/systemctl";
-    await execFileAsync(sudo, [
-      "-n",
-      systemctl,
-      "--no-block",
-      "start",
-      "defendsec-update.service",
-    ], { timeout: 5_000 });
+    await writeFile(
+      join(directory, "update-status.json"),
+      `${JSON.stringify({
+        state: "downloading",
+        message: "The approved release is waiting for the system updater.",
+        version: state.latestVersion,
+        updatedAt: new Date().toISOString(),
+      })}\n`,
+      { encoding: "utf8", mode: 0o644 },
+    );
+    await writeFile(
+      temporaryPath,
+      `${JSON.stringify({
+        repo: state.repo,
+        tag: state.tag,
+        version: state.latestVersion,
+        requestedAt: new Date().toISOString(),
+      })}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    // Creating this fixed path is the only trigger. The root-owned systemd
+    // path unit observes it and starts the updater outside the console sandbox.
+    await rename(temporaryPath, requestPath);
   } catch {
+    await unlink(temporaryPath).catch(() => undefined);
     await unlink(requestPath).catch(() => undefined);
     return Response.json(
-      { error: "Could not start the updater. Re-run the server installer to repair update permissions." },
+      { error: "Could not initialize update status." },
       { status: 503 },
     );
   }
