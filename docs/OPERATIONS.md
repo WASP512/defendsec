@@ -76,6 +76,40 @@ journalctl -u defendsec-agentd -f
 
 ---
 
+## Updates
+
+Open **Operations → Updates** in the console. DefendSec checks the latest stable
+GitHub release and compares it with the installed version.
+
+- **Install update** downloads the architecture-matched API and standalone
+  console, verifies every file against `SHA256SUMS`, restarts both services, and
+  rolls back the binaries automatically if either health check fails.
+- **Update outdated agents** queues signed, architecture-matched update commands
+  for connected mTLS agents. Each agent verifies its binary before replacement.
+- Viewer sessions can inspect update status but cannot start an update.
+
+Existing source-built installations need one final installer re-run to install
+the privileged update helper and its narrowly scoped systemd permission:
+
+```bash
+curl -fL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh \
+  -o /tmp/defendsec-install-server.sh
+sudo bash /tmp/defendsec-install-server.sh
+```
+
+Updates are always operator-approved. DefendSec does not silently update the
+server or enrolled agents.
+
+If an update fails, inspect:
+
+```bash
+systemctl status defendsec-update.service
+journalctl -u defendsec-update.service --no-pager -n 100
+cat /var/lib/defendsec/update-status.json
+```
+
+---
+
 ## Reverse proxy (HTTPS)
 
 Port `47261` is HTTP. If users reach the console through HTTPS:

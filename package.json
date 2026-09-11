@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start --port 47261 --hostname 0.0.0.0",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test lib/advisories.test.ts",
+    "test": "node --experimental-strip-types --test lib/*.test.ts",
     "agent": "python3 agent/defendsec-agent.py"
   },
   "dependencies": {

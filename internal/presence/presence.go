@@ -87,32 +87,33 @@ type Alert struct {
 }
 
 type Device struct {
-	ID              string     `json:"id"`
-	Hostname        string     `json:"hostname"`
-	Platform        string     `json:"platform"`
-	OSName          string     `json:"osName"`
-	OSVersion       string     `json:"osVersion"`
-	Arch            string     `json:"arch"`
-	UptimeSeconds   int64      `json:"uptimeSeconds"`
-	LastSeen        string     `json:"lastSeen"`
-	Connected       bool       `json:"connected"`
-	CertFingerprint string     `json:"certFingerprint"`
-	Transport       string     `json:"transport"`
-	Isolated        bool       `json:"isolated"`
-	Serial          string     `json:"serial,omitempty"`
-	HardwareModel   string     `json:"hardwareModel,omitempty"`
-	CPU             string     `json:"cpu,omitempty"`
-	MemoryMb        int64      `json:"memoryMb,omitempty"`
-	DiskEncryption  *bool      `json:"diskEncryption"`
-	Firewall        *bool      `json:"firewall"`
-	IPAddresses     []string   `json:"ipAddresses,omitempty"`
-	Username        string     `json:"username,omitempty"`
-	Software        []Software `json:"software,omitempty"`
-	PendingUpdates  []Update   `json:"pendingUpdates,omitempty"`
-	PatchInventory  string     `json:"patchInventory,omitempty"`
-	Fim             []FimFile    `json:"fim,omitempty"`
-	FimBaseline     []FimFile    `json:"fimBaseline,omitempty"`
-	ScaResults      []ScaResult  `json:"scaResults,omitempty"`
+	ID              string      `json:"id"`
+	Hostname        string      `json:"hostname"`
+	AgentVersion    string      `json:"agentVersion,omitempty"`
+	Platform        string      `json:"platform"`
+	OSName          string      `json:"osName"`
+	OSVersion       string      `json:"osVersion"`
+	Arch            string      `json:"arch"`
+	UptimeSeconds   int64       `json:"uptimeSeconds"`
+	LastSeen        string      `json:"lastSeen"`
+	Connected       bool        `json:"connected"`
+	CertFingerprint string      `json:"certFingerprint"`
+	Transport       string      `json:"transport"`
+	Isolated        bool        `json:"isolated"`
+	Serial          string      `json:"serial,omitempty"`
+	HardwareModel   string      `json:"hardwareModel,omitempty"`
+	CPU             string      `json:"cpu,omitempty"`
+	MemoryMb        int64       `json:"memoryMb,omitempty"`
+	DiskEncryption  *bool       `json:"diskEncryption"`
+	Firewall        *bool       `json:"firewall"`
+	IPAddresses     []string    `json:"ipAddresses,omitempty"`
+	Username        string      `json:"username,omitempty"`
+	Software        []Software  `json:"software,omitempty"`
+	PendingUpdates  []Update    `json:"pendingUpdates,omitempty"`
+	PatchInventory  string      `json:"patchInventory,omitempty"`
+	Fim             []FimFile   `json:"fim,omitempty"`
+	FimBaseline     []FimFile   `json:"fimBaseline,omitempty"`
+	ScaResults      []ScaResult `json:"scaResults,omitempty"`
 }
 
 type File struct {
@@ -157,6 +158,9 @@ func mergeHeartbeat(old, neu Device) Device {
 	out := old
 	if neu.Hostname != "" {
 		out.Hostname = neu.Hostname
+	}
+	if neu.AgentVersion != "" {
+		out.AgentVersion = neu.AgentVersion
 	}
 	if neu.Platform != "" {
 		out.Platform = neu.Platform
@@ -326,6 +330,35 @@ func (f *File) SetConnected(id string, connected bool) error {
 			break
 		}
 	}
+	doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	return f.write(doc)
+}
+
+func (f *File) SetAgentVersion(id, hostname, version string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return err
+	}
+	for i, existing := range doc.Devices {
+		if existing.ID == id {
+			doc.Devices[i].AgentVersion = version
+			if hostname != "" {
+				doc.Devices[i].Hostname = hostname
+			}
+			doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			return f.write(doc)
+		}
+	}
+	doc.Devices = append(doc.Devices, Device{
+		ID:           id,
+		Hostname:     hostname,
+		AgentVersion: version,
+		LastSeen:     time.Now().UTC().Format(time.RFC3339),
+		Connected:    true,
+		Transport:    "mtls-grpc",
+	})
 	doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	return f.write(doc)
 }

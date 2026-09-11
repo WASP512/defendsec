@@ -63,6 +63,7 @@ export type PatchInventory = "ok" | "unsupported" | "error";
 export type Device = {
   id: string;
   hostname: string;
+  agentVersion?: string;
   platform: Platform;
   osName: string;
   osVersion: string;

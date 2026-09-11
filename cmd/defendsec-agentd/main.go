@@ -29,14 +29,16 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"defendsec/internal/agentcmd"
-	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/agentfim"
+	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/hostinv"
 	"defendsec/internal/sca"
 	"defendsec/internal/sign"
 )
 
-const agentVersion = "0.6.0-phase6"
+// agentVersion is replaced with the release tag by the release and installer
+// build commands. Development builds intentionally report "dev".
+var agentVersion = "dev"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -361,7 +363,6 @@ func heartbeat(stateDir string) *defendsecv1.HeartbeatRequest {
 		Isolated:      agentcmd.LoadState(stateDir).Isolated,
 	}
 }
-
 
 func runFimWatch(ctx context.Context, log *slog.Logger, client defendsecv1.AgentControlClient, stateDir string) {
 	trigger := make(chan struct{}, 1)

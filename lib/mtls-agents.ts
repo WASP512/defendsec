@@ -7,6 +7,7 @@ type MtlsFile = {
   devices?: {
     id: string;
     hostname: string;
+    agentVersion?: string;
     platform?: string;
     osName?: string;
     osVersion?: string;
@@ -51,6 +52,7 @@ export async function loadMtlsDevices(): Promise<Device[]> {
   return (parsed.devices ?? []).map((item) => ({
     id: item.id,
     hostname: item.hostname,
+    agentVersion: item.agentVersion ?? "",
     platform: asPlatform(item.platform),
     osName: item.osName ?? "Unknown",
     osVersion: item.osVersion ?? "",
@@ -95,6 +97,7 @@ export function mergeDevices(fromStore: Device[], mtls: Device[]) {
     const useInv = live.software.length > 0 || live.fim.length > 0 || live.patchInventory != null;
     return {
       ...device,
+      agentVersion: live.agentVersion || device.agentVersion,
       lastSeen: live.lastSeen,
       isolated: live.isolated,
       mtlsDeviceId: live.id,
