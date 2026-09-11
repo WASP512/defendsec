@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { EnrollPanel } from "@/components/enroll-panel";
 import { isReadOnlySession } from "@/lib/auth";
 import { ensureStore } from "@/lib/store";
+import { PageHeader } from "@/components/console-ui";
 
 export const dynamic = "force-dynamic";
 
@@ -20,13 +21,15 @@ export default async function EnrollPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Enroll a host</h1>
-        <p className="mt-1 text-muted-foreground">
+      <PageHeader
+        title="Enroll a host"
+        description={
+          <>
           Run the Agent install command on each host you want to inventory. Do not re-run the
           Proxmox server helper on those machines.
-        </p>
-      </div>
+          </>
+        }
+      />
       <EnrollPanel enrollSecret={store.enrollSecret} serverUrl={serverUrl} />
       <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
         <li>

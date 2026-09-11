@@ -1,4 +1,18 @@
+"use client";
+
 import Link from "next/link";
+import {
+  type ColumnDef,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  type SortingState,
+  useReactTable,
+} from "@tanstack/react-table";
+import { ArrowDown, ArrowUp, ChevronsUpDown, Monitor, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import {
   Table,
   TableBody,
@@ -8,82 +22,177 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { EmptyState } from "@/components/console-ui";
 import { OnlineBadge } from "@/components/status-badge";
 import { formatBytesMb, platformLabel, relativeTime } from "@/lib/format";
 import { isOnline } from "@/lib/policies";
 import type { PublicDevice } from "@/lib/types";
 
 export function DeviceTable({ devices }: { devices: PublicDevice[] }) {
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [globalFilter, setGlobalFilter] = useState("");
+
+  const columns = useMemo<ColumnDef<PublicDevice>[]>(
+    () => [
+      {
+        accessorKey: "hostname",
+        header: "Hostname",
+        cell: ({ row }) => (
+          <div className="min-w-40">
+            <Link href={`/devices/${row.original.id}`} className="font-medium hover:underline">
+              {row.original.hostname}
+            </Link>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {row.original.sample ? <Badge variant="outline">sample</Badge> : null}
+              {row.original.hardwareModel === "mTLS gRPC agent" || row.original.mtlsDeviceId ? (
+                <Badge variant="outline">mTLS</Badge>
+              ) : null}
+              {row.original.isolated ? <Badge variant="destructive">isolated</Badge> : null}
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: "platform",
+        accessorFn: (device) => `${platformLabel(device.platform)} ${device.osName} ${device.osVersion}`,
+        header: "Platform",
+        cell: ({ row }) => (
+          <>
+            {platformLabel(row.original.platform)}
+            <span className="block text-xs text-muted-foreground">
+              {row.original.osName} {row.original.osVersion}
+            </span>
+          </>
+        ),
+      },
+      {
+        accessorKey: "username",
+        header: "User",
+        cell: ({ row }) => row.original.username || "—",
+        meta: { className: "hidden md:table-cell" },
+      },
+      {
+        accessorKey: "memoryMb",
+        header: "Memory",
+        cell: ({ row }) => formatBytesMb(row.original.memoryMb),
+        meta: { className: "hidden lg:table-cell" },
+      },
+      {
+        id: "status",
+        accessorFn: (device) => (isOnline(device) ? "online" : "offline"),
+        header: "Status",
+        cell: ({ row }) => <OnlineBadge online={isOnline(row.original)} />,
+      },
+      {
+        accessorKey: "lastSeen",
+        header: "Last seen",
+        cell: ({ row }) => relativeTime(row.original.lastSeen),
+        meta: { className: "hidden sm:table-cell text-muted-foreground" },
+      },
+    ],
+    [],
+  );
+
+  const table = useReactTable({
+    data: devices,
+    columns,
+    state: { sorting, globalFilter },
+    onSortingChange: setSorting,
+    onGlobalFilterChange: setGlobalFilter,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    initialState: { pagination: { pageSize: 10 } },
+  });
+
   if (devices.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed p-10 text-center">
-        <p className="font-medium">No hosts yet</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Enroll an agent, or load the sample fleet to see the console with data.
-        </p>
-        <Link href="/enroll" className="mt-4 inline-block text-sm underline">
-          Install an agent
-        </Link>
-      </div>
+      <EmptyState
+        title="No hosts yet"
+        description="Enroll an agent, or load the sample fleet to see the console with data."
+        icon={Monitor}
+        action={<Link href="/enroll" className="text-sm font-medium underline">Install an agent</Link>}
+      />
     );
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Hostname</TableHead>
-            <TableHead>Platform</TableHead>
-            <TableHead className="hidden md:table-cell">User</TableHead>
-            <TableHead className="hidden lg:table-cell">Memory</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="hidden sm:table-cell">Last seen</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {devices.map((device) => (
-            <TableRow key={device.id}>
-              <TableCell>
-                <Link href={`/devices/${device.id}`} className="font-medium hover:underline">
-                  {device.hostname}
-                </Link>
-                {device.sample ? (
-                  <Badge variant="outline" className="ml-2">
-                    sample
-                  </Badge>
-                ) : null}
-                {device.hardwareModel === "mTLS gRPC agent" || device.mtlsDeviceId ? (
-                  <Badge variant="outline" className="ml-2">
-                    mTLS
-                  </Badge>
-                ) : null}
-                {device.isolated ? (
-                  <Badge variant="destructive" className="ml-2">
-                    isolated
-                  </Badge>
-                ) : null}
-              </TableCell>
-              <TableCell>
-                {platformLabel(device.platform)}
-                <span className="block text-xs text-muted-foreground">
-                  {device.osName} {device.osVersion}
-                </span>
-              </TableCell>
-              <TableCell className="hidden md:table-cell">{device.username || "—"}</TableCell>
-              <TableCell className="hidden lg:table-cell">
-                {formatBytesMb(device.memoryMb)}
-              </TableCell>
-              <TableCell>
-                <OnlineBadge online={isOnline(device)} />
-              </TableCell>
-              <TableCell className="hidden sm:table-cell text-muted-foreground">
-                {relativeTime(device.lastSeen)}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="space-y-3">
+      <div className="relative max-w-sm">
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={globalFilter}
+          onChange={(event) => setGlobalFilter(event.target.value)}
+          placeholder="Search hosts, platforms, users…"
+          className="pl-9"
+          aria-label="Search hosts"
+        />
+      </div>
+      <div className="overflow-x-auto rounded-xl border">
+        <Table>
+          <TableHeader>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <TableRow key={headerGroup.id}>
+                {headerGroup.headers.map((header) => {
+                  const sorted = header.column.getIsSorted();
+                  const meta = header.column.columnDef.meta as { className?: string } | undefined;
+                  return (
+                    <TableHead key={header.id} className={meta?.className}>
+                      {header.isPlaceholder ? null : (
+                        <button
+                          type="button"
+                          onClick={header.column.getToggleSortingHandler()}
+                          className="inline-flex items-center gap-1.5 font-medium hover:text-foreground"
+                        >
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          {sorted === "asc" ? <ArrowUp className="size-3.5" /> : sorted === "desc" ? (
+                            <ArrowDown className="size-3.5" />
+                          ) : <ChevronsUpDown className="size-3.5 opacity-40" />}
+                        </button>
+                      )}
+                    </TableHead>
+                  );
+                })}
+              </TableRow>
+            ))}
+          </TableHeader>
+          <TableBody>
+            {table.getRowModel().rows.length ? table.getRowModel().rows.map((row) => (
+              <TableRow key={row.id}>
+                {row.getVisibleCells().map((cell) => {
+                  const meta = cell.column.columnDef.meta as { className?: string } | undefined;
+                  return (
+                    <TableCell key={cell.id} className={meta?.className}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
+                  );
+                })}
+              </TableRow>
+            )) : (
+              <TableRow>
+                <TableCell colSpan={columns.length} className="h-28 text-center text-muted-foreground">
+                  No hosts match “{globalFilter}”.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="flex items-center justify-between text-sm text-muted-foreground">
+        <span>{table.getFilteredRowModel().rows.length} host{table.getFilteredRowModel().rows.length === 1 ? "" : "s"}</span>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
+            Previous
+          </Button>
+          <span>Page {table.getState().pagination.pageIndex + 1} of {Math.max(table.getPageCount(), 1)}</span>
+          <Button variant="outline" size="sm" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
+            Next
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

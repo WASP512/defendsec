@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ActivityItem, ActivityList, EmptyState, PageHeader } from "@/components/console-ui";
 import { AlertActions } from "@/components/alert-actions";
 import { AlertSuggestActions } from "@/components/alert-suggest-actions";
 import { isReadOnlySession } from "@/lib/auth";
@@ -8,6 +9,7 @@ import { SeverityBadge } from "@/components/status-badge";
 import { databaseURL } from "@/lib/pg";
 import { listAlerts, type Alert, type AlertStatus } from "@/lib/alerts";
 import { relativeTime } from "@/lib/format";
+import { BellRing, Filter } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -50,12 +52,10 @@ export default async function AlertsPage({
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Alerts</h1>
-        <p className="mt-1 text-muted-foreground">
-          FIM changes, SCA failures, and other detections from enrolled hosts.
-        </p>
-      </div>
+      <PageHeader
+        title="Alerts"
+        description="FIM changes, SCA failures, and other detections from enrolled hosts."
+      />
 
       {!configured ? (
         <Card>
@@ -70,11 +70,15 @@ export default async function AlertsPage({
         </Card>
       ) : null}
 
-      <div className="flex flex-wrap gap-2 text-sm">
-        <span className="text-muted-foreground">Status:</span>
+      <div className="rounded-xl border bg-card p-3">
+        <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+          <Filter className="size-4" />
+          Filter alerts
+        </div>
+        <div className="flex flex-wrap gap-1">
         <Link
           href={filterHref({ status: "" })}
-          className={status === "" ? "font-medium underline" : "text-muted-foreground hover:underline"}
+          className={status === "" ? "rounded-md bg-primary px-2.5 py-1 text-xs text-primary-foreground" : "rounded-md px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted"}
         >
           all
         </Link>
@@ -82,24 +86,24 @@ export default async function AlertsPage({
           <Link
             key={item}
             href={filterHref({ status: item })}
-            className={status === item ? "font-medium underline" : "text-muted-foreground hover:underline"}
+            className={status === item ? "rounded-md bg-primary px-2.5 py-1 text-xs text-primary-foreground" : "rounded-md px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted"}
           >
             {item}
           </Link>
         ))}
-      </div>
-
-      <div className="flex flex-wrap gap-2 text-sm">
-        <span className="text-muted-foreground">Kind:</span>
+        </div>
+        <div className="my-3 border-t" />
+        <div className="flex flex-wrap gap-1">
         {KINDS.map((item) => (
           <Link
             key={item || "all"}
             href={filterHref({ kind: item })}
-            className={kind === item ? "font-medium underline" : "text-muted-foreground hover:underline"}
+            className={kind === item ? "rounded-md bg-secondary px-2.5 py-1 text-xs font-medium" : "rounded-md px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted"}
           >
-            {item || "all"}
+            {item || "all kinds"}
           </Link>
         ))}
+        </div>
       </div>
 
       {deviceId ? (
@@ -114,20 +118,29 @@ export default async function AlertsPage({
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       {configured && !error && alerts.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No alerts match these filters.</p>
+        <EmptyState
+          title="No matching alerts"
+          description="No detections match the current status, kind, and device filters."
+          icon={BellRing}
+          compact
+        />
       ) : null}
 
-      <ul className="divide-y rounded-xl border">
+      <ActivityList>
         {alerts.map((alert) => (
-          <li key={alert.id} className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0 space-y-1">
+          <ActivityItem
+            key={alert.id}
+            tone={alert.severity === "critical" || alert.severity === "high" ? "critical" : alert.severity === "medium" ? "warning" : "neutral"}
+            title={
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-medium">{alert.title}</span>
                 <SeverityBadge severity={alert.severity === "info" ? "low" : alert.severity} />
                 <Badge variant="outline">{alert.kind}</Badge>
                 <Badge variant={alert.status === "open" ? "default" : "secondary"}>{alert.status}</Badge>
               </div>
-              <p className="text-sm text-muted-foreground">{alert.summary}</p>
+            }
+            description={alert.summary}
+            meta={
               <p className="text-xs text-muted-foreground">
                 <Link href={`/devices/${alert.deviceId}`} className="underline">
                   {alert.hostname || alert.deviceId}
@@ -139,14 +152,14 @@ export default async function AlertsPage({
                   : null}
                 {alert.generatorId ? ` · ${alert.generatorId}` : null}
               </p>
-            </div>
-            <div className="flex flex-col items-end gap-2">
+            }
+            actions={<div className="flex flex-col items-end gap-2">
               <AlertSuggestActions alert={alert} readOnly={readOnly} />
               <AlertActions alertId={alert.id} status={alert.status} readOnly={readOnly} />
-            </div>
-          </li>
+            </div>}
+          />
         ))}
-      </ul>
+      </ActivityList>
     </div>
   );
 }

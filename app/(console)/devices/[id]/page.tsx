@@ -2,8 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { databaseURL } from "@/lib/pg";
 import { listAlerts } from "@/lib/alerts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/console-ui";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { PolicyBadge, OnlineBadge, SeverityBadge } from "@/components/status-badge";
 import { FindingActions } from "@/components/finding-actions";
 import { ensureStore } from "@/lib/store";
@@ -68,24 +69,24 @@ export default async function DeviceDetailPage({
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
-      <div>
-        <Link href="/devices" className="text-sm text-muted-foreground hover:underline">
-          ← Hosts
-        </Link>
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight">{device.hostname}</h1>
+      <PageHeader
+        title={device.hostname}
+        eyebrow={<Link href="/devices" className="hover:underline">← Hosts</Link>}
+        description={`${device.osName} ${device.osVersion} · ${device.arch || "unknown arch"}`}
+        actions={
+          <>
           <OnlineBadge online={isOnline(device)} />
           {device.sample ? <Badge variant="outline">sample</Badge> : null}
           {device.hardwareModel === "mTLS gRPC agent" || device.mtlsDeviceId ? (
             <Badge variant="outline">mTLS</Badge>
           ) : null}
           {device.isolated ? <Badge variant="destructive">isolated</Badge> : null}
-        </div>
-        <p className="mt-1 text-muted-foreground">
-          {device.osName} {device.osVersion} · {device.arch || "unknown arch"}
-        </p>
+          </>
+        }
+      />
+      <div>
         {openAlertCount > 0 ? (
-          <p className="mt-2 text-sm">
+          <p className="text-sm">
             <Link
               href={`/alerts?deviceId=${encodeURIComponent(alertDeviceId)}&status=open`}
               className="font-medium text-destructive underline"
@@ -94,7 +95,7 @@ export default async function DeviceDetailPage({
             </Link>
           </p>
         ) : (
-          <p className="mt-2 text-sm">
+          <p className="text-sm">
             <Link href={`/alerts?deviceId=${encodeURIComponent(alertDeviceId)}`} className="text-muted-foreground underline">
               View alerts
             </Link>
@@ -102,17 +103,21 @@ export default async function DeviceDetailPage({
         )}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {facts.map(([label, value]) => (
-          <Card key={label}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                {label}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="font-medium break-all">{value}</CardContent>
-          </Card>
-        ))}
+      <div className="overflow-hidden rounded-xl border bg-card">
+        <div className="border-b px-4 py-3">
+          <h2 className="font-medium">Host facts</h2>
+          <p className="text-sm text-muted-foreground">Latest inventory reported by the agent.</p>
+        </div>
+        <Table>
+          <TableBody>
+            {facts.map(([label, value]) => (
+              <TableRow key={label}>
+                <TableCell className="w-40 text-muted-foreground">{label}</TableCell>
+                <TableCell className="break-all font-medium">{value}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </div>
 
       <section className="space-y-3">

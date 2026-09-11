@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Check, Copy, Terminal } from "lucide-react";
 
 export function EnrollPanel({
   enrollSecret,
@@ -101,60 +103,67 @@ export function EnrollPanel({
         {rotateError ? <p className="text-sm text-destructive">{rotateError}</p> : null}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="install-cmd">Agent install (recommended — curl download + systemd)</Label>
-        <textarea
-          id="install-cmd"
-          readOnly
-          rows={9}
-          className="w-full rounded-lg border bg-muted/40 p-3 font-mono text-sm"
-          value={installCommand}
-        />
-        <Button type="button" onClick={() => copy("install", installCommand)}>
-          {copied === "install" ? "Copied command" : "Copy install command"}
-        </Button>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Run this on each host you want to watch — not on the Proxmox server. It downloads the
-          agent from this console and enables systemd.
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="go-cmd">Go agent (manual binary)</Label>
-        <textarea
-          id="go-cmd"
-          readOnly
-          rows={6}
-          className="w-full rounded-lg border bg-muted/40 p-3 font-mono text-sm"
-          value={goCommand}
-        />
-        <Button type="button" variant="outline" onClick={() => copy("go", goCommand)}>
-          {copied === "go" ? "Copied command" : "Copy Go command"}
-        </Button>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Build with <code className="text-foreground">make agent</code> (or copy{" "}
-          <code className="text-foreground">bin/defendsec-agentd</code>). On Fedora, use your LAN
-          hostname/IP and match <code className="text-foreground">--tls-server-name</code> to a
-          certificate SAN. Developer lab notes: <code className="text-foreground">docs/FEDORA.md</code>.
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="py-cmd">Python agent (inventory check-in only)</Label>
-        <textarea
-          id="py-cmd"
-          readOnly
-          rows={2}
-          className="w-full rounded-lg border bg-muted/40 p-3 font-mono text-sm"
-          value={pyCommand}
-        />
-        <Button type="button" variant="outline" onClick={() => copy("py", pyCommand)}>
-          {copied === "py" ? "Copied command" : "Copy Python command"}
-        </Button>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Standard library only. No signed isolate/kill/live query — use the Go agent for response
-          actions.
-        </p>
+      <div className="space-y-3">
+        <div>
+          <h2 className="font-medium">Install an agent</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Choose the deployment method that matches the target host.
+          </p>
+        </div>
+        <Tabs defaultValue="install" className="overflow-hidden rounded-xl border bg-card">
+          <div className="flex flex-col gap-3 border-b bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <TabsList>
+              <TabsTrigger value="install">Agent install</TabsTrigger>
+              <TabsTrigger value="go">Go binary</TabsTrigger>
+              <TabsTrigger value="python">Python</TabsTrigger>
+            </TabsList>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Terminal className="size-3.5" />
+              Run on the target host
+            </div>
+          </div>
+          {[
+            {
+              value: "install",
+              kind: "install" as const,
+              command: installCommand,
+              description: "Recommended. Downloads the agent, installs it, and enables systemd.",
+            },
+            {
+              value: "go",
+              kind: "go" as const,
+              command: goCommand,
+              description: "Manual binary. Supports signed response, live queries, and agent updates.",
+            },
+            {
+              value: "python",
+              kind: "py" as const,
+              command: pyCommand,
+              description: "Inventory check-in only. Signed response actions require the Go agent.",
+            },
+          ].map((snippet) => (
+            <TabsContent key={snippet.value} value={snippet.value} className="m-0">
+              <div className="flex items-center justify-between border-b px-4 py-2">
+                <span className="text-xs font-medium text-muted-foreground">shell</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => copy(snippet.kind, snippet.command)}
+                >
+                  {copied === snippet.kind ? <Check className="size-4" /> : <Copy className="size-4" />}
+                  {copied === snippet.kind ? "Copied" : "Copy"}
+                </Button>
+              </div>
+              <pre className="max-h-80 overflow-auto bg-muted/20 p-4 text-sm">
+                <code>{snippet.command}</code>
+              </pre>
+              <p className="border-t px-4 py-3 text-sm text-muted-foreground">
+                {snippet.description}
+              </p>
+            </TabsContent>
+          ))}
+        </Tabs>
       </div>
     </div>
   );

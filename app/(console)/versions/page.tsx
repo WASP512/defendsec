@@ -2,6 +2,8 @@ import Link from "next/link";
 import { ensureStore } from "@/lib/store";
 import { loadFleet } from "@/lib/mtls-agents";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState, PageHeader } from "@/components/console-ui";
+import { Boxes } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -19,17 +21,21 @@ export default async function VersionsPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Versions</h1>
-        <p className="mt-1 max-w-2xl text-muted-foreground">
+      <PageHeader
+        title="Versions"
+        description={
+          <>
           Software version records across the fleet. Split versions on one package are the first
           signal that a host missed a patch.
-        </p>
-      </div>
+          </>
+        }
+      />
       {packages.length === 0 ? (
-        <p className="rounded-xl border border-dashed p-10 text-center text-muted-foreground">
-          No software inventory yet.
-        </p>
+        <EmptyState
+          title="No software inventory"
+          description="Software records appear after an enrolled agent checks in."
+          icon={Boxes}
+        />
       ) : (
         <div className="space-y-4">
           {packages.map(([name, rows]) => {

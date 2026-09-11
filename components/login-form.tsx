@@ -20,6 +20,7 @@ export function LoginForm({
           type="password"
           autoComplete="current-password"
           required
+          placeholder="Paste access token"
           defaultValue={showDevHint ? DEV_ADMIN_TOKEN : ""}
         />
       </div>
@@ -36,9 +37,13 @@ export function LoginForm({
         </p>
       )}
       {failed ? <p className="text-sm text-destructive">That token was rejected.</p> : null}
-      <Button type="submit" className="w-full">
-        Sign in
+      <Button type="submit" className="h-10 w-full">
+        Access console
       </Button>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Packaged installs store the token at{" "}
+        <code className="text-foreground">/var/lib/defendsec/admin-token.txt</code>.
+      </p>
     </form>
   );
 }
