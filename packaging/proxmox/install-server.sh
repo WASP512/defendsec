@@ -486,6 +486,9 @@ build_binaries() {
   if [[ "$SKIP_BUILD" != "1" ]]; then
     local release_version
     release_version="$(git -C "$INSTALL_ROOT" describe --tags --always 2>/dev/null || echo dev)"
+    if [[ "$release_version" =~ ^v[0-9] ]]; then
+      release_version="${release_version#v}"
+    fi
     info "Building apid + agent (${GOARCH}) with $("$GO_BIN" version | awk '{print $3}')"
     su -s /bin/bash defendsec -c "
       set -euo pipefail
@@ -509,7 +512,12 @@ build_binaries() {
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-apid" /usr/local/bin/defendsec-apid
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-agentd" /usr/local/bin/defendsec-agentd
   if [[ ! -s "${INSTALL_ROOT}/VERSION" ]]; then
-    git -C "$INSTALL_ROOT" describe --tags --always 2>/dev/null >"${INSTALL_ROOT}/VERSION" || echo dev >"${INSTALL_ROOT}/VERSION"
+    local installed_version
+    installed_version="$(git -C "$INSTALL_ROOT" describe --tags --always 2>/dev/null || echo dev)"
+    if [[ "$installed_version" =~ ^v[0-9] ]]; then
+      installed_version="${installed_version#v}"
+    fi
+    printf '%s\n' "$installed_version" >"${INSTALL_ROOT}/VERSION"
   fi
 }
 

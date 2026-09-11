@@ -8,13 +8,17 @@ OUT="${OUT:-$ROOT/dist}"
 mkdir -p "$OUT"
 
 version="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+release_version="$version"
+if [[ "$release_version" =~ ^v[0-9] ]]; then
+  release_version="${release_version#v}"
+fi
 echo "Building DefendSec ${version}"
 
 build() {
   local os="$1" arch="$2" pkg="$3" outname="$4"
   local ldflags="-s -w"
   if [[ "$pkg" == "./cmd/defendsec-agentd" ]]; then
-    ldflags="${ldflags} -X main.agentVersion=${version}"
+    ldflags="${ldflags} -X main.agentVersion=${release_version}"
   fi
   echo "  -> ${outname}"
   GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o "${OUT}/${outname}" "$pkg"
@@ -37,7 +41,7 @@ if [[ -d public ]]; then
   cp -a public .next/standalone/public
 fi
 tar -C .next/standalone -czf "${OUT}/defendsec-console.tar.gz" .
-printf '%s\n' "$version" >"${OUT}/VERSION"
+printf '%s\n' "$release_version" >"${OUT}/VERSION"
 
 (
   cd "$OUT"
