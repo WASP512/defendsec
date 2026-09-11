@@ -3,6 +3,17 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import type { Alert } from "@/lib/alerts";
 
 export function AlertSuggestActions({
@@ -22,13 +33,6 @@ export function AlertSuggestActions({
     alert.kind === "sca" && (alert.severity === "critical" || alert.severity === "high");
 
   async function suggestIsolate() {
-    if (
-      !window.confirm(
-        "Issue a signed isolate command to this host? The agent must be connected over mTLS.",
-      )
-    ) {
-      return;
-    }
     setPending(true);
     setError("");
     try {
@@ -102,14 +106,28 @@ export function AlertSuggestActions({
       {readOnly ? (
         <span className="text-xs text-muted-foreground">Viewer: isolate requires admin token</span>
       ) : (
-        <Button
-          variant="destructive"
-          size="sm"
-          disabled={pending || sent}
-          onClick={() => void suggestIsolate()}
-        >
-          {sent ? "Isolate queued" : pending ? "Sending…" : "Suggest isolate"}
-        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger
+            render={<Button variant="destructive" size="sm" disabled={pending || sent} />}
+          >
+            {sent ? "Isolate queued" : pending ? "Sending…" : "Suggest isolate"}
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Isolate this host?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This issues a signed isolate command. The agent must be connected over mTLS, and
+                network access remains restricted until an administrator releases it.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" onClick={() => void suggestIsolate()}>
+                Issue isolate command
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       )}
       {error ? <span className="text-xs text-destructive">{error}</span> : null}
     </div>

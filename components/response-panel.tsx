@@ -2,8 +2,28 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Activity, ShieldAlert, Terminal, Upload } from "lucide-react";
 import type { CommandRecord } from "@/lib/commands";
 import { relativeTime } from "@/lib/format";
 
@@ -113,6 +133,7 @@ export function ResponsePanel({
   readOnly?: boolean;
 }) {
   const [pending, setPending] = useState<string>("");
+  const [confirmAction, setConfirmAction] = useState<"isolate" | "revoke" | null>(null);
   const [error, setError] = useState("");
   const [killName, setKillName] = useState("");
   const [query, setQuery] = useState<string>("processes");
@@ -198,9 +219,6 @@ export function ResponsePanel({
   }
 
   async function revokeDevice() {
-    if (!window.confirm("Revoke this agent certificate? The host must re-enroll to connect again.")) {
-      return;
-    }
     setPending("revoke");
     setError("");
     try {
@@ -244,17 +262,22 @@ export function ResponsePanel({
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Commands are Ed25519-signed by defendsec-apid and verified on the agent. Live query runs an
-        allowlisted host snapshot. Agent update downloads, verifies sha256, and replaces the running
-        binary (systemd should restart the agent on exit).
-      </p>
-      <div className="flex flex-wrap gap-2">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldAlert className="size-4" />
+            Host containment
+          </CardTitle>
+          <CardDescription>
+            Commands are Ed25519-signed by defendsec-apid and verified by this agent.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
         <Button
           variant={isolated ? "outline" : "destructive"}
           size="sm"
           disabled={Boolean(pending) || isolated}
-          onClick={() => send("isolate")}
+          onClick={() => setConfirmAction("isolate")}
         >
           {pending === "isolate" ? "Sending…" : isolated ? "Already isolated" : "Isolate host"}
         </Button>
@@ -266,77 +289,86 @@ export function ResponsePanel({
         >
           {pending === "release" ? "Sending…" : "Release isolation"}
         </Button>
-        <Button variant="outline" size="sm" disabled={Boolean(pending)} onClick={() => void revokeDevice()}>
+        <Button variant="outline" size="sm" disabled={Boolean(pending)} onClick={() => setConfirmAction("revoke")}>
           {pending === "revoke" ? "Revoking…" : "Revoke certificate"}
         </Button>
-      </div>
+        </CardContent>
+      </Card>
       <form
-        className="flex flex-col gap-2 sm:flex-row sm:items-end"
+        className="rounded-xl border bg-card p-4"
         onSubmit={(event) => {
           event.preventDefault();
           if (!killName.trim()) return;
           void send("kill_process", { name: killName.trim() });
         }}
       >
-        <div className="min-w-0 flex-1 space-y-1">
-          <Label htmlFor="kill-name">Signal process by name</Label>
-          <Input
-            id="kill-name"
-            name="name"
-            placeholder="sleep"
-            value={killName}
-            onChange={(event) => setKillName(event.target.value)}
-            autoComplete="off"
-          />
+        <div className="mb-3">
+          <p className="flex items-center gap-2 font-medium"><Terminal className="size-4" /> Process response</p>
+          <p className="mt-1 text-sm text-muted-foreground">Send SIGTERM to an allowlisted process name.</p>
         </div>
-        <Button type="submit" variant="destructive" size="sm" disabled={Boolean(pending) || !killName.trim()}>
-          {pending === "kill_process" ? "Sending…" : "Send SIGTERM"}
-        </Button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="min-w-0 flex-1 space-y-1">
+            <Label htmlFor="kill-name">Process name</Label>
+            <Input
+              id="kill-name"
+              name="name"
+              placeholder="sleep"
+              value={killName}
+              onChange={(event) => setKillName(event.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          <Button type="submit" variant="destructive" size="sm" disabled={Boolean(pending) || !killName.trim()}>
+            {pending === "kill_process" ? "Sending…" : "Send SIGTERM"}
+          </Button>
+        </div>
       </form>
       <form
-        className="space-y-2"
+        className="space-y-3 rounded-xl border bg-card p-4"
         onSubmit={(event) => {
           event.preventDefault();
           void send("live_query", { query });
         }}
       >
+        <div>
+          <p className="flex items-center gap-2 font-medium"><Activity className="size-4" /> Live query</p>
+          <p className="mt-1 text-sm text-muted-foreground">Run an allowlisted host snapshot and keep reusable query presets.</p>
+        </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
           <div className="min-w-0 flex-1 space-y-1">
             <Label htmlFor="live-query">Live query</Label>
-            <select
-              id="live-query"
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            <Select
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onValueChange={(value) => setQuery(String(value))}
             >
-              {LIVE_QUERIES.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id="live-query" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LIVE_QUERIES.map((item) => (
+                  <SelectItem key={item} value={item}>{item}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {savedQueries.length > 0 ? (
             <div className="min-w-0 flex-1 space-y-1">
               <Label htmlFor="saved-query">Saved queries</Label>
-              <select
-                id="saved-query"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-                defaultValue=""
-                onChange={(event) => {
-                  const picked = savedQueries.find((item) => item.id === event.target.value);
+              <Select
+                onValueChange={(value) => {
+                  const picked = savedQueries.find((item) => item.id === String(value));
                   if (picked) setQuery(picked.query);
                 }}
               >
-                <option value="" disabled>
-                  Load saved…
-                </option>
-                {savedQueries.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="saved-query" className="w-full">
+                  <SelectValue placeholder="Load saved…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {savedQueries.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           ) : null}
           <Button type="submit" variant="outline" size="sm" disabled={Boolean(pending)}>
@@ -366,7 +398,7 @@ export function ResponsePanel({
         </div>
       </form>
       <form
-        className="space-y-2 rounded-xl border p-4"
+        className="space-y-3 rounded-xl border bg-card p-4"
         onSubmit={(event) => {
           event.preventDefault();
           if (!updateVersion.trim() || !updateURL.trim() || !updateSHA256.trim()) return;
@@ -377,7 +409,10 @@ export function ResponsePanel({
           });
         }}
       >
-        <p className="text-sm font-medium">Push agent update</p>
+        <div>
+          <p className="flex items-center gap-2 font-medium"><Upload className="size-4" /> Push agent update</p>
+          <p className="mt-1 text-sm text-muted-foreground">Download, verify SHA256, replace the binary, and let systemd restart it.</p>
+        </div>
         {release ? (
           <p className="text-xs text-muted-foreground">
             Latest stable release: {release.version}
@@ -426,8 +461,12 @@ export function ResponsePanel({
         </Button>
       </form>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <div className="flex items-center justify-between">
+        <h3 className="font-medium">Command history</h3>
+        <span className="text-xs text-muted-foreground">{commands.length} command{commands.length === 1 ? "" : "s"}</span>
+      </div>
       {commands.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No signed commands yet for this agent.</p>
+        <p className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">No signed commands yet for this agent.</p>
       ) : (
         <ul className="divide-y rounded-xl border">
           {commands.map((item) => (
@@ -441,6 +480,37 @@ export function ResponsePanel({
           ))}
         </ul>
       )}
+      <AlertDialog open={confirmAction !== null} onOpenChange={(open) => !open && setConfirmAction(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia>
+              <ShieldAlert className="text-destructive" />
+            </AlertDialogMedia>
+            <AlertDialogTitle>
+              {confirmAction === "isolate" ? "Isolate this host?" : "Revoke this certificate?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmAction === "isolate"
+                ? "The agent will restrict network access until you explicitly release isolation."
+                : "The agent will disconnect and must re-enroll before it can report inventory or receive commands."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                const action = confirmAction;
+                setConfirmAction(null);
+                if (action === "isolate") void send("isolate");
+                if (action === "revoke") void revokeDevice();
+              }}
+            >
+              {confirmAction === "isolate" ? "Isolate host" : "Revoke certificate"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

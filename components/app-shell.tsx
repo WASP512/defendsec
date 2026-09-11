@@ -19,6 +19,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { ConsoleTools } from "@/components/console-tools";
 import {
   Sidebar,
   SidebarContent,
@@ -67,6 +68,11 @@ export function AppShell({
   const visibleNav = readOnly ? nav.filter((item) => item.href !== "/enroll") : nav;
   const current = nav.find((item) =>
     item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`),
+  );
+  const destinations = navGroups.flatMap((group) =>
+    group.items
+      .filter((item) => visibleNav.some((visible) => visible.href === item.href))
+      .map((item) => ({ ...item, group: group.label })),
   );
 
   return (
@@ -140,6 +146,9 @@ export function AppShell({
           </Link>
           <ChevronRight className="size-3.5 text-muted-foreground" />
           <span className="text-sm font-medium">{current?.label ?? "DefendSec"}</span>
+          <div className="ml-auto flex items-center gap-1">
+            <ConsoleTools destinations={destinations} />
+          </div>
         </header>
         <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
           {readOnly ? (

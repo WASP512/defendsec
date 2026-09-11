@@ -71,7 +71,13 @@ export default async function DeviceDetailPage({
     <div className="mx-auto max-w-6xl space-y-8">
       <PageHeader
         title={device.hostname}
-        eyebrow={<Link href="/devices" className="hover:underline">← Hosts</Link>}
+        eyebrow={
+          <div className="flex items-center gap-2">
+            <Link href="/devices" className="hover:text-foreground hover:underline">Hosts</Link>
+            <span aria-hidden="true">/</span>
+            <span className="text-foreground">{device.hostname}</span>
+          </div>
+        }
         description={`${device.osName} ${device.osVersion} · ${device.arch || "unknown arch"}`}
         actions={
           <>
