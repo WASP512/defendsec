@@ -8,7 +8,7 @@ Requires=defendsec-apid.service
 Type=simple
 User=defendsec
 Group=defendsec
-WorkingDirectory=/opt/defendsec/.next/standalone
+WorkingDirectory=/opt/defendsec/current-console
 EnvironmentFile=-/etc/defendsec/console.env
 # Prefer standalone server produced by `next build` (output: "standalone").
 ExecStart=/usr/bin/node server.js
