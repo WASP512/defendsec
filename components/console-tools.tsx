@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { Moon, Search, Sun, type LucideIcon } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -26,10 +26,12 @@ export type ConsoleDestination = {
 export function ConsoleTools({ destinations }: { destinations: ConsoleDestination[] }) {
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
+  );
   const [open, setOpen] = useState(false);
-
-  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
