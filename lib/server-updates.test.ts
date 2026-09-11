@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { compareVersions, normalizeVersion, parseChecksums, parseRelease } from "./server-updates.ts";
+import { compareVersions, normalizeVersion, parseChecksums, parseRelease } from "./server-release.ts";
 
 test("normalizes v-prefixed release tags", () => {
   assert.equal(normalizeVersion("v1.2.3"), "1.2.3");
