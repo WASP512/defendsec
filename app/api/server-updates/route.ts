@@ -37,7 +37,11 @@ export async function POST(request: Request) {
   if (!state.canApply) {
     return Response.json({ error: state.unavailableReason || "One-click updates are not configured" }, { status: 503 });
   }
-  if (state.status.state === "downloading" || state.status.state === "installing") {
+  if (
+    state.status.state === "downloading" ||
+    state.status.state === "backing_up" ||
+    state.status.state === "installing"
+  ) {
     return Response.json({ error: "A server update is already running" }, { status: 409 });
   }
 

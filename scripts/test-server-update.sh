@@ -7,6 +7,22 @@ trap 'rm -rf "$TMP"' EXIT
 ASSETS="${TMP}/assets"
 mkdir -p "${ASSETS}/console"
 
+BACKUP_DATA="${TMP}/data"
+mkdir -p "${BACKUP_DATA}/pki"
+printf '%s\n' '{"devices":[]}' >"${BACKUP_DATA}/defendsec.json"
+printf '%s\n' 'test certificate' >"${BACKUP_DATA}/pki/ca.pem"
+backup_path="$(
+  DEFENDSEC_DATA_DIR="$BACKUP_DATA" \
+    bash "${ROOT}/packaging/proxmox/update-server.sh" backup-only 1.2.3
+)"
+[[ -s "$backup_path" ]]
+[[ "$(stat -c '%a' "$backup_path")" == "600" ]]
+tar -tzf "$backup_path" | awk '
+  /\/defendsec.json$/ { data=1 }
+  /\/pki\/ca.pem$/ { pki=1 }
+  END { exit (data && pki) ? 0 : 1 }
+'
+
 printf '%s\n' 'console fixture' >"${ASSETS}/console/server.js"
 tar -C "${ASSETS}/console" -czf "${ASSETS}/defendsec-console.tar.gz" .
 for name in defendsec-apid-linux-amd64 defendsec-apid-linux-arm64 \

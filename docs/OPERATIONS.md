@@ -82,8 +82,9 @@ Open **Operations → Updates** in the console. DefendSec checks the latest stab
 GitHub release and compares it with the installed version.
 
 - **Install update** downloads the architecture-matched API and standalone
-  console, verifies every file against `SHA256SUMS`, restarts both services, and
-  rolls back the binaries automatically if either health check fails.
+  console, verifies every file against `SHA256SUMS`, creates a private backup
+  of DefendSec state and Postgres, restarts both services, and rolls back the
+  binaries automatically if either health check fails.
 - **Update outdated agents** queues signed, architecture-matched update commands
   for connected mTLS agents. Each agent verifies its binary before replacement.
 - Viewer sessions can inspect update status but cannot start an update.

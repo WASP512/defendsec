@@ -94,6 +94,32 @@ safe_extract_console() {
   [[ -f "${destination}/server.js" ]] || die "console archive is missing server.js"
 }
 
+create_backup() {
+  local version="$1" stamp backup_dir archive database_url=""
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_dir="${DATA_DIR}/backups/pre-upgrade-${version}-${stamp}"
+  archive="${backup_dir}.tar.gz"
+  mkdir -p "$backup_dir"
+  chmod 0700 "$backup_dir"
+  local name
+  for name in defendsec.json defendsec.json.bak defendsec-agents.json commands.json \
+    admin-token.txt saved-queries.json update-status.json; do
+    [[ -e "${DATA_DIR}/${name}" ]] && cp -a "${DATA_DIR}/${name}" "$backup_dir/"
+  done
+  [[ -d "${DATA_DIR}/pki" ]] && cp -a "${DATA_DIR}/pki" "${backup_dir}/pki"
+
+  database_url="${DEFENDSEC_DATABASE_URL:-${DATABASE_URL:-}}"
+  if [[ -n "$database_url" ]]; then
+    require_command pg_dump
+    pg_dump --no-owner --no-privileges "$database_url" >"${backup_dir}/postgres.sql" \
+      || die "Postgres backup failed; the update was not installed"
+  fi
+  tar -C "$(dirname "$backup_dir")" -czf "$archive" "$(basename "$backup_dir")"
+  chmod 0600 "$archive"
+  rm -rf "$backup_dir"
+  printf '%s\n' "$archive"
+}
+
 prepare_release() {
   local request="$1" work="$2"
   local repo tag version api_url arch
@@ -151,7 +177,7 @@ apply_release() {
   exec 9>"${DATA_DIR}/update.lock"
   flock -n 9 || die "another server update is already running"
 
-  local work version apid_name release_dir previous_console=""
+  local work version apid_name release_dir previous_console="" backup_path
   work="$(mktemp -d "${DATA_DIR}/update-work.XXXXXX")"
   trap 'rm -f "$REQUEST_FILE"; rm -rf "$work"' EXIT
   write_status downloading "Downloading and verifying release"
@@ -159,6 +185,9 @@ apply_release() {
   version="${prepared[0]:-}"
   apid_name="${prepared[1]:-}"
   [[ -n "$version" && -n "$apid_name" ]] || die "release preparation failed"
+
+  write_status backing_up "Creating a pre-upgrade data and Postgres backup" "$version"
+  backup_path="$(create_backup "$version")"
 
   release_dir="${INSTALL_ROOT}/releases/${version}"
   [[ ! -e "$release_dir" ]] || rm -rf "$release_dir"
@@ -216,7 +245,7 @@ apply_release() {
 
   install -m 0755 "${work}/update-server.sh" /usr/local/sbin/defendsec-update
   rm -f "$REQUEST_FILE"
-  write_status completed "Server update completed successfully" "$version"
+  write_status completed "Server update completed successfully; backup: ${backup_path}" "$version"
 }
 
 for command in curl jq sha256sum tar awk; do
@@ -235,7 +264,10 @@ case "$MODE" in
     prepare_release "$request" "$work" >/dev/null
     echo "release verification passed"
     ;;
+  backup-only)
+    create_backup "${2:-test}"
+    ;;
   *)
-    die "usage: $0 [apply|verify-request REQUEST]"
+    die "usage: $0 [apply|verify-request REQUEST|backup-only VERSION]"
     ;;
 esac

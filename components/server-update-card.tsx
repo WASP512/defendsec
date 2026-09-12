@@ -19,7 +19,11 @@ export function ServerUpdateCard({
   const [state, setState] = useState(initial);
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState("");
-  const active = requesting || state.status.state === "downloading" || state.status.state === "installing";
+  const active =
+    requesting ||
+    state.status.state === "downloading" ||
+    state.status.state === "backing_up" ||
+    state.status.state === "installing";
 
   useEffect(() => {
     if (!active) return;

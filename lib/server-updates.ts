@@ -9,7 +9,7 @@ export { compareVersions, normalizeVersion } from "./server-release";
 export const DEFAULT_UPDATE_REPO = "WASP512/defendsec";
 
 export type UpdateStatus = {
-  state: "idle" | "downloading" | "installing" | "completed" | "failed";
+  state: "idle" | "downloading" | "backing_up" | "installing" | "completed" | "failed";
   message: string;
   version?: string;
   updatedAt?: string;
@@ -90,6 +90,7 @@ async function updateStatus(): Promise<UpdateStatus> {
     const parsed = JSON.parse(raw) as Partial<UpdateStatus>;
     if (
       parsed.state === "downloading" ||
+      parsed.state === "backing_up" ||
       parsed.state === "installing" ||
       parsed.state === "completed" ||
       parsed.state === "failed"
