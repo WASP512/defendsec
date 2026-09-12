@@ -225,7 +225,7 @@
       </table>
 
       <h3>Agent processes</h3>
-      <p>The preferred Go agent, <code>defendsec-agentd</code>, collects inventory, maintains the mTLS control stream, watches selected files, evaluates SCA checks, verifies command signatures, executes only recognized command types, and reports acknowledgements. The legacy Python HTTP agent remains useful for inventory-only labs but cannot receive signed commands.</p>
+      <p>The preferred Go agent, <code>defendsec-agentd</code>, collects inventory, maintains the mTLS control stream, watches selected files, evaluates SCA checks, verifies command signatures, executes only recognized command types, and reports acknowledgements. Defaults are a 20-second unary heartbeat, 60-second full inventory report, and 30-second gRPC keepalive with reconnect backoff. Linux SCA packs cover baseline host and SSH checks. The legacy Python HTTP agent remains useful for inventory-only labs but cannot receive signed commands.</p>
 
       <h3>Communication paths</h3>
       <table>
@@ -256,6 +256,7 @@
           <tr><td><code>pg</code></td><td>Server-side Postgres reads needed by selected console routes.</td></tr>
         </tbody>
       </table>
+      <p>The Next.js configuration also emits defensive browser headers including <code>X-Content-Type-Options</code>, <code>X-Frame-Options</code>, a referrer policy, permissions policy, and cross-origin opener policy.</p>
 
       <h3>Control plane and endpoint</h3>
       <table>
@@ -276,6 +277,7 @@
         <li><strong>systemd</strong> supervises the console, API daemon, agent, and privileged update workflow.</li>
         <li><strong>Proxmox <code>pct</code></strong> creates and manages the recommended Debian LXC deployment.</li>
         <li><strong>Shell installers</strong> provision verified Go/Node toolchains, packages, directories, credentials, builds, and services.</li>
+        <li><strong>Endpoint service packaging</strong> includes the production Linux systemd unit and installer plus a macOS launchd plist; Windows packaging remains a placeholder rather than a complete supported service installer.</li>
         <li><strong>GitHub Actions and Releases</strong> turn <code>v*</code> tags into amd64/arm64 API and agent binaries, a standalone console archive, the agent installer, the server updater, <code>VERSION</code>, and <code>SHA256SUMS</code>. The first-time server and Proxmox installers remain in the repository.</li>
         <li><strong>Node’s built-in test runner and Go tests</strong> cover release metadata, advisories, cryptography, command bounds, SCA, inventory, PKI, and state behavior.</li>
       </ul>
@@ -294,6 +296,10 @@
         <li><strong>Revoke.</strong> An administrator revokes the certificate. The live stream is dropped and the endpoint must clear local identity state and re-enroll.</li>
       </ol>
 
+      <h3>PKI parameters and bootstrap</h3>
+      <p>The local CA and server keys use ECDSA P-256. The CA certificate is created for ten years, server certificates for one year, and agent client certificates for 90 days. The enrollment and gRPC listeners require TLS 1.3 or newer; gRPC requires and verifies the client certificate. Agent identity is the issued certificate’s device-ID common name plus a SHA-256 certificate fingerprint used by revocation checks.</p>
+      <p>Initial CA retrieval uses trust on first use (TOFU): the new agent fetches the CA before it has an existing trust anchor, immediately pins that CA locally, and then verifies the enrollment request and all later HTTPS/gRPC connections against the pinned CA and configured server name. Because the first fetch is the bootstrap trust moment, enroll only across a network path you trust.</p>
+
       <h3>Browser roles</h3>
       <table>
         <thead><tr><th>Capability</th><th>Admin token</th><th>Viewer token</th></tr></thead>
@@ -305,6 +311,7 @@
           <tr><td>Approve server or agent updates</td><td>Yes</td><td>No</td></tr>
         </tbody>
       </table>
+      <p>Successful login stores the supplied token in the <code>defendsec_admin</code> cookie for up to 14 days. The cookie is HTTP-only and SameSite=Lax. Its Secure setting follows <code>DEFENDSEC_COOKIE_SECURE</code>, defaulting to the production runtime mode; packaged direct-HTTP installs configure the compatible value, while HTTPS reverse-proxy deployments should set it to true.</p>
 
       <h3>Command protections</h3>
       <div class="grid-2">
@@ -318,13 +325,14 @@
         </div>
         <div class="card">
           <h4>Freshness</h4>
-          <p>Issue and expiry timestamps bound the window in which a captured command can be accepted.</p>
+          <p>Issue and expiry timestamps bound the window in which a captured command can be accepted. The server issues commands with a two-minute expiry.</p>
         </div>
         <div class="card">
           <h4>Capability</h4>
           <p>The agent switches on named command types. Live queries and scripts use allowlists; no arbitrary shell is exposed.</p>
         </div>
       </div>
+      <p>The endpoint also keeps an in-memory replay cache of the most recent command identifiers and rejects a duplicate after signature and device checks. The cache is bounded to 256 identifiers; timestamp validation independently limits stale replays.</p>
 
       <div class="callout warning">
         <strong>Network isolation is opt-in.</strong> “Isolate host” always updates DefendSec’s containment state. It changes iptables only when the agent runs as root and <code>DEFENDSEC_ISOLATE_NET=1</code> is configured. Test isolation and recovery on a noncritical host before production use.
@@ -518,6 +526,7 @@ sudo bash /tmp/install-agent.sh \
         <li><strong>Resolve</strong> an alert when the condition is fixed or dispositioned.</li>
         <li><strong>Reopen</strong> an item when a condition returns or needs further work.</li>
       </ul>
+      <p>The data model and filter support a <strong>suppressed</strong> status, but the current console has no action button that sets it; suppression is an authenticated API workflow.</p>
       <p>Open FIM drift and SCA findings can auto-resolve when later host data demonstrates a return to baseline. Vulnerability alerts can also resolve when later inventory no longer matches the affected version range. Provenance fields preserve the source identity used to correlate recurring observations.</p>
 
       <h3>Advisories: catalog matching</h3>
@@ -533,7 +542,7 @@ sudo bash /tmp/install-agent.sh \
       <p>Patches aggregates pending updates reported by enrolled agents. Use it to identify hosts with outstanding package changes and to compare current versus available versions. DefendSec reports these gaps; it does not currently orchestrate OS patch installation or reboot windows.</p>
 
       <h3>Versions</h3>
-      <p>Versions pivots software inventory across the fleet. Search for a package or product to see which versions exist and which hosts report them. This is useful for incident scoping, end-of-life discovery, and validating a manual rollout.</p>
+      <p>Versions pivots software inventory across the fleet. Search by package, version, or host, and use <strong>Mixed versions only</strong> to isolate packages whose reported versions differ across endpoints. This is useful for incident scoping, end-of-life discovery, and validating a manual rollout.</p>
 
       <h3>Integrity</h3>
       <p>Integrity compares current SHA-256 hashes against an accepted baseline for a deliberately small set of sensitive system paths. A missing file or changed hash is drift. Open the host to review the exact path, current hash, prior hash, and timestamps.</p>
