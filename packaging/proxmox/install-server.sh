@@ -350,6 +350,13 @@ create_users_dirs() {
   chmod 755 "$DOWNLOADS_DIR"
 }
 
+# The installer runs as root while $INSTALL_ROOT is owned by defendsec.
+# Git 2.35+ treats that as "dubious ownership" and refuses fetch/checkout
+# on every upgrade re-run unless we mark the tree safe for this invocation.
+git_in_install_root() {
+  git -c "safe.directory=${INSTALL_ROOT}" -C "$INSTALL_ROOT" "$@"
+}
+
 clone_or_update_repo() {
   info "Fetching source ${REPO_URL}@${REPO_REF}"
   local auth_url="$REPO_URL"
@@ -362,15 +369,15 @@ clone_or_update_repo() {
   fi
   if [[ -d "${INSTALL_ROOT}/.git" ]]; then
     if [[ -n "$token" ]]; then
-      git -C "$INSTALL_ROOT" remote set-url origin "$auth_url"
+      git_in_install_root remote set-url origin "$auth_url"
     fi
-    git -C "$INSTALL_ROOT" fetch --depth 1 origin "$REPO_REF"
-    git -C "$INSTALL_ROOT" checkout -B "$REPO_REF" "FETCH_HEAD"
-    git -C "$INSTALL_ROOT" remote set-url origin "$REPO_URL"
+    git_in_install_root fetch --depth 1 origin "$REPO_REF"
+    git_in_install_root checkout -B "$REPO_REF" "FETCH_HEAD"
+    git_in_install_root remote set-url origin "$REPO_URL"
   else
     rm -rf "$INSTALL_ROOT"
     git clone --depth 1 --branch "$REPO_REF" "$auth_url" "$INSTALL_ROOT"
-    git -C "$INSTALL_ROOT" remote set-url origin "$REPO_URL"
+    git_in_install_root remote set-url origin "$REPO_URL"
   fi
   chown -R defendsec:defendsec "$INSTALL_ROOT"
 }
@@ -485,7 +492,7 @@ start_postgres() {
 build_binaries() {
   if [[ "$SKIP_BUILD" != "1" ]]; then
     local release_version
-    release_version="$(git -C "$INSTALL_ROOT" describe --tags --always 2>/dev/null || echo dev)"
+    release_version="$(git_in_install_root describe --tags --always 2>/dev/null || echo dev)"
     if [[ "$release_version" =~ ^v[0-9] ]]; then
       release_version="${release_version#v}"
     fi
@@ -513,7 +520,7 @@ build_binaries() {
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-agentd" /usr/local/bin/defendsec-agentd
   if [[ ! -s "${INSTALL_ROOT}/VERSION" ]]; then
     local installed_version
-    installed_version="$(git -C "$INSTALL_ROOT" describe --tags --always 2>/dev/null || echo dev)"
+    installed_version="$(git_in_install_root describe --tags --always 2>/dev/null || echo dev)"
     if [[ "$installed_version" =~ ^v[0-9] ]]; then
       installed_version="${installed_version#v}"
     fi

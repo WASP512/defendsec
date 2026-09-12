@@ -308,6 +308,7 @@ Open `47261–47263` from your admin network and from agents. Leave `47264` and 
 | `pveam download` fails on `local-lvm` | LVM-thin cannot store LXC templates | `TEMPLATE_STORAGE=local` |
 | `bash: curl: command not found` **inside** the CT | Debian 12 template has no curl | Current helper downloads on the **Proxmox host** and pushes the script in. Update to latest `main` and re-run, or use the “finish install” commands above. |
 | `package log/slog is not in GOROOT` (Go 1.19) | Distro Go is too old | Current installer installs verified upstream Go/Node. Re-run `install-server.sh` from `main`. |
+| `fatal: detected dubious ownership in repository at '/opt/defendsec'` | Installer runs as root; `/opt/defendsec` is owned by `defendsec` | Current installer marks that path safe for Git. To finish a stuck re-run immediately: `git config --global --add safe.directory /opt/defendsec` then re-run `install-server.sh`. |
 | Browser `SSL_ERROR_RX_RECORD_TOO_LONG` | Used `https://` on port 47261 | Use `http://<ip>:47261` |
 | Cannot reach the UI | Install failed before services started, or wrong IP/port | `systemctl status defendsec-console defendsec-apid` inside the CT; confirm port 47261 |
 | Agent TLS verify failed | `--tls-server-name` does not match the cert | Use the CT hostname (`defendsec` by default), or wipe `/var/lib/defendsec/pki` once and restart `defendsec-apid` so SANs refresh |
