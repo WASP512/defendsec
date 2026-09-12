@@ -139,7 +139,7 @@ export function AgentUpdatePanel({
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" render={<Link href={`/devices/${target.id}`} />}>
+                      <Button nativeButton={false} variant="ghost" size="sm" render={<Link href={`/devices/${target.id}`} />}>
                         Open host <ExternalLink />
                       </Button>
                     </TableCell>
