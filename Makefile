@@ -1,4 +1,4 @@
-.PHONY: proto apid agent test-go release
+.PHONY: proto apid agent test-go test-updater release
 
 export PATH := $(shell go env GOPATH)/bin:$(PATH)
 export GOTOOLCHAIN ?= local
@@ -17,6 +17,9 @@ agent:
 
 test-go:
 	go test ./cmd/... ./internal/...
+
+test-updater:
+	./scripts/test-server-update.sh
 
 release:
 	./scripts/build-release.sh

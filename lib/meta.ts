@@ -1,10 +1,15 @@
-import { query } from "@/lib/pg";
+import { isMissingRelationError, query } from "@/lib/pg";
 import { APID_ADMIN_URL } from "@/lib/commands";
 import { getAdminToken } from "@/lib/auth";
 
 export async function getMeta(key: string): Promise<string | null> {
-  const rows = await query<{ value: string }>(`SELECT value FROM meta WHERE key = $1`, [key]);
-  return rows[0]?.value ?? null;
+  try {
+    const rows = await query<{ value: string }>(`SELECT value FROM meta WHERE key = $1`, [key]);
+    return rows[0]?.value ?? null;
+  } catch (error) {
+    if (isMissingRelationError(error)) return null;
+    throw error;
+  }
 }
 
 export async function getOsvLastIngest(): Promise<string | null> {

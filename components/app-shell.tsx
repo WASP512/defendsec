@@ -4,11 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Anchor,
+  ChevronRight,
   FileWarning,
   History,
   LayoutDashboard,
+  LogOut,
   Monitor,
   Package,
+  RefreshCw,
   Scale,
   ScrollText,
   ShieldAlert,
@@ -16,7 +19,24 @@ import {
   Siren,
   Terminal,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Separator } from "@/components/ui/separator";
+import { ConsoleTools } from "@/components/console-tools";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 
 const nav = [
   { href: "/", label: "Fleet", icon: LayoutDashboard },
@@ -28,8 +48,15 @@ const nav = [
   { href: "/integrity", label: "Integrity", icon: FileWarning },
   { href: "/policies", label: "Policies", icon: ShieldCheck },
   { href: "/audit", label: "Audit", icon: ScrollText },
+  { href: "/updates", label: "Updates", icon: RefreshCw },
   { href: "/enroll", label: "Enroll", icon: Terminal },
   { href: "/scope", label: "Scope", icon: Scale },
+];
+
+const navGroups = [
+  { label: "Monitor", items: nav.slice(0, 4) },
+  { label: "Inventory", items: nav.slice(4, 8) },
+  { label: "Operations", items: nav.slice(8) },
 ];
 
 export function AppShell({
@@ -41,84 +68,103 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const visibleNav = readOnly ? nav.filter((item) => item.href !== "/enroll") : nav;
+  const current = nav.find((item) =>
+    item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`),
+  );
+  const destinations = navGroups.flatMap((group) =>
+    group.items
+      .filter((item) => visibleNav.some((visible) => visible.href === item.href))
+      .map((item) => ({ ...item, group: group.label })),
+  );
 
   return (
-    <div className="flex min-h-full flex-col bg-background lg:flex-row">
-      <header className="flex items-center justify-between border-b px-4 py-3 lg:hidden">
-        <Link href="/" className="flex items-center gap-2 font-semibold">
-          <Anchor className="size-5" />
-          DefendSec
-        </Link>
-        <nav className="flex gap-1 overflow-x-auto">
-          {visibleNav.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "rounded-md px-2 py-1 text-sm",
-                pathname === item.href
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground",
-              )}
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-        <form action="/api/logout" method="post">
-          <button type="submit" className="whitespace-nowrap text-xs text-muted-foreground underline">
-            Sign out
-          </button>
-        </form>
-      </header>
-      <aside className="hidden w-56 shrink-0 border-r lg:flex lg:flex-col">
-        <Link href="/" className="flex items-center gap-2 px-5 py-6 text-lg font-semibold">
-          <Anchor className="size-5" />
-          DefendSec
-        </Link>
-        <nav className="flex flex-col gap-1 px-3">
-          {visibleNav.map((item) => {
-            const Icon = item.icon;
-            const active =
-              item.href === "/"
-                ? pathname === "/"
-                : pathname === item.href || pathname.startsWith(`${item.href}/`);
+    <SidebarProvider>
+      <Sidebar collapsible="icon">
+        <SidebarHeader className="border-b">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton render={<Link href="/" />} size="lg" tooltip="DefendSec">
+                  <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                    <Anchor className="size-4" />
+                  </span>
+                  <span className="grid flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
+                    <span className="truncate font-semibold">DefendSec</span>
+                    <span className="truncate text-xs text-muted-foreground">Security inventory</span>
+                  </span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarHeader>
+        <SidebarContent>
+          {navGroups.map((group) => {
+            const items = group.items.filter((item) => visibleNav.some((visible) => visible.href === item.href));
+            if (items.length === 0) return null;
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-2 rounded-lg px-3 py-2 text-sm",
-                  active
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-              >
-                <Icon className="size-4" />
-                {item.label}
-              </Link>
+              <SidebarGroup key={group.label}>
+                <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {items.map((item) => {
+                      const Icon = item.icon;
+                      const active =
+                        item.href === "/"
+                          ? pathname === "/"
+                          : pathname === item.href || pathname.startsWith(`${item.href}/`);
+                      return (
+                        <SidebarMenuItem key={item.href}>
+                          <SidebarMenuButton render={<Link href={item.href} />} isActive={active} tooltip={item.label}>
+                              <Icon />
+                              <span className="group-data-[collapsible=icon]:hidden">{item.label}</span>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      );
+                    })}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
             );
           })}
-        </nav>
-        <form className="mt-auto px-5 py-6" action="/api/logout" method="post">
-          <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-            Self-hosted security inventory. Sign-in token required for the console; agents use
-            enroll secret and node key.
-          </p>
-          <button type="submit" className="text-xs text-muted-foreground underline">
-            Sign out
-          </button>
-        </form>
-      </aside>
-      <main className="min-w-0 flex-1 px-4 py-6 sm:px-8">
-        {readOnly ? (
-          <p className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-950 dark:text-amber-100">
-            Viewer session — read-only. Signed commands, revoke, and alert status changes require an
-            admin token.
-          </p>
-        ) : null}
-        {children}
-      </main>
-    </div>
+        </SidebarContent>
+        <SidebarFooter className="border-t">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <form action="/api/logout" method="post">
+                <SidebarMenuButton type="submit" tooltip="Sign out">
+                  <LogOut />
+                  <span className="group-data-[collapsible=icon]:hidden">Sign out</span>
+                </SidebarMenuButton>
+              </form>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+        <SidebarRail />
+      </Sidebar>
+      <SidebarInset>
+        <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur">
+          <SidebarTrigger className="-ml-1" />
+          <Separator orientation="vertical" className="mx-1 h-4" />
+          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
+            Console
+          </Link>
+          <ChevronRight className="size-3.5 text-muted-foreground" />
+          <span className="text-sm font-medium">{current?.label ?? "DefendSec"}</span>
+          <div className="ml-auto flex items-center gap-1">
+            <ConsoleTools destinations={destinations} />
+          </div>
+        </header>
+        <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
+          {readOnly ? (
+            <div className="mx-auto mb-6 flex max-w-6xl items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+              <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+              <p>
+                <span className="font-medium">Viewer session.</span> Signed commands, revoke, and
+                alert status changes require an admin token.
+              </p>
+            </div>
+          ) : null}
+          {children}
+        </main>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

@@ -373,6 +373,9 @@ func (s *Server) Connect(stream defendsecv1.AgentControl_ConnectServer) error {
 			switch body := msg.GetBody().(type) {
 			case *defendsecv1.AgentToServer_Hello:
 				s.log.Info("hello", "device", id, "host", body.Hello.GetHostname(), "ver", body.Hello.GetAgentVersion())
+				if err := s.store.SetAgentVersion(id, body.Hello.GetHostname(), body.Hello.GetAgentVersion()); err != nil {
+					s.log.Warn("persist agent version", "device", id, "err", err)
+				}
 			case *defendsecv1.AgentToServer_Heartbeat:
 				_, err := s.Heartbeat(stream.Context(), body.Heartbeat)
 				if err != nil {

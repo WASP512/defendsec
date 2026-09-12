@@ -1,0 +1,19 @@
+[Unit]
+Description=Apply a verified DefendSec server release
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=-/etc/defendsec/update.env
+EnvironmentFile=-/etc/defendsec/apid.env
+ExecStart=/usr/local/sbin/defendsec-update apply
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+PrivateTmp=true
+ProtectHome=true
+UMask=0027
+

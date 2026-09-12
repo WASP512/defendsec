@@ -66,3 +66,25 @@ func TestApplyInventory_createModifyDelete(t *testing.T) {
 		t.Fatalf("expected deleted passwd, got %#v", ev)
 	}
 }
+
+func TestSetAgentVersionPersistsHelloMetadata(t *testing.T) {
+	store := New(filepath.Join(t.TempDir(), "presence.json"))
+	if err := store.SetAgentVersion("device-1", "host-1", "v1.2.3"); err != nil {
+		t.Fatal(err)
+	}
+	device, ok := store.Get("device-1")
+	if !ok {
+		t.Fatal("device was not created")
+	}
+	if device.AgentVersion != "v1.2.3" || device.Hostname != "host-1" || !device.Connected {
+		t.Fatalf("unexpected device after hello: %#v", device)
+	}
+
+	if err := store.SetAgentVersion("device-1", "renamed-host", "v1.2.4"); err != nil {
+		t.Fatal(err)
+	}
+	device, ok = store.Get("device-1")
+	if !ok || device.AgentVersion != "v1.2.4" || device.Hostname != "renamed-host" {
+		t.Fatalf("agent version was not updated: %#v", device)
+	}
+}

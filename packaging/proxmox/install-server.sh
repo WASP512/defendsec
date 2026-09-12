@@ -484,6 +484,11 @@ start_postgres() {
 
 build_binaries() {
   if [[ "$SKIP_BUILD" != "1" ]]; then
+    local release_version
+    release_version="$(git -C "$INSTALL_ROOT" describe --tags --always 2>/dev/null || echo dev)"
+    if [[ "$release_version" =~ ^v[0-9] ]]; then
+      release_version="${release_version#v}"
+    fi
     info "Building apid + agent (${GOARCH}) with $("$GO_BIN" version | awk '{print $3}')"
     su -s /bin/bash defendsec -c "
       set -euo pipefail
@@ -493,9 +498,9 @@ build_binaries() {
       export GOPATH=$(printf %q "${DATA_DIR}/go")
       export GOCACHE=$(printf %q "${DATA_DIR}/go/cache")
       go build -o bin/defendsec-apid ./cmd/defendsec-apid
-      go build -o bin/defendsec-agentd ./cmd/defendsec-agentd
-      GOOS=linux GOARCH=amd64 go build -o bin/defendsec-agentd-linux-amd64 ./cmd/defendsec-agentd
-      GOOS=linux GOARCH=arm64 go build -o bin/defendsec-agentd-linux-arm64 ./cmd/defendsec-agentd
+      go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd ./cmd/defendsec-agentd
+      GOOS=linux GOARCH=amd64 go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-linux-amd64 ./cmd/defendsec-agentd
+      GOOS=linux GOARCH=arm64 go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-linux-arm64 ./cmd/defendsec-agentd
     "
   else
     info "Skipping build (--skip-build)"
@@ -506,12 +511,21 @@ build_binaries() {
   [[ -x "${INSTALL_ROOT}/bin/defendsec-agentd-linux-arm64" ]] || die "missing prebuilt arm64 agent"
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-apid" /usr/local/bin/defendsec-apid
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-agentd" /usr/local/bin/defendsec-agentd
+  if [[ ! -s "${INSTALL_ROOT}/VERSION" ]]; then
+    local installed_version
+    installed_version="$(git -C "$INSTALL_ROOT" describe --tags --always 2>/dev/null || echo dev)"
+    if [[ "$installed_version" =~ ^v[0-9] ]]; then
+      installed_version="${installed_version#v}"
+    fi
+    printf '%s\n' "$installed_version" >"${INSTALL_ROOT}/VERSION"
+  fi
 }
 
 build_console() {
   if [[ "$SKIP_BUILD" == "1" ]]; then
     [[ -f "${INSTALL_ROOT}/.next/standalone/server.js" ]] \
       || die "--skip-build requested but .next/standalone/server.js is missing"
+    ln -sfn "${INSTALL_ROOT}/.next/standalone" "${INSTALL_ROOT}/current-console"
     return
   fi
   info "Building console (Next.js standalone) with Node $("$NODE_BIN" --version)"
@@ -532,11 +546,14 @@ build_console() {
       cp -a public .next/standalone/public
     fi
   "
+  ln -sfn "${INSTALL_ROOT}/.next/standalone" "${INSTALL_ROOT}/current-console"
 }
 
 seed_secrets_and_downloads() {
   info "Writing env files + agent download bundle"
   local db_url="postgres://defendsec:${PG_PASSWORD}@127.0.0.1:5432/defendsec?sslmode=disable"
+  local server_version
+  server_version="$(tr -d '\r\n' <"${INSTALL_ROOT}/VERSION" 2>/dev/null || echo dev)"
 
   # apid needs the enroll secret before it can start, while the console requires
   # apid. Seed their shared store to avoid a first-boot dependency cycle.
@@ -575,11 +592,21 @@ DEFENDSEC_VIEWER_TOKEN=${VIEWER_TOKEN}
 DEFENDSEC_APID_ADMIN=http://127.0.0.1:47264
 DEFENDSEC_DOWNLOADS_DIR=${DOWNLOADS_DIR}
 DEFENDSEC_DATA_DIR=${DATA_DIR}
+DEFENDSEC_VERSION=${server_version}
+DEFENDSEC_UPDATE_REPO=WASP512/defendsec
 # The packaged console is served directly over HTTP. Set true behind an HTTPS proxy.
 DEFENDSEC_COOKIE_SECURE=false
 EOF
   chmod 640 /etc/defendsec/console.env
   chown root:defendsec /etc/defendsec/console.env
+
+  cat >/etc/defendsec/update.env <<EOF
+DEFENDSEC_INSTALL_ROOT=${INSTALL_ROOT}
+DEFENDSEC_DATA_DIR=${DATA_DIR}
+DEFENDSEC_UPDATE_REPO=WASP512/defendsec
+EOF
+  chmod 640 /etc/defendsec/update.env
+  chown root:defendsec /etc/defendsec/update.env
 
   install -d -o defendsec -g defendsec -m 750 "$DATA_DIR"
   printf '%s\n' "$ADMIN_TOKEN" >"${DATA_DIR}/admin-token.txt"
@@ -610,12 +637,22 @@ install_systemd_units() {
   info "Installing systemd units"
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-apid.service" /etc/systemd/system/defendsec-apid.service
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-console.service" /etc/systemd/system/defendsec-console.service
+  install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-update.service" /etc/systemd/system/defendsec-update.service
+  install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-update.path" /etc/systemd/system/defendsec-update.path
+  install -m 0755 "${INSTALL_ROOT}/packaging/proxmox/update-server.sh" /usr/local/sbin/defendsec-update
+
+  mkdir -p /etc/systemd/system/defendsec-update.path.d
+  cat >/etc/systemd/system/defendsec-update.path.d/override.conf <<EOF
+[Path]
+PathExists=
+PathExists=${DATA_DIR}/update-request.json
+EOF
 
   # The shipped unit assumes /usr/bin/node; point it at the node we actually use.
   mkdir -p /etc/systemd/system/defendsec-console.service.d
   cat >/etc/systemd/system/defendsec-console.service.d/override.conf <<EOF
 [Service]
-WorkingDirectory=${INSTALL_ROOT}/.next/standalone
+WorkingDirectory=${INSTALL_ROOT}/current-console
 ExecStart=
 ExecStart=${NODE_BIN} server.js
 ReadWritePaths=${INSTALL_ROOT} ${DATA_DIR}
@@ -649,6 +686,7 @@ EOF
   fi
 
   systemctl daemon-reload
+  systemctl enable --now defendsec-update.path
   systemctl enable --now defendsec-apid
   systemctl enable --now defendsec-console
 

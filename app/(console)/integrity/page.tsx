@@ -2,6 +2,8 @@ import Link from "next/link";
 import { ensureStore } from "@/lib/store";
 import { relativeTime } from "@/lib/format";
 import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
+import { ActivityItem, ActivityList, EmptyState, PageHeader } from "@/components/console-ui";
+import { FileCheck2 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -13,39 +15,45 @@ export default async function IntegrityPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">File integrity</h1>
-        <p className="mt-1 max-w-2xl text-muted-foreground">
+      <PageHeader
+        title="File integrity"
+        description={
+          <>
           The agent hashes watched files each check-in. The first report becomes the baseline.
           Later changes fail policy until you accept the current hashes. This page is the audit
           log; {watched} path{watched === 1 ? "" : "s"} are currently reported.
-        </p>
-      </div>
+          </>
+        }
+      />
       {events.length === 0 ? (
-        <p className="rounded-xl border border-dashed p-10 text-center text-muted-foreground">
-          No integrity drift recorded. Enroll a host and change a watched file to generate an
-          event.
-        </p>
+        <EmptyState
+          title="No integrity drift"
+          description="Enroll a host and change a watched file to generate an event."
+          icon={FileCheck2}
+        />
       ) : (
-        <ul className="divide-y rounded-xl border">
+        <ActivityList>
           {events.map((event) => (
-            <li key={event.id} className="space-y-1 px-4 py-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <p className="font-medium">{event.path}</p>
-                <p className="text-sm text-muted-foreground">{relativeTime(event.detectedAt)}</p>
-              </div>
+            <ActivityItem
+              key={event.id}
+              tone="critical"
+              title={event.path}
+              description={
               <p className="text-sm">
                 <Link href={`/devices/${event.deviceId}`} className="underline">
                   {event.hostname}
                 </Link>
                 {event.sample ? " · sample" : ""}
               </p>
+              }
+              meta={
               <p className="break-all font-mono text-xs text-muted-foreground">
-                {event.previous} → {event.current}
+                {event.previous.slice(0, 16)}… → {event.current.slice(0, 16)}… · {relativeTime(event.detectedAt)}
               </p>
-            </li>
+              }
+            />
           ))}
-        </ul>
+        </ActivityList>
       )}
     </div>
   );

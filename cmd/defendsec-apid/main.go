@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
+	"defendsec/db/migrations"
 	"defendsec/internal/cmdlog"
 	"defendsec/internal/control"
 	"defendsec/internal/db"
@@ -93,17 +94,8 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("postgres: %w", err)
 		}
-		for _, name := range []string{"001_init.sql", "002_alerts.sql", "003_saved_queries.sql", "004_alert_provenance.sql"} {
-			migSQL, err := os.ReadFile(filepath.Join("db", "migrations", name))
-			if err != nil {
-				migSQL, err = os.ReadFile(filepath.Join(*dataDir, "..", "db", "migrations", name))
-			}
-			if err != nil {
-				return fmt.Errorf("read migration %s: %w", name, err)
-			}
-			if err := db.Migrate(context.Background(), pool, string(migSQL)); err != nil {
-				return fmt.Errorf("migrate %s: %w", name, err)
-			}
+		if err := migrations.Apply(context.Background(), pool); err != nil {
+			return fmt.Errorf("postgres migrations: %w", err)
 		}
 		pg := storepg.New(pool)
 		svc.SetPostgres(pg)

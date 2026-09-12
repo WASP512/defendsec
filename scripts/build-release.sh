@@ -8,12 +8,20 @@ OUT="${OUT:-$ROOT/dist}"
 mkdir -p "$OUT"
 
 version="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+release_version="$version"
+if [[ "$release_version" =~ ^v[0-9] ]]; then
+  release_version="${release_version#v}"
+fi
 echo "Building DefendSec ${version}"
 
 build() {
   local os="$1" arch="$2" pkg="$3" outname="$4"
+  local ldflags="-s -w"
+  if [[ "$pkg" == "./cmd/defendsec-agentd" ]]; then
+    ldflags="${ldflags} -X main.agentVersion=${release_version}"
+  fi
   echo "  -> ${outname}"
-  GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "${OUT}/${outname}" "$pkg"
+  GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o "${OUT}/${outname}" "$pkg"
 }
 
 build linux amd64 ./cmd/defendsec-apid "defendsec-apid-linux-amd64"
@@ -22,14 +30,26 @@ build linux amd64 ./cmd/defendsec-agentd "defendsec-agentd-linux-amd64"
 build linux arm64 ./cmd/defendsec-agentd "defendsec-agentd-linux-arm64"
 
 install -m 0644 packaging/agent/install.sh "${OUT}/install-agent.sh"
+install -m 0755 packaging/proxmox/update-server.sh "${OUT}/update-server.sh"
+
+echo "  -> defendsec-console.tar.gz"
+npm ci
+npm run build
+mkdir -p .next/standalone/.next
+cp -a .next/static .next/standalone/.next/static
+if [[ -d public ]]; then
+  cp -a public .next/standalone/public
+fi
+tar -C .next/standalone -czf "${OUT}/defendsec-console.tar.gz" .
+printf '%s\n' "$release_version" >"${OUT}/VERSION"
+
 (
   cd "$OUT"
-  sha256sum defendsec-* install-agent.sh >SHA256SUMS
+  sha256sum defendsec-* install-agent.sh update-server.sh VERSION >SHA256SUMS
 )
 
 echo
 echo "Artifacts in ${OUT}:"
 ls -la "$OUT"
 echo
-echo "Attach agent binaries + install-agent.sh + SHA256SUMS to a GitHub Release,"
-echo "or copy them to /var/lib/defendsec/downloads on your server."
+echo "Attach every file in ${OUT} to a GitHub Release."

@@ -108,6 +108,7 @@ export function publicDevice(device: Device) {
   return {
     id: device.id,
     hostname: device.hostname,
+    agentVersion: device.agentVersion ?? "",
     platform: device.platform,
     osName: device.osName,
     osVersion: device.osVersion,

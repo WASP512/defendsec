@@ -102,6 +102,9 @@ That installs:
 - native Postgres (not Docker)
 
 Re-running this script **keeps** the existing Postgres password, admin token, viewer token, and enroll secret unless you pass replacements.
+It also installs the one-click update helper. After that bootstrap, future
+stable releases can be installed from **Operations → Updates** without SSH,
+Git, Go, Node, or an on-server source build.
 
 Useful flags:
 

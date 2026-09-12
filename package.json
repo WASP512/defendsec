@@ -8,12 +8,14 @@
     "build": "next build",
     "start": "next start --port 47261 --hostname 0.0.0.0",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test lib/advisories.test.ts",
+    "test": "node --experimental-strip-types --test lib/*.test.ts",
     "agent": "python3 agent/defendsec-agent.py"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@tanstack/react-table": "9.2.4",
     "class-variance-authority": "^0.7.1",
+    "cmdk": "^1.1.1",
     "cn": "^0.2.6",
     "lucide-react": "^1.43.0",
     "next": "16.3.4",

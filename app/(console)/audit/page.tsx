@@ -1,6 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { databaseURL, listAudit } from "@/lib/pg";
+import { databaseURL, isMissingRelationError, listAudit } from "@/lib/pg";
 import { relativeTime } from "@/lib/format";
+import { ActivityItem, ActivityList, EmptyState, PageHeader } from "@/components/console-ui";
+import { ScrollText } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -8,24 +10,30 @@ export default async function AuditPage() {
   const configured = Boolean(databaseURL());
   let events: Awaited<ReturnType<typeof listAudit>> = [];
   let error = "";
+  let storageSetupRequired = false;
   if (configured) {
     try {
       events = await listAudit(150);
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Could not read audit log";
+      storageSetupRequired = isMissingRelationError(cause);
+      if (!storageSetupRequired) {
+        error = cause instanceof Error ? cause.message : "Could not read audit log";
+      }
     }
   }
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Audit</h1>
-        <p className="mt-1 text-muted-foreground">
+      <PageHeader
+        title="Audit"
+        description={
+          <>
           Control-plane actions written to Postgres when{" "}
           <code className="text-foreground">DATABASE_URL</code> /{" "}
           <code className="text-foreground">DEFENDSEC_DATABASE_URL</code> is set.
-        </p>
-      </div>
+          </>
+        }
+      />
 
       {!configured ? (
         <Card>
@@ -45,23 +53,43 @@ export default async function AuditPage() {
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-      {configured && !error && events.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No audit events yet.</p>
+      {storageSetupRequired ? (
+        <EmptyState
+          title="Audit storage needs setup"
+          description="Restart the control plane with DEFENDSEC_DATABASE_URL configured. DefendSec now applies embedded migrations automatically at startup."
+          icon={ScrollText}
+          action={<code className="rounded-md bg-muted px-3 py-2 text-xs">sudo systemctl restart defendsec-apid</code>}
+          compact
+        />
       ) : null}
 
-      <ul className="divide-y rounded-xl border">
+      {configured && !error && !storageSetupRequired && events.length === 0 ? (
+        <EmptyState
+          title="No audit events"
+          description="Control-plane activity appears here after an admin action."
+          icon={ScrollText}
+          compact
+        />
+      ) : null}
+
+      <ActivityList>
         {events.map((event) => (
-          <li key={event.id} className="px-4 py-3 text-sm">
-            <p className="font-medium">
+          <ActivityItem
+            key={event.id}
+            title={
+              <>
               {event.action} · {event.actor}
               {event.deviceId ? ` · ${event.deviceId}` : ""}
-            </p>
+              </>
+            }
+            meta={
             <p className="text-muted-foreground">
               {relativeTime(event.at)} · {JSON.stringify(event.detail ?? {})}
             </p>
-          </li>
+            }
+          />
         ))}
-      </ul>
+      </ActivityList>
     </div>
   );
 }
