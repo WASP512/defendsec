@@ -32,6 +32,10 @@ Full walkthrough, Linux-VM install, uninstall, and troubleshooting: **[docs/INST
 
 Day-to-day backup, logs, viewers, and reverse proxy: **[docs/OPERATIONS.md](docs/OPERATIONS.md)**.
 
+Architecture, security model, complete feature walkthrough, and operator guide:
+**[Download the DefendSec Technical White Paper (PDF)](docs/DefendSec-Technical-White-Paper.pdf)**
+or **[view the print source](docs/DEFENDSEC_WHITE_PAPER.html)**.
+
 ## What you get
 
 - Host list with online/offline
