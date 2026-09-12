@@ -276,7 +276,7 @@
         <li><strong>systemd</strong> supervises the console, API daemon, agent, and privileged update workflow.</li>
         <li><strong>Proxmox <code>pct</code></strong> creates and manages the recommended Debian LXC deployment.</li>
         <li><strong>Shell installers</strong> provision verified Go/Node toolchains, packages, directories, credentials, builds, and services.</li>
-        <li><strong>GitHub Actions and Releases</strong> turn <code>v*</code> tags into amd64/arm64 API and agent binaries, a standalone console archive, installer/updater scripts, <code>VERSION</code>, and <code>SHA256SUMS</code>.</li>
+        <li><strong>GitHub Actions and Releases</strong> turn <code>v*</code> tags into amd64/arm64 API and agent binaries, a standalone console archive, the agent installer, the server updater, <code>VERSION</code>, and <code>SHA256SUMS</code>. The first-time server and Proxmox installers remain in the repository.</li>
         <li><strong>Node’s built-in test runner and Go tests</strong> cover release metadata, advisories, cryptography, command bounds, SCA, inventory, PKI, and state behavior.</li>
       </ul>
     </section>
@@ -419,7 +419,7 @@ pct exec 200 -- bash /tmp/defendsec-install-server.sh \
 pct exec 200 -- curl -fsS https://127.0.0.1:47262/healthz -k
 pct exec 200 -- curl -fsS http://127.0.0.1:47261/login &gt;/dev/null
 pct exec 200 -- cat /var/lib/defendsec/admin-token.txt</pre>
-      <p>A healthy install prints both API and console health-check success before returning.</p>
+      <p>The installer itself prints “API health check passed” and “Console health check passed” before returning. The commands above independently inspect service state, probe both listeners, and retrieve the login token.</p>
     </section>
 
     <section id="first-run" class="chapter">
@@ -455,7 +455,7 @@ sudo bash /tmp/install-agent.sh \
 
     <section id="navigation" class="chapter">
       <h1>8. Console navigation</h1>
-      <p>The responsive sidebar groups destinations by operator intent. Collapse it to icons on wide screens or open it with the menu button on narrow screens. The top bar identifies the active page. The command palette provides keyboard navigation, and theme controls support light, dark, or system appearance.</p>
+      <p>The responsive sidebar groups destinations by operator intent. Collapse it to icons on wide screens or open it with the menu button on narrow screens. The top bar identifies the active page. The command palette provides keyboard navigation. Theme defaults to the operating system preference; the toolbar then toggles between light and dark.</p>
       <table>
         <thead><tr><th>Group</th><th>Destination</th><th>Primary question</th></tr></thead>
         <tbody>
@@ -484,9 +484,9 @@ sudo bash /tmp/install-agent.sh \
         <li><strong>Hosts online:</strong> last report is inside the two-minute online window.</li>
         <li><strong>High+ advisories:</strong> open critical or high matches from the local catalog.</li>
         <li><strong>Pending patches:</strong> total package or OS updates reported by agents.</li>
-        <li><strong>Integrity events:</strong> file-integrity activity plus a summary of failed policy checks.</li>
+        <li><strong>Integrity events:</strong> the card value is the historical FIM event count; its subtitle separately reports the fleet-wide count of failed policy checks.</li>
       </ul>
-      <p>The host table provides a quick fleet slice. Administrators can enable or disable sample data in environments where that feature is configured, or jump directly to Enroll.</p>
+      <p>The host table provides a quick fleet slice. Administrators can manually load or remove the sample fleet, or jump directly to Enroll. <code>DEFENDSEC_ENABLE_SAMPLE_DATA</code> separately controls whether an empty store is auto-seeded; packaged production installs leave auto-seeding off.</p>
 
       <h3>Hosts list</h3>
       <p>Use Hosts for the complete endpoint roster. Search and table controls support fleet navigation. Status badges separate online/offline hosts, and selecting a row opens the host detail view.</p>
@@ -511,14 +511,14 @@ sudo bash /tmp/install-agent.sh \
     <section id="alerts" class="chapter">
       <h1>10. Alerts and Advisories</h1>
       <h3>Alerts: the triage inbox</h3>
-      <p>Alerts combine FIM, Security Configuration Assessment, vulnerability, and response-related findings into an operational queue backed by Postgres. Filter by status, severity, kind, or device. Open an item to examine source context and lifecycle history.</p>
+      <p>Alerts combine FIM, Security Configuration Assessment, and vulnerability findings into an operational queue backed by Postgres. Filter by status, severity, kind, or device. Open an item to examine source context and lifecycle history. The filter vocabulary also reserves response and system kinds, but the current control plane does not generate those kinds.</p>
       <p>Administrators can:</p>
       <ul>
         <li><strong>Acknowledge</strong> an alert that is understood but not yet remediated.</li>
         <li><strong>Resolve</strong> an alert when the condition is fixed or dispositioned.</li>
         <li><strong>Reopen</strong> an item when a condition returns or needs further work.</li>
       </ul>
-      <p>Open FIM drift and SCA findings can auto-resolve when later host data demonstrates a return to baseline. Provenance fields preserve the source identity used to correlate recurring observations.</p>
+      <p>Open FIM drift and SCA findings can auto-resolve when later host data demonstrates a return to baseline. Vulnerability alerts can also resolve when later inventory no longer matches the affected version range. Provenance fields preserve the source identity used to correlate recurring observations.</p>
 
       <h3>Advisories: catalog matching</h3>
       <p>Advisories compare reported software names and versions to a local CVE-shaped catalog. Findings indicate that an installed version is below a catalog floor; they are not exploitability guarantees. Use severity and host context to prioritize investigation.</p>
@@ -537,6 +537,7 @@ sudo bash /tmp/install-agent.sh \
 
       <h3>Integrity</h3>
       <p>Integrity compares current SHA-256 hashes against an accepted baseline for a deliberately small set of sensitive system paths. A missing file or changed hash is drift. Open the host to review the exact path, current hash, prior hash, and timestamps.</p>
+      <p>The first successful inventory automatically becomes the initial baseline. <strong>Accept baseline</strong> is for reconciling investigated drift after an authorized change; it is not required during first enrollment.</p>
       <ol>
         <li>Investigate the change on the host.</li>
         <li>If unauthorized, remediate the file and wait for the agent to report the restored state.</li>
@@ -553,7 +554,7 @@ sudo bash /tmp/install-agent.sh \
           <tr><td>Agent checking in</td><td>Inventory received within the last two minutes.</td></tr>
           <tr><td>Disk encryption</td><td>FileVault, BitLocker, or LUKS reported enabled; unknown if the agent cannot determine it.</td></tr>
           <tr><td>Host firewall</td><td>Built-in OS firewall reported enabled.</td></tr>
-          <tr><td>Supported OS</td><td>Current rules recognize macOS 14+, Windows 11/Server 2022/2025, and Ubuntu-like version 22.04+.</td></tr>
+          <tr><td>Supported OS</td><td>Current rules recognize macOS 14+, Windows 11/Server 2022/2025, and Linux version strings that parse as 22.04 or newer.</td></tr>
           <tr><td>No high/critical advisories</td><td>No open serious finding from the local advisory catalog.</td></tr>
           <tr><td>No pending patches</td><td>Patch inventory succeeded and returned no updates.</td></tr>
           <tr><td>Watched files unchanged</td><td>Current hashes match the accepted baseline.</td></tr>
@@ -577,7 +578,7 @@ sudo bash /tmp/install-agent.sh \
       </table>
 
       <h3>Process response</h3>
-      <p>Process response sends <code>SIGTERM</code> to processes whose exact Linux <code>/proc/*/comm</code> name matches the submitted value. Names are syntax-limited, and DefendSec refuses to signal a protected set that includes its own processes, systemd/init, SSH, and the console. It is intentionally narrower than passing a shell command. Review the acknowledgement and command history to confirm acceptance and result.</p>
+      <p>Process response sends <code>SIGTERM</code> to processes whose exact Linux <code>/proc/*/comm</code> name matches the submitted value. Names are syntax-limited, and DefendSec refuses to signal a protected set that includes its own processes, systemd/init, SSH, and the console process (<code>next-server</code>). It is intentionally narrower than passing a shell command. Review the acknowledgement and command history to confirm acceptance and result.</p>
 
       <h3>Live query</h3>
       <p>Choose one of the built-in read-only snapshots:</p>
@@ -604,12 +605,12 @@ sudo bash /tmp/install-agent.sh \
     <section id="audit" class="chapter">
       <h1>13. Audit, Updates, Enroll, and Scope</h1>
       <h3>Audit</h3>
-      <p>Audit provides a chronological record of security-relevant and operator activity available to the console. Use it to reconstruct alert transitions, response activity, enrollment or certificate events, and other recorded changes. Pair application audit with systemd and reverse-proxy logs for a complete operational timeline.</p>
+      <p>Audit provides a chronological record of security-relevant and operator activity when Postgres is configured. Packaged installs configure it by default; custom and development installs without <code>DATABASE_URL</code> or <code>DEFENDSEC_DATABASE_URL</code> show a setup notice because the control-plane audit writer is inactive. Use Audit to reconstruct alert transitions, response activity, enrollment or certificate events, and other recorded changes. Pair application audit with systemd and reverse-proxy logs for a complete operational timeline.</p>
 
       <h3>Updates</h3>
       <p>The page compares the installed server version with the latest stable GitHub release and shows enrolled agent versions by architecture and connectivity.</p>
       <ul>
-        <li><strong>Install and restart:</strong> admin confirmation starts a verified, health-gated server update.</li>
+        <li><strong>Install update:</strong> admin confirmation starts a verified, health-gated server update and service restart.</li>
         <li><strong>Update outdated agents:</strong> queues signed, architecture-matched commands for eligible online agents.</li>
         <li><strong>Status:</strong> the console polls downloading, backing-up, installing, completed, or failed state.</li>
         <li><strong>Viewer behavior:</strong> update availability and progress are visible, but action buttons are disabled.</li>
@@ -725,12 +726,12 @@ sudo systemctl start defendsec-apid defendsec-console</pre>
           <div class="node"><strong>GitHub Release</strong><br><span class="small">Bundles + SHA256SUMS</span></div>
         </div>
       </div>
-      <p>The build produces API and agent binaries for Linux amd64/arm64, a Next.js standalone console archive, agent/server installer scripts, updater script, canonical <code>VERSION</code>, and a checksum manifest. Agent versions are injected at link time.</p>
+      <p>The build produces API and agent binaries for Linux amd64/arm64, a Next.js standalone console archive, the agent installer, server updater, canonical <code>VERSION</code>, and a checksum manifest. The first-time server installer stays in the source repository. Agent versions are injected at link time.</p>
 
       <h3>Server update sequence</h3>
       <ol class="steps">
         <li>The console reads the installed version and latest stable GitHub release, requiring all expected assets.</li>
-        <li>An administrator confirms <strong>Install and restart</strong>. The console writes a narrow request file.</li>
+        <li>An administrator confirms <strong>Install update</strong>. The console writes a narrow request file and the update restarts the services after installation.</li>
         <li>The systemd path unit starts the updater as root and serializes work with a lock.</li>
         <li>The updater validates repository, tag, version, release identity, asset URLs, checksums, and safe archive paths.</li>
         <li>It creates a private pre-upgrade archive of state/PKI and runs <code>pg_dump</code> when a database URL is available.</li>
