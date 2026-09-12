@@ -46,7 +46,9 @@ NODE_MIN="${NODE_MIN:-20.9.0}"
 GO_VERSION="${GO_VERSION:-}"
 NODE_VERSION="${NODE_VERSION:-}"
 GO_BIN=""
+GO_HAVE=""
 NODE_BIN=""
+NODE_HAVE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -219,23 +221,30 @@ verify_sha256() {
   [[ "$got" == "$want" ]] || die "checksum mismatch for $(basename "$file")"
 }
 
-installed_go_version() {
+# These set GO_BIN/NODE_BIN as globals, so they must not be called from a
+# command substitution: the subshell would discard the path and later steps
+# would build with an empty interpreter.
+detect_go() {
+  GO_BIN=""
+  GO_HAVE=""
   local go_cmd
   for go_cmd in /usr/local/go/bin/go "$(command -v go 2>/dev/null || true)"; do
     if [[ -n "$go_cmd" && -x "$go_cmd" ]]; then
       GO_BIN="$go_cmd"
-      "$go_cmd" version 2>/dev/null | awk '{print $3}' | sed 's/^go//'
+      GO_HAVE="$("$go_cmd" version 2>/dev/null | awk '{print $3}' | sed 's/^go//')"
       return
     fi
   done
 }
 
-installed_node_version() {
+detect_node() {
+  NODE_BIN=""
+  NODE_HAVE=""
   local node_cmd
   for node_cmd in /usr/local/bin/node "$(command -v node 2>/dev/null || true)"; do
     if [[ -n "$node_cmd" && -x "$node_cmd" ]]; then
       NODE_BIN="$node_cmd"
-      "$node_cmd" --version 2>/dev/null | sed 's/^v//'
+      NODE_HAVE="$("$node_cmd" --version 2>/dev/null | sed 's/^v//')"
       return
     fi
   done
@@ -253,7 +262,8 @@ ensure_go() {
   fi
 
   local have
-  have="$(installed_go_version)"
+  detect_go
+  have="$GO_HAVE"
   if [[ -n "$have" ]] && version_ge "$have" "$GO_MIN"; then
     info "Using Go ${have} (${GO_BIN})"
     return
@@ -284,7 +294,8 @@ ensure_go() {
 
 ensure_node() {
   local have
-  have="$(installed_node_version)"
+  detect_node
+  have="$NODE_HAVE"
   if [[ -n "$have" ]] && version_ge "$have" "$NODE_MIN" && command -v npm >/dev/null 2>&1; then
     info "Using Node ${have} (${NODE_BIN})"
     return
@@ -496,6 +507,7 @@ build_binaries() {
     if [[ "$release_version" =~ ^v[0-9] ]]; then
       release_version="${release_version#v}"
     fi
+    [[ -x "$GO_BIN" ]] || die "Go toolchain not resolved; rerun the installer"
     info "Building apid + agent (${GOARCH}) with $("$GO_BIN" version | awk '{print $3}')"
     su -s /bin/bash defendsec -c "
       set -euo pipefail
@@ -535,6 +547,7 @@ build_console() {
     ln -sfn "${INSTALL_ROOT}/.next/standalone" "${INSTALL_ROOT}/current-console"
     return
   fi
+  [[ -x "$NODE_BIN" ]] || die "Node toolchain not resolved; rerun the installer"
   info "Building console (Next.js standalone) with Node $("$NODE_BIN" --version)"
   su -s /bin/bash defendsec -c "
     set -euo pipefail
@@ -656,6 +669,7 @@ PathExists=${DATA_DIR}/update-request.json
 EOF
 
   # The shipped unit assumes /usr/bin/node; point it at the node we actually use.
+  [[ -x "$NODE_BIN" ]] || die "Node toolchain not resolved; cannot write console unit"
   mkdir -p /etc/systemd/system/defendsec-console.service.d
   cat >/etc/systemd/system/defendsec-console.service.d/override.conf <<EOF
 [Service]
