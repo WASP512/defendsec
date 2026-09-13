@@ -1,0 +1,871 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DefendSec — Technical White Paper and Operator Guide</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #536078;
+      --line: #d9e0ea;
+      --soft: #f3f6fa;
+      --navy: #101b35;
+      --blue: #2864dc;
+      --cyan: #22b7c9;
+      --green: #17845b;
+      --amber: #a75b0a;
+      --red: #b82939;
+    }
+    * { box-sizing: border-box; }
+    @page {
+      size: Letter;
+      margin: 0.68in 0.62in 0.7in;
+      @bottom-left { content: "DefendSec Technical White Paper"; color: #7b879c; font-size: 8pt; }
+      @bottom-right { content: "Page " counter(page) " of " counter(pages); color: #7b879c; font-size: 8pt; }
+    }
+    html { color: var(--ink); font-family: Inter, "Segoe UI", Arial, sans-serif; font-size: 10.2pt; line-height: 1.48; }
+    body { margin: 0; background: white; }
+    a { color: var(--blue); text-decoration: none; }
+    h1, h2, h3, h4 { color: var(--navy); line-height: 1.18; margin: 0 0 0.5em; page-break-after: avoid; }
+    h1 { font-size: 29pt; letter-spacing: -0.8pt; }
+    h2 { font-size: 19pt; margin-top: 1.1em; padding-bottom: 0.22em; border-bottom: 2px solid var(--cyan); }
+    h3 { font-size: 13.5pt; margin-top: 1em; }
+    h4 { font-size: 10.5pt; text-transform: uppercase; letter-spacing: 0.5pt; margin-top: 0.8em; }
+    p { margin: 0 0 0.62em; }
+    ul, ol { margin: 0.2em 0 0.7em 1.3em; padding: 0; }
+    li { margin: 0.16em 0; }
+    code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 8.7pt; background: #edf1f6; padding: 0.08em 0.26em; border-radius: 3px; }
+    pre { white-space: pre-wrap; word-break: break-word; font: 8.2pt/1.42 "SFMono-Regular", Consolas, monospace; background: #111a2d; color: #f1f5fb; padding: 0.82em 0.95em; border-radius: 7px; margin: 0.45em 0 0.8em; break-inside: avoid; }
+    table { width: 100%; border-collapse: collapse; margin: 0.55em 0 0.95em; font-size: 8.7pt; break-inside: auto; }
+    tr { break-inside: avoid; }
+    th { background: var(--navy); color: white; text-align: left; font-weight: 600; }
+    th, td { border: 1px solid var(--line); padding: 0.42em 0.52em; vertical-align: top; }
+    tbody tr:nth-child(even) { background: var(--soft); }
+    .cover { height: 9.2in; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; color: white; background: linear-gradient(145deg, #0d1830 0%, #162a55 65%, #164d68 100%); margin: -0.68in -0.62in -0.7in; padding: 0.85in 0.75in; }
+    .cover h1 { color: white; font-size: 38pt; max-width: 6.2in; }
+    .cover .subtitle { font-size: 17pt; line-height: 1.35; color: #cbd9f4; max-width: 6.1in; }
+    .cover .kicker { text-transform: uppercase; letter-spacing: 2.2px; font-weight: 700; color: #65d8e3; }
+    .cover .meta { color: #cbd5e5; border-top: 1px solid #64728a; padding-top: 0.35in; display: flex; justify-content: space-between; }
+    .mark { display: flex; align-items: center; gap: 14px; font-size: 20pt; font-weight: 700; }
+    .shield { width: 50px; height: 58px; }
+    .toc { page-break-after: always; }
+    .toc ol { columns: 2; column-gap: 0.55in; margin-left: 1.2em; }
+    .toc li { padding: 0.15em 0; break-inside: avoid; }
+    .chapter { page-break-before: always; }
+    .lead { font-size: 12.2pt; line-height: 1.52; color: #344059; }
+    .callout { border-left: 4px solid var(--blue); background: #edf4ff; padding: 0.7em 0.85em; margin: 0.65em 0 0.9em; break-inside: avoid; }
+    .callout.warning { border-color: var(--amber); background: #fff6e9; }
+    .callout.critical { border-color: var(--red); background: #fff0f2; }
+    .callout.good { border-color: var(--green); background: #eaf8f2; }
+    .callout strong { color: var(--navy); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65em; margin: 0.6em 0 0.9em; }
+    .card { border: 1px solid var(--line); border-radius: 8px; padding: 0.7em 0.78em; break-inside: avoid; }
+    .card h3, .card h4 { margin-top: 0; }
+    .label { display: inline-block; font-size: 7.4pt; font-weight: 700; text-transform: uppercase; letter-spacing: .45px; border-radius: 99px; padding: .16em .55em; margin-right: .25em; background: #dbe8ff; color: #174caa; }
+    .label.green { background: #dcefe7; color: #116743; }
+    .label.amber { background: #f9e8cd; color: #8d4c0b; }
+    .label.red { background: #f8dde1; color: #9e2030; }
+    .diagram { border: 1px solid var(--line); background: var(--soft); border-radius: 10px; padding: 0.75em; margin: 0.7em 0 1em; break-inside: avoid; }
+    .flow { display: grid; grid-template-columns: 1fr 35px 1fr 35px 1fr; align-items: center; text-align: center; gap: 5px; }
+    .flow .node { background: white; border: 1px solid #afbdd2; border-radius: 7px; padding: .65em .35em; min-height: 54px; }
+    .flow .arrow { color: var(--blue); font-size: 18pt; font-weight: bold; }
+    .caption { font-size: 8pt; color: var(--muted); margin-top: 0.4em; text-align: center; }
+    .steps { counter-reset: step; margin-left: 0; list-style: none; }
+    .steps > li { counter-increment: step; position: relative; padding: 0 0 .75em 2.25em; min-height: 2em; }
+    .steps > li::before { content: counter(step); position: absolute; left: 0; top: -.08em; width: 1.6em; height: 1.6em; border-radius: 50%; background: var(--blue); color: white; text-align: center; line-height: 1.6em; font-weight: 700; }
+    .page-note { font-size: 8pt; color: var(--muted); }
+    .small { font-size: 8.5pt; color: var(--muted); }
+    .keep { break-inside: avoid; }
+    .checklist li { list-style: "✓  "; padding-left: .2em; }
+    .mono { font-family: "SFMono-Regular", Consolas, monospace; font-size: 8.5pt; }
+    .end { text-align: center; margin-top: 1.4in; color: var(--muted); }
+    @media screen {
+      body { max-width: 8.5in; margin: 20px auto; box-shadow: 0 0 28px #a9b2c0; }
+      .cover { margin: 0; height: 11in; }
+      main { padding: .65in; }
+    }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <div>
+      <div class="mark">
+        <svg class="shield" viewBox="0 0 64 74" aria-hidden="true">
+          <path d="M32 2 59 13v20c0 19-10 31-27 39C15 64 5 52 5 33V13L32 2Z" fill="#24b8c9"/>
+          <path d="M32 11 50 18v15c0 13-6 22-18 29-12-7-18-16-18-29V18l18-7Z" fill="#101b35"/>
+          <path d="m22 35 7 7 14-17" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        DefendSec
+      </div>
+      <p class="kicker" style="margin-top:1.15in">Technical white paper</p>
+      <h1>Self-hosted host security, explained end to end</h1>
+      <p class="subtitle">Architecture, trust model, deployment, operations, and a complete operator walkthrough</p>
+    </div>
+    <div>
+      <p style="max-width:5.8in;color:#dbe6f8">A practical guide for evaluators, administrators, and security operators who want to understand not only how to use DefendSec, but how its components communicate and where its security boundaries live.</p>
+      <div class="meta">
+        <span>Version 1.0 · September 2026</span>
+        <span>github.com/WASP512/defendsec</span>
+      </div>
+    </div>
+  </section>
+
+  <main>
+    <section>
+      <h1>About this document</h1>
+      <p class="lead">DefendSec is a self-hosted security inventory and host-detection platform. One server receives inventory and security telemetry from agents that you deliberately enroll. The browser console turns that data into fleet status, policy checks, alerts, advisory matches, file-integrity drift, audit history, and operator-approved response workflows.</p>
+      <div class="callout">
+        <strong>Product boundary.</strong> DefendSec is not mobile-device management. It does not provide remote wipe, device lock, Apple DEP/ABM, Windows CSP, configuration profiles, or an arbitrary remote shell. It is designed to answer “what is on this host, is it healthy, what changed, and what bounded action should an operator take?”
+      </div>
+      <p>This paper documents the current open-source implementation. Configuration examples use the packaged defaults and a Proxmox container ID of <code>200</code>; replace example addresses, hostnames, and identifiers for your environment.</p>
+      <p class="small"><strong>Security notice:</strong> commands that expose tokens or enrollment secrets should be run only in a trusted administrative session. Never paste those values into tickets, chat, screenshots, or shell history shared with others.</p>
+    </section>
+
+    <section class="toc">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#executive">Executive overview</a></li>
+        <li><a href="#architecture">System architecture</a></li>
+        <li><a href="#technology">Technology stack</a></li>
+        <li><a href="#security">Security and trust model</a></li>
+        <li><a href="#data">Data and persistence</a></li>
+        <li><a href="#install">Installation</a></li>
+        <li><a href="#first-run">First login and enrollment</a></li>
+        <li><a href="#navigation">Console navigation</a></li>
+        <li><a href="#fleet">Fleet and Hosts</a></li>
+        <li><a href="#alerts">Alerts and Advisories</a></li>
+        <li><a href="#inventory">Patches, Versions, Integrity, Policies</a></li>
+        <li><a href="#response">Signed host response</a></li>
+        <li><a href="#audit">Audit, Updates, Enroll, Scope</a></li>
+        <li><a href="#workflows">Operator workflows</a></li>
+        <li><a href="#operations">Production operations</a></li>
+        <li><a href="#release">Release and update mechanics</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+        <li><a href="#limitations">Limitations and design tradeoffs</a></li>
+        <li><a href="#reference">Reference</a></li>
+      </ol>
+    </section>
+
+    <section id="executive" class="chapter">
+      <h1>1. Executive overview</h1>
+      <p class="lead">DefendSec puts a small, explicit trust domain around your fleet. The server and database stay in infrastructure you control. Agents authenticate with client certificates, inventory flows over mTLS gRPC, and active-response commands must carry a valid Ed25519 signature.</p>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>What it observes</h3>
+          <ul>
+            <li>OS, hardware, addresses, user, uptime, and online state</li>
+            <li>Installed software versions and pending package updates</li>
+            <li>Firewall and disk-encryption state</li>
+            <li>SHA-256 hashes for watched files</li>
+            <li>Security Configuration Assessment results</li>
+            <li>Local vulnerability-catalog matches</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>What operators can do</h3>
+          <ul>
+            <li>Triage, acknowledge, resolve, and reopen alerts</li>
+            <li>Accept an intentional file-integrity baseline</li>
+            <li>Run allowlisted, read-only live queries</li>
+            <li>Issue signed containment and response commands</li>
+            <li>Revoke a host certificate</li>
+            <li>Approve server and agent updates</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>Design principles</h3>
+      <table>
+        <thead><tr><th>Principle</th><th>How the implementation applies it</th></tr></thead>
+        <tbody>
+          <tr><td>Self-hosted by default</td><td>No vendor account or mandatory cloud service. The console, API, PKI, state, and Postgres run in your VM or LXC.</td></tr>
+          <tr><td>Explicit enrollment</td><td>An agent needs the current enrollment secret to receive a certificate. After enrollment, routine traffic uses mTLS identity.</td></tr>
+          <tr><td>Bounded response</td><td>The agent implements named command types and allowlisted queries/scripts. There is no general-purpose shell command.</td></tr>
+          <tr><td>Operator approval</td><td>Destructive or disruptive actions use confirmations; updates are never silently installed.</td></tr>
+          <tr><td>Inspectable operation</td><td>Commands, acknowledgements, alerts, inventory, and relevant operator activity are retained for review.</td></tr>
+          <tr><td>Honest scope</td><td>The console includes a Scope page and documentation that distinguish security inventory from MDM and enterprise EDR.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="architecture" class="chapter">
+      <h1>2. System architecture</h1>
+      <p>DefendSec separates presentation, control, persistence, and endpoint execution. A typical packaged deployment runs the web console, Go API daemon, and PostgreSQL together in a Debian 12 LXC or Linux VM. Agents run on enrolled hosts.</p>
+
+      <div class="diagram">
+        <div class="flow">
+          <div class="node"><strong>Operator browser</strong><br><span class="small">Next.js console · HTTP 47261</span></div>
+          <div class="arrow">→</div>
+          <div class="node"><strong>Console + API proxy</strong><br><span class="small">Token session · localhost admin API</span></div>
+          <div class="arrow">→</div>
+          <div class="node"><strong>defendsec-apid</strong><br><span class="small">Go control plane · 47262–47264</span></div>
+        </div>
+        <div style="height:18px;border-left:2px solid #2864dc;margin-left:50%"></div>
+        <div class="flow">
+          <div class="node"><strong>PostgreSQL</strong><br><span class="small">Alerts · audit · queries · metadata</span></div>
+          <div class="arrow">↔</div>
+          <div class="node"><strong>State + PKI</strong><br><span class="small">/var/lib/defendsec</span></div>
+          <div class="arrow">↔</div>
+          <div class="node"><strong>Enrolled agents</strong><br><span class="small">mTLS gRPC · inventory + commands</span></div>
+        </div>
+        <p class="caption">Logical topology. The browser does not connect directly to Postgres or the agent gRPC endpoint.</p>
+      </div>
+
+      <h3>Server processes</h3>
+      <table>
+        <thead><tr><th>Component</th><th>Responsibility</th><th>Default exposure</th></tr></thead>
+        <tbody>
+          <tr><td><code>defendsec-console</code></td><td>Next.js standalone application, authentication UI, server-rendered console, agent downloads, and API routes that enforce session roles.</td><td><code>0.0.0.0:47261</code>, HTTP</td></tr>
+          <tr><td><code>defendsec-apid</code></td><td>Enrollment, local CA, gRPC agent hub, inventory/presence, alert and command APIs, signing, Postgres migrations, and persistence.</td><td>HTTPS enrollment <code>47262</code>; mTLS gRPC <code>47263</code>; admin API <code>127.0.0.1:47264</code></td></tr>
+          <tr><td>PostgreSQL</td><td>Durable alerts, alert events/provenance, saved queries, metadata, and related operational records.</td><td><code>127.0.0.1:5432</code></td></tr>
+          <tr><td><code>defendsec-update.path</code></td><td>Root-owned systemd path unit that triggers the privileged updater when the console writes an approved request file.</td><td>Local systemd boundary only</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Agent processes</h3>
+      <p>The preferred Go agent, <code>defendsec-agentd</code>, collects inventory, maintains the mTLS control stream, watches selected files, evaluates SCA checks, verifies command signatures, executes only recognized command types, and reports acknowledgements. Defaults are a 20-second unary heartbeat, 60-second full inventory report, and 30-second gRPC keepalive with reconnect backoff. Linux SCA packs cover baseline host and SSH checks. The legacy Python HTTP agent remains useful for inventory-only labs but cannot receive signed commands.</p>
+
+      <h3>Communication paths</h3>
+      <table>
+        <thead><tr><th>Path</th><th>Protocol</th><th>Authentication / purpose</th></tr></thead>
+        <tbody>
+          <tr><td>Browser → console</td><td>HTTP or reverse-proxied HTTPS</td><td>Admin or viewer token exchanged for an HTTP-only session cookie.</td></tr>
+          <tr><td>Console → admin API</td><td>HTTP on localhost</td><td>Server-side proxy forwards the configured administrative token; port 47264 remains loopback-only.</td></tr>
+          <tr><td>New agent → enrollment</td><td>HTTPS</td><td>Enrollment secret authorizes initial certificate issuance on port 47262.</td></tr>
+          <tr><td>Agent → control plane</td><td>Bidirectional gRPC over mTLS</td><td>Client certificate identifies the enrolled node on port 47263.</td></tr>
+          <tr><td>Control plane → agent</td><td>Protobuf command on the gRPC stream</td><td>Ed25519 signature, device binding, issue time, and expiry are verified before execution.</td></tr>
+          <tr><td>Updater → GitHub Releases</td><td>HTTPS</td><td>Release metadata and files are downloaded, then validated against <code>SHA256SUMS</code>.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="technology" class="chapter">
+      <h1>3. Technology stack</h1>
+      <h3>Web console</h3>
+      <table>
+        <thead><tr><th>Technology</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td>Next.js 16 App Router</td><td>Standalone production server, React Server Components, dynamic console pages, API routes, authentication redirects, and response caching controls.</td></tr>
+          <tr><td>React 19 + TypeScript 5</td><td>Typed component model and interactive client workflows.</td></tr>
+          <tr><td>Tailwind CSS 4</td><td>Responsive layout, color tokens, spacing, and print-independent application styling.</td></tr>
+          <tr><td>Base UI + shadcn-style components</td><td>Accessible dialogs, menus, selects, tables, tooltips, sidebar, badges, cards, and form primitives.</td></tr>
+          <tr><td>TanStack Table</td><td>Sortable, filterable, and paginated fleet-style data tables.</td></tr>
+          <tr><td>cmdk + Lucide</td><td>Keyboard command palette and consistent iconography.</td></tr>
+          <tr><td><code>pg</code></td><td>Server-side Postgres reads needed by selected console routes.</td></tr>
+        </tbody>
+      </table>
+      <p>The Next.js configuration also emits defensive browser headers including <code>X-Content-Type-Options</code>, <code>X-Frame-Options</code>, a referrer policy, permissions policy, and cross-origin opener policy.</p>
+
+      <h3>Control plane and endpoint</h3>
+      <table>
+        <thead><tr><th>Technology</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td>Go 1.22+</td><td>Produces static-friendly server and agent binaries with predictable memory and process behavior.</td></tr>
+          <tr><td>gRPC + Protocol Buffers</td><td>Typed heartbeat, inventory, hello, bidirectional command, ping, and acknowledgement messages.</td></tr>
+          <tr><td>Go TLS / X.509</td><td>Local CA, client identity, TLS service certificates, certificate fingerprinting, and revocation enforcement.</td></tr>
+          <tr><td>Ed25519</td><td>Signs canonical command content at the server and verifies it at the endpoint.</td></tr>
+          <tr><td>pgx</td><td>Postgres connectivity and transaction handling in the control plane.</td></tr>
+          <tr><td>fsnotify</td><td>Event-driven file-integrity observation in addition to inventory-time hashing.</td></tr>
+          <tr><td>YAML</td><td>Security Configuration Assessment pack definitions.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Packaging and delivery</h3>
+      <ul>
+        <li><strong>systemd</strong> supervises the console, API daemon, agent, and privileged update workflow.</li>
+        <li><strong>Proxmox <code>pct</code></strong> creates and manages the recommended Debian LXC deployment.</li>
+        <li><strong>Shell installers</strong> provision verified Go/Node toolchains, packages, directories, credentials, builds, and services.</li>
+        <li><strong>Endpoint service packaging</strong> includes the production Linux systemd unit and installer plus a macOS launchd plist; Windows packaging remains a placeholder rather than a complete supported service installer.</li>
+        <li><strong>GitHub Actions and Releases</strong> turn <code>v*</code> tags into amd64/arm64 API and agent binaries, a standalone console archive, the agent installer, the server updater, <code>VERSION</code>, and <code>SHA256SUMS</code>. The first-time server and Proxmox installers remain in the repository.</li>
+        <li><strong>Node’s built-in test runner and Go tests</strong> cover release metadata, advisories, cryptography, command bounds, SCA, inventory, PKI, and state behavior.</li>
+      </ul>
+    </section>
+
+    <section id="security" class="chapter">
+      <h1>4. Security and trust model</h1>
+      <p class="lead">DefendSec uses several independent controls: operator tokens for the browser, a one-time enrollment secret for certificate issuance, mTLS for ongoing agent identity, Ed25519 for command authenticity, allowlists for endpoint actions, and operating-system boundaries for privileged updates.</p>
+
+      <h3>Identity lifecycle</h3>
+      <ol class="steps">
+        <li><strong>Bootstrap.</strong> The installer creates a random admin token, enrollment secret, local CA, server certificate, and command-signing key where needed.</li>
+        <li><strong>Enroll.</strong> An agent presents the enrollment secret over HTTPS and receives a client certificate and the trust material required for mTLS.</li>
+        <li><strong>Operate.</strong> The agent connects over mTLS. Its certificate identity is used to associate inventory and command traffic with the node.</li>
+        <li><strong>Respond.</strong> The API signs a device-bound, time-bounded command. The agent verifies the signature and command type before acting.</li>
+        <li><strong>Revoke.</strong> An administrator revokes the certificate. The live stream is dropped and the endpoint must clear local identity state and re-enroll.</li>
+      </ol>
+
+      <h3>PKI parameters and bootstrap</h3>
+      <p>The local CA and server keys use ECDSA P-256. The CA certificate is created for ten years, server certificates for one year, and agent client certificates for 90 days. The enrollment and gRPC listeners require TLS 1.3 or newer; gRPC requires and verifies the client certificate. Agent identity is the issued certificate’s device-ID common name plus a SHA-256 certificate fingerprint used by revocation checks.</p>
+      <p>Initial CA retrieval uses trust on first use (TOFU): the new agent fetches the CA before it has an existing trust anchor, immediately pins that CA locally, and then verifies the enrollment request and all later HTTPS/gRPC connections against the pinned CA and configured server name. Because the first fetch is the bootstrap trust moment, enroll only across a network path you trust.</p>
+
+      <h3>Browser roles</h3>
+      <table>
+        <thead><tr><th>Capability</th><th>Admin token</th><th>Viewer token</th></tr></thead>
+        <tbody>
+          <tr><td>View fleet, inventory, findings, policies, audit, and update status</td><td>Yes</td><td>Yes</td></tr>
+          <tr><td>Enroll hosts or rotate the enrollment secret</td><td>Yes</td><td>No</td></tr>
+          <tr><td>Change alert/finding status or accept baselines</td><td>Yes</td><td>No</td></tr>
+          <tr><td>Issue signed response commands or revoke certificates</td><td>Yes</td><td>No</td></tr>
+          <tr><td>Approve server or agent updates</td><td>Yes</td><td>No</td></tr>
+        </tbody>
+      </table>
+      <p>Successful login stores the supplied token in the <code>defendsec_admin</code> cookie for up to 14 days. The cookie is HTTP-only and SameSite=Lax. Its Secure setting follows <code>DEFENDSEC_COOKIE_SECURE</code>, defaulting to the production runtime mode; packaged direct-HTTP installs configure the compatible value, while HTTPS reverse-proxy deployments should set it to true.</p>
+
+      <h3>Command protections</h3>
+      <div class="grid-2">
+        <div class="card">
+          <h4>Authenticity</h4>
+          <p>Commands carry an Ed25519 signature over canonical fields. Unsigned or modified commands fail verification.</p>
+        </div>
+        <div class="card">
+          <h4>Scope</h4>
+          <p>The signed content includes the target device identifier, preventing replay to another endpoint.</p>
+        </div>
+        <div class="card">
+          <h4>Freshness</h4>
+          <p>Issue and expiry timestamps bound the window in which a captured command can be accepted. The server issues commands with a two-minute expiry.</p>
+        </div>
+        <div class="card">
+          <h4>Capability</h4>
+          <p>The agent switches on named command types. Live queries and scripts use allowlists; no arbitrary shell is exposed.</p>
+        </div>
+      </div>
+      <p>The endpoint also keeps an in-memory replay cache of the most recent command identifiers and rejects a duplicate after signature and device checks. The cache is bounded to 256 identifiers; timestamp validation independently limits stale replays.</p>
+
+      <div class="callout warning">
+        <strong>Network isolation is opt-in.</strong> “Isolate host” always updates DefendSec’s containment state. It changes iptables only when the agent runs as root and <code>DEFENDSEC_ISOLATE_NET=1</code> is configured. Test isolation and recovery on a noncritical host before production use.
+      </div>
+
+      <h3>Network boundary</h3>
+      <p>Expose ports 47261–47263 only to the people and agents that need them. Keep port 47264 and Postgres on loopback. Port 47261 is plain HTTP by default; on any network where token interception is plausible, terminate HTTPS at a trusted reverse proxy and enable secure cookies.</p>
+
+      <h3>Update privilege boundary</h3>
+      <p>The web console does not execute a root updater directly. An approved admin request is atomically written as <code>/var/lib/defendsec/update-request.json</code>. A root-owned systemd path unit notices that one file and starts a constrained oneshot service. The updater validates release identity, repository and URL shape, checksums, archive paths, expected assets, and health before retaining the new version.</p>
+    </section>
+
+    <section id="data" class="chapter">
+      <h1>5. Data and persistence</h1>
+      <h3>Server filesystem</h3>
+      <table>
+        <thead><tr><th>Location</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td><code>/opt/defendsec</code></td><td>Source/build tree, installed version marker, release trees, and the current standalone-console symlink.</td></tr>
+          <tr><td><code>/var/lib/defendsec</code></td><td>Admin token, JSON state, enrollment data, PKI, command records, agent download bundle, update status, and backups.</td></tr>
+          <tr><td><code>/etc/defendsec/apid.env</code></td><td>Control-plane environment including database URL and configured tokens.</td></tr>
+          <tr><td><code>/etc/defendsec/console.env</code></td><td>Console environment, cookie policy, public URL, installed version, and update repository.</td></tr>
+          <tr><td><code>/etc/defendsec/update.env</code></td><td>Updater repository, architecture, roots, and state path.</td></tr>
+          <tr><td><code>/usr/local/bin</code></td><td>Installed API and agent executables.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Agent filesystem</h3>
+      <table>
+        <thead><tr><th>Location</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td><code>/usr/local/bin/defendsec-agentd</code></td><td>Preferred Go endpoint agent.</td></tr>
+          <tr><td><code>/etc/defendsec/agentd.env</code></td><td>Server endpoints, TLS server name, state directory, and optional behavior flags.</td></tr>
+          <tr><td><code>/etc/defendsec/enroll-secret</code></td><td>Enrollment bootstrap secret; protect as root-readable configuration.</td></tr>
+          <tr><td><code>/var/lib/defendsec-agent</code></td><td>Private node key, issued certificate, CA material, and agent state.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Postgres and migrations</h3>
+      <p>The Go server embeds SQL migrations into the binary and applies them while holding a Postgres advisory transaction lock. Migrations create and evolve alert, provenance, saved-query, and metadata storage. The packaged deployment uses native PostgreSQL by default and verifies the application login during installation. Docker Postgres remains an explicit alternative.</p>
+      <p>Some inventory and presence data also has a filesystem representation under <code>/var/lib/defendsec</code>. Console server loaders merge live mTLS data with stored records and return public projections that omit secrets.</p>
+
+      <h3>Retention</h3>
+      <table>
+        <thead><tr><th>Data</th><th>Default</th><th>Environment variable</th></tr></thead>
+        <tbody>
+          <tr><td>Resolved alerts</td><td>90 days</td><td><code>DEFENDSEC_ALERT_RETENTION_DAYS</code></td></tr>
+          <tr><td>Live-query results</td><td>30 days</td><td><code>DEFENDSEC_LIVE_QUERY_RETENTION_DAYS</code></td></tr>
+        </tbody>
+      </table>
+      <p>Pruning occurs when the API daemon starts. Build an external backup and retention schedule around your operational and compliance requirements.</p>
+    </section>
+
+    <section id="install" class="chapter">
+      <h1>6. Installation</h1>
+      <h3>Recommended: Proxmox LXC</h3>
+      <p>Run this on the Proxmox VE host as root. It selects a Debian 12 template, creates an unprivileged container by default, provisions resources, transfers the server installer, and executes it inside the container.</p>
+      <pre>curl -fL --progress-bar \
+  https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh \
+  -o /tmp/defendsec.sh
+bash /tmp/defendsec.sh</pre>
+      <p>Common overrides:</p>
+      <pre>CTID=210 \
+CT_HOSTNAME=defendsec \
+TEMPLATE_STORAGE=local \
+STORAGE=local-lvm \
+BRIDGE=vmbr0 \
+bash /tmp/defendsec.sh</pre>
+      <div class="callout warning">
+        <strong>Storage types matter.</strong> LXC templates require storage with <code>vztmpl</code> content (commonly <code>local</code>). Container disks require <code>rootdir</code> content (commonly <code>local-lvm</code>). Do not send a template to LVM-thin.
+      </div>
+
+      <h3>Linux VM or existing container</h3>
+      <pre>curl -fL --progress-bar \
+  https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh \
+  -o /tmp/defendsec-install-server.sh
+sudo bash /tmp/defendsec-install-server.sh --advertise-hostname defendsec</pre>
+      <p>Supported packaged targets are Debian, Ubuntu, Fedora, and related handled distributions. Native Postgres is the default. The installer preserves an existing database password, admin/viewer tokens, enrollment secret, and PKI on re-run unless replacements are explicitly passed.</p>
+
+      <h3>Reinstall inside an existing Proxmox container</h3>
+      <pre># Run on the Proxmox host; replace 200 with the real CTID.
+curl -fL --progress-bar \
+  https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh \
+  -o /tmp/defendsec-install-server.sh
+pct push 200 /tmp/defendsec-install-server.sh /tmp/defendsec-install-server.sh
+pct exec 200 -- bash /tmp/defendsec-install-server.sh \
+  --advertise-hostname defendsec</pre>
+      <p>Re-running the server installer refreshes software inside the container. Running <code>ct/defendsec.sh</code> creates another container; it is not the upgrade path.</p>
+
+      <h3>Verify the server</h3>
+      <pre>pct exec 200 -- systemctl status defendsec-apid defendsec-console --no-pager
+pct exec 200 -- curl -fsS https://127.0.0.1:47262/healthz -k
+pct exec 200 -- curl -fsS http://127.0.0.1:47261/login &gt;/dev/null
+pct exec 200 -- cat /var/lib/defendsec/admin-token.txt</pre>
+      <p>The installer itself prints “API health check passed” and “Console health check passed” before returning. The commands above independently inspect service state, probe both listeners, and retrieve the login token.</p>
+    </section>
+
+    <section id="first-run" class="chapter">
+      <h1>7. First login and enrollment</h1>
+      <ol class="steps">
+        <li><strong>Open the console.</strong> Browse to <code>http://&lt;server-ip&gt;:47261</code>. The packaged port is HTTP; using HTTPS directly produces an SSL protocol error unless a reverse proxy terminates TLS.</li>
+        <li><strong>Retrieve the admin token.</strong> On Proxmox, run <code>pct exec 200 -- cat /var/lib/defendsec/admin-token.txt</code>. On a VM, run <code>sudo cat /var/lib/defendsec/admin-token.txt</code>.</li>
+        <li><strong>Sign in.</strong> There is no username. Paste the token. The server creates an HTTP-only session cookie and redirects to Fleet.</li>
+        <li><strong>Open Enroll.</strong> Copy the generated command. It already contains the server URLs, TLS server name, download base, and enrollment secret.</li>
+        <li><strong>Run it on the endpoint.</strong> Use <code>sudo</code> on each Linux amd64 or arm64 host you intend to manage. Do not run the Proxmox container creator on endpoints.</li>
+        <li><strong>Confirm presence.</strong> Open Hosts. A successful agent normally appears within roughly one minute and is considered online while its latest report is less than two minutes old.</li>
+      </ol>
+
+      <h3>Representative agent install</h3>
+      <pre>curl -fL --progress-bar \
+  "http://SERVER:47261/downloads/install-agent.sh" \
+  -o /tmp/install-agent.sh
+sudo bash /tmp/install-agent.sh \
+  --server-http "https://SERVER:47262" \
+  --server-grpc "SERVER:47263" \
+  --tls-server-name "defendsec" \
+  --enroll-secret "REDACTED" \
+  --download-base "http://SERVER:47261/downloads"</pre>
+      <p><code>--tls-server-name</code> must match a DNS name or IP address in the server certificate. Use the hostname advertised during server installation.</p>
+
+      <h3>Offline agent installation</h3>
+      <p>Copy the architecture-specific binary and installer from <code>/var/lib/defendsec/downloads</code>, then pass <code>--binary</code> to the installer with the same service endpoints and enrollment inputs.</p>
+
+      <div class="callout critical">
+        <strong>Enrollment secret is not a login token.</strong> It authorizes certificate issuance. Treat it as a fleet bootstrap secret, rotate it if exposed, and use certificate revocation for a specific lost or decommissioned endpoint.
+      </div>
+    </section>
+
+    <section id="navigation" class="chapter">
+      <h1>8. Console navigation</h1>
+      <p>The responsive sidebar groups destinations by operator intent. Collapse it to icons on wide screens or open it with the menu button on narrow screens. The top bar identifies the active page. The command palette provides keyboard navigation. Theme defaults to the operating system preference; the toolbar then toggles between light and dark.</p>
+      <table>
+        <thead><tr><th>Group</th><th>Destination</th><th>Primary question</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="4">Monitor</td><td>Fleet</td><td>What is the overall security posture right now?</td></tr>
+          <tr><td>Hosts</td><td>Which endpoints are enrolled and what does each report?</td></tr>
+          <tr><td>Alerts</td><td>What requires triage or response?</td></tr>
+          <tr><td>Advisories</td><td>Which installed versions match the local vulnerability catalog?</td></tr>
+          <tr><td rowspan="4">Inventory</td><td>Patches</td><td>Which updates are pending across hosts?</td></tr>
+          <tr><td>Versions</td><td>Which software versions are deployed and where?</td></tr>
+          <tr><td>Integrity</td><td>Which watched files differ from accepted baselines?</td></tr>
+          <tr><td>Policies</td><td>Which posture checks pass, fail, or remain unknown?</td></tr>
+          <tr><td rowspan="4">Operations</td><td>Audit</td><td>What security and operator activity occurred?</td></tr>
+          <tr><td>Updates</td><td>Is the server or any agent behind the latest stable release?</td></tr>
+          <tr><td>Enroll</td><td>How do I add a host or rotate enrollment?</td></tr>
+          <tr><td>Scope</td><td>What does DefendSec intentionally do and not do?</td></tr>
+        </tbody>
+      </table>
+      <p>Viewer sessions show a persistent banner, hide Enroll, and remove mutation controls. Signing out clears the session through the logout endpoint.</p>
+    </section>
+
+    <section id="fleet" class="chapter">
+      <h1>9. Fleet and Hosts</h1>
+      <h3>Fleet dashboard</h3>
+      <p>Fleet is the first operational view after login. Four summary cards answer immediate questions:</p>
+      <ul>
+        <li><strong>Hosts online:</strong> last report is inside the two-minute online window.</li>
+        <li><strong>High+ advisories:</strong> open critical or high matches from the local catalog.</li>
+        <li><strong>Pending patches:</strong> total package or OS updates reported by agents.</li>
+        <li><strong>Integrity events:</strong> the card value is the historical FIM event count; its subtitle separately reports the fleet-wide count of failed policy checks.</li>
+      </ul>
+      <p>The host table provides a quick fleet slice. Administrators can manually load or remove the sample fleet, or jump directly to Enroll. <code>DEFENDSEC_ENABLE_SAMPLE_DATA</code> separately controls whether an empty store is auto-seeded; packaged production installs leave auto-seeding off.</p>
+
+      <h3>Hosts list</h3>
+      <p>Use Hosts for the complete endpoint roster. Search and table controls support fleet navigation. Status badges separate online/offline hosts, and selecting a row opens the host detail view.</p>
+
+      <h3>Host detail</h3>
+      <table>
+        <thead><tr><th>Section</th><th>What to inspect</th></tr></thead>
+        <tbody>
+          <tr><td>Identity and status</td><td>Hostname, OS, architecture, online state, mTLS marker, sample marker, and isolation state.</td></tr>
+          <tr><td>Host facts</td><td>Platform, model, serial, CPU, memory, current user, IP addresses, uptime, enrollment time, and last-seen time.</td></tr>
+          <tr><td>Open alerts</td><td>A direct link filtered to this device, or the complete device alert history.</td></tr>
+          <tr><td>Signed response</td><td>Containment, certificate revocation, process response, live queries, agent update, and command history.</td></tr>
+          <tr><td>Policies</td><td>Per-host status and detail for every built-in policy definition.</td></tr>
+          <tr><td>Advisories</td><td>Package/version matches, severity, CVE, and triage state.</td></tr>
+          <tr><td>Pending patches</td><td>Installed-to-available version transitions, or collection status if unsupported/error/unknown.</td></tr>
+          <tr><td>File integrity</td><td>Current SHA-256, accepted baseline, drift paths, and change-event history.</td></tr>
+          <tr><td>Software versions</td><td>Latest package/software inventory reported by the agent.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="alerts" class="chapter">
+      <h1>10. Alerts and Advisories</h1>
+      <h3>Alerts: the triage inbox</h3>
+      <p>Alerts combine FIM, Security Configuration Assessment, and vulnerability findings into an operational queue backed by Postgres. Filter by status, severity, kind, or device. Open an item to examine source context and lifecycle history. The filter vocabulary also reserves response and system kinds, but the current control plane does not generate those kinds.</p>
+      <p>Administrators can:</p>
+      <ul>
+        <li><strong>Acknowledge</strong> an alert that is understood but not yet remediated.</li>
+        <li><strong>Resolve</strong> an alert when the condition is fixed or dispositioned.</li>
+        <li><strong>Reopen</strong> an item when a condition returns or needs further work.</li>
+      </ul>
+      <p>The data model and filter support a <strong>suppressed</strong> status, but the current console has no action button that sets it; suppression is an authenticated API workflow.</p>
+      <p>Open FIM drift and SCA findings can auto-resolve when later host data demonstrates a return to baseline. Vulnerability alerts can also resolve when later inventory no longer matches the affected version range. Provenance fields preserve the source identity used to correlate recurring observations.</p>
+
+      <h3>Advisories: catalog matching</h3>
+      <p>Advisories compare reported software names and versions to a local CVE-shaped catalog. Findings indicate that an installed version is below a catalog floor; they are not exploitability guarantees. Use severity and host context to prioritize investigation.</p>
+      <div class="callout warning">
+        <strong>Catalog freshness is an operator responsibility.</strong> The repository includes a local catalog. Optional OSV ingest tooling and a systemd timer example exist, but external advisory synchronization is not enabled automatically. Version semantics vary across ecosystems, so confirm high-impact matches against the vendor’s own advisory.
+      </div>
+    </section>
+
+    <section id="inventory" class="chapter">
+      <h1>11. Patches, Versions, Integrity, and Policies</h1>
+      <h3>Patches</h3>
+      <p>Patches aggregates pending updates reported by enrolled agents. Use it to identify hosts with outstanding package changes and to compare current versus available versions. DefendSec reports these gaps; it does not currently orchestrate OS patch installation or reboot windows.</p>
+
+      <h3>Versions</h3>
+      <p>Versions pivots software inventory across the fleet. Search by package, version, or host, and use <strong>Mixed versions only</strong> to isolate packages whose reported versions differ across endpoints. This is useful for incident scoping, end-of-life discovery, and validating a manual rollout.</p>
+
+      <h3>Integrity</h3>
+      <p>Integrity compares current SHA-256 hashes against an accepted baseline for a deliberately small set of sensitive system paths. A missing file or changed hash is drift. Open the host to review the exact path, current hash, prior hash, and timestamps.</p>
+      <p>The first successful inventory automatically becomes the initial baseline. <strong>Accept baseline</strong> is for reconciling investigated drift after an authorized change; it is not required during first enrollment.</p>
+      <ol>
+        <li>Investigate the change on the host.</li>
+        <li>If unauthorized, remediate the file and wait for the agent to report the restored state.</li>
+        <li>If authorized, use <strong>Accept baseline</strong> as an administrator.</li>
+        <li>Review the resulting activity in host history, Alerts, and Audit as applicable.</li>
+      </ol>
+      <p>This is intentionally a focused hash/watch model, not a full enterprise FIM policy engine with broad path tuning and signed policy distribution.</p>
+
+      <h3>Policies</h3>
+      <p>Policies evaluates seven built-in posture checks for every host. Results are <span class="label green">pass</span> <span class="label red">fail</span> or <span class="label amber">unknown</span>.</p>
+      <table>
+        <thead><tr><th>Policy</th><th>Evaluation</th></tr></thead>
+        <tbody>
+          <tr><td>Agent checking in</td><td>Inventory received within the last two minutes.</td></tr>
+          <tr><td>Disk encryption</td><td>FileVault, BitLocker, or LUKS reported enabled; unknown if the agent cannot determine it.</td></tr>
+          <tr><td>Host firewall</td><td>Built-in OS firewall reported enabled.</td></tr>
+          <tr><td>Supported OS</td><td>Current rules recognize macOS 14+, Windows 11/Server 2022/2025, and Linux version strings that parse as 22.04 or newer.</td></tr>
+          <tr><td>No high/critical advisories</td><td>No open serious finding from the local advisory catalog.</td></tr>
+          <tr><td>No pending patches</td><td>Patch inventory succeeded and returned no updates.</td></tr>
+          <tr><td>Watched files unchanged</td><td>Current hashes match the accepted baseline.</td></tr>
+        </tbody>
+      </table>
+      <p>An unknown result means DefendSec lacks sufficient telemetry; it should not be interpreted as a pass.</p>
+    </section>
+
+    <section id="response" class="chapter">
+      <h1>12. Signed host response</h1>
+      <p>Response controls appear on a host only when it has the preferred mTLS Go agent. The Python inventory agent has no command channel. Viewer sessions may inspect command history but cannot submit actions.</p>
+
+      <h3>Containment and certificate controls</h3>
+      <table>
+        <thead><tr><th>Action</th><th>Behavior</th><th>Operator caution</th></tr></thead>
+        <tbody>
+          <tr><td>Isolate host</td><td>Sends a signed isolate command and records isolated state. Optional network enforcement uses an agent-managed iptables path.</td><td>Confirm on a test host; ensure you retain a recovery path.</td></tr>
+          <tr><td>Release isolation</td><td>Sends the signed inverse command and removes agent-managed network isolation/state.</td><td>Verify connectivity and agent check-in afterward.</td></tr>
+          <tr><td>Revoke certificate</td><td>Revokes the node identity and drops its live gRPC connection.</td><td>The host cannot reconnect until local agent state is cleared and it re-enrolls.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Process response</h3>
+      <p>Process response sends <code>SIGTERM</code> to processes whose exact Linux <code>/proc/*/comm</code> name matches the submitted value. Names are syntax-limited, and DefendSec refuses to signal a protected set that includes its own processes, systemd/init, SSH, and the console process (<code>next-server</code>). It is intentionally narrower than passing a shell command. Review the acknowledgement and command history to confirm acceptance and result.</p>
+
+      <h3>Live query</h3>
+      <p>Choose one of the built-in read-only snapshots:</p>
+      <p class="mono">processes · listening_ports · users · logged_in_users · crontab · systemd_units · mounts · os_info</p>
+      <p>Results render as a compact table when tabular. Up to 50 rows are shown inline before an overflow summary. Save a named preset to make a commonly used query easy to repeat; presets still reference only an allowlisted query identifier.</p>
+
+      <h3>Agent update</h3>
+      <p>Stable release metadata pre-fills version, architecture-specific URL, and SHA-256. The command instructs the agent to download the candidate, verify its digest, preserve the old binary as a backup, atomically replace the executable, and allow systemd to restart it. The fleet Updates page is the preferred way to target all eligible outdated online agents.</p>
+
+      <h3>Additional control-plane capabilities</h3>
+      <p>The signed-command API and Go agent also implement two bounded Linux actions that do not currently have general host-page controls:</p>
+      <table>
+        <thead><tr><th>Command</th><th>Restriction</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>run_script</code></td><td>Only <code>collect_journal_tail</code> or <code>flush_dns</code>; unknown identifiers are rejected before signing and again at the agent.</td><td>Collects the last 50 journal lines, or asks <code>resolvectl</code>/<code>systemd-resolve</code> to flush DNS caches.</td></tr>
+          <tr><td><code>quarantine_path</code></td><td>Only a file under the agent’s FIM watch paths or its dedicated staging prefix; directories and other paths are refused.</td><td>Moves the file into a private agent quarantine directory and removes all file permissions.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Command history</h3>
+      <p>Each entry records type, queued/sent/acknowledged state, whether the endpoint accepted it, result text, payload context, and updated time. Treat “sent” as transport state, not proof that the desired endpoint effect occurred; read the acknowledgement and validate the host.</p>
+    </section>
+
+    <section id="audit" class="chapter">
+      <h1>13. Audit, Updates, Enroll, and Scope</h1>
+      <h3>Audit</h3>
+      <p>Audit provides a chronological record of security-relevant and operator activity when Postgres is configured. Packaged installs configure it by default; custom and development installs without <code>DATABASE_URL</code> or <code>DEFENDSEC_DATABASE_URL</code> show a setup notice because the control-plane audit writer is inactive. Use Audit to reconstruct alert transitions, response activity, enrollment or certificate events, and other recorded changes. Pair application audit with systemd and reverse-proxy logs for a complete operational timeline.</p>
+
+      <h3>Updates</h3>
+      <p>The page compares the installed server version with the latest stable GitHub release and shows enrolled agent versions by architecture and connectivity.</p>
+      <ul>
+        <li><strong>Install update:</strong> admin confirmation starts a verified, health-gated server update and service restart.</li>
+        <li><strong>Update outdated agents:</strong> queues signed, architecture-matched commands for eligible online agents.</li>
+        <li><strong>Status:</strong> the console polls downloading, backing-up, installing, completed, or failed state.</li>
+        <li><strong>Viewer behavior:</strong> update availability and progress are visible, but action buttons are disabled.</li>
+      </ul>
+      <p>If an installation predates the update helper, re-run <code>install-server.sh</code> once. This installs <code>/usr/local/sbin/defendsec-update</code> and the systemd path unit. Future stable releases no longer require an on-server source build.</p>
+
+      <h3>Enroll</h3>
+      <p>Enroll generates the preferred Go-agent install command and presents values matching the configured public console URL and advertised TLS identity. Admins can rotate the enrollment secret when needed. Existing certificate-authenticated agents continue operating; rotation prevents reuse of the old bootstrap secret for new issuance.</p>
+
+      <h3>Scope</h3>
+      <p>Scope explains the product boundary: self-hosted inventory, patch visibility, local advisory matching, and focused file integrity are practical without a vendor control plane; genuine MDM functions rely on Apple, Microsoft, or Google ecosystems and are intentionally excluded.</p>
+    </section>
+
+    <section id="workflows" class="chapter">
+      <h1>14. Operator workflows</h1>
+      <h3>Daily fleet review</h3>
+      <ol class="steps">
+        <li>Open Fleet and review offline hosts, high+ advisories, pending patches, and integrity-event counts.</li>
+        <li>Open Alerts filtered to <strong>open</strong>; prioritize critical/high and unexpected FIM activity.</li>
+        <li>Open affected hosts to correlate identity, last seen, policy status, pending changes, and command history.</li>
+        <li>Acknowledge items under investigation; resolve only with evidence that the condition is remediated or accepted.</li>
+        <li>Review Updates and apply stable releases during an approved change window.</li>
+      </ol>
+
+      <h3>Investigate suspicious file drift</h3>
+      <ol class="steps">
+        <li>Open the FIM alert, note path, device, first/last seen, and prior/current hashes.</li>
+        <li>Open the host and inspect recent host facts and related integrity events.</li>
+        <li>Use allowlisted queries such as <code>processes</code>, <code>logged_in_users</code>, and <code>listening_ports</code> for volatile context.</li>
+        <li>If risk warrants and containment is tested, confirm <strong>Isolate host</strong>.</li>
+        <li>Remediate out of band. Release isolation only after validation.</li>
+        <li>Accept the new baseline only when the changed file is authorized and known-good.</li>
+      </ol>
+
+      <h3>Revoke and re-enroll a host</h3>
+      <ol>
+        <li>On host detail, confirm <strong>Revoke certificate</strong>.</li>
+        <li>On the endpoint: <code>sudo systemctl stop defendsec-agentd</code>.</li>
+        <li>Remove node identity state: <code>sudo rm -rf /var/lib/defendsec-agent</code>.</li>
+        <li>Copy the current command from Enroll and run it on the endpoint.</li>
+        <li>Verify the new certificate-backed host reconnects and inventory returns.</li>
+      </ol>
+
+      <h3>Plan a patch cycle</h3>
+      <ol>
+        <li>Use Patches to identify hosts and packages with updates.</li>
+        <li>Use Advisories to raise priority where a pending package corresponds to a serious local match.</li>
+        <li>Patch with your normal operating-system tooling and change controls.</li>
+        <li>Wait for the next agent inventory and confirm Patches, Versions, Policies, and Alerts reflect the new state.</li>
+      </ol>
+    </section>
+
+    <section id="operations" class="chapter">
+      <h1>15. Production operations</h1>
+      <h3>Health and logs</h3>
+      <pre># Server or inside the container
+systemctl status defendsec-apid defendsec-console
+journalctl -u defendsec-apid -u defendsec-console -f
+curl -fsS http://127.0.0.1:47261/login &gt;/dev/null &amp;&amp; echo console-ok
+
+# Enrolled endpoint
+systemctl status defendsec-agentd
+journalctl -u defendsec-agentd -f</pre>
+
+      <h3>Backup</h3>
+      <pre>sudo bash -c 'set -a; . /etc/defendsec/apid.env; \
+  DEFENDSEC_DATA_DIR=/var/lib/defendsec \
+  /opt/defendsec/scripts/backup.sh'</pre>
+      <p>The archive contains application state, PKI, admin token, and an optional Postgres dump. Store it encrypted with access controls appropriate for a credential and CA backup.</p>
+
+      <h3>Restore</h3>
+      <pre>sudo systemctl stop defendsec-console defendsec-apid
+sudo bash -c 'set -a; . /etc/defendsec/apid.env; \
+  DEFENDSEC_DATA_DIR=/var/lib/defendsec \
+  /opt/defendsec/scripts/restore.sh /path/to/backup.tar.gz'
+sudo systemctl start defendsec-apid defendsec-console</pre>
+      <p>Confirm hosts reappear and existing agents reconnect with their certificates. Practice restore on a nonproduction instance; a backup that has never been restored is an untested assumption.</p>
+
+      <h3>HTTPS reverse proxy</h3>
+      <ol>
+        <li>Terminate TLS on a trusted Caddy, nginx, HAProxy, or equivalent frontend.</li>
+        <li>Forward browser traffic to <code>http://127.0.0.1:47261</code>.</li>
+        <li>Forward <code>X-Forwarded-Host</code> and <code>X-Forwarded-Proto</code>.</li>
+        <li>Set <code>DEFENDSEC_COOKIE_SECURE=true</code> and <code>DEFENDSEC_PUBLIC_CONSOLE_URL=https://defendsec.example.com</code> in <code>/etc/defendsec/console.env</code>.</li>
+        <li>Restart <code>defendsec-console</code>. Keep agent ports 47262/47263 reachable or proxy them separately.</li>
+      </ol>
+
+      <h3>Viewer access</h3>
+      <p>Create a long random token and pass it on an installer re-run with <code>--viewer-token</code>, or set the same <code>DEFENDSEC_VIEWER_TOKEN</code> in both API and console environments and restart both units. Viewer tokens are suitable for read-only monitoring displays; they are still secrets.</p>
+
+      <h3>Operational checklist</h3>
+      <ul class="checklist">
+        <li>Restrict ports 47261–47263 to administrative and agent networks.</li>
+        <li>Keep 47264 and 5432 loopback-only.</li>
+        <li>Use HTTPS and secure cookies when the browser path is not a trusted isolated LAN.</li>
+        <li>Back up state, PKI, and Postgres on a tested schedule.</li>
+        <li>Monitor systemd units and disk space.</li>
+        <li>Rotate exposed tokens or enrollment secrets promptly.</li>
+        <li>Use viewer credentials where mutation is unnecessary.</li>
+        <li>Test isolation, release, restore, and update rollback before relying on them.</li>
+      </ul>
+    </section>
+
+    <section id="release" class="chapter">
+      <h1>16. Release and update mechanics</h1>
+      <h3>Release production</h3>
+      <div class="diagram">
+        <div class="flow">
+          <div class="node"><strong>Push <code>v*</code> tag</strong><br><span class="small">Operator-controlled release</span></div>
+          <div class="arrow">→</div>
+          <div class="node"><strong>GitHub Actions</strong><br><span class="small">Go + Node reproducible build steps</span></div>
+          <div class="arrow">→</div>
+          <div class="node"><strong>GitHub Release</strong><br><span class="small">Bundles + SHA256SUMS</span></div>
+        </div>
+      </div>
+      <p>The build produces API and agent binaries for Linux amd64/arm64, a Next.js standalone console archive, the agent installer, server updater, canonical <code>VERSION</code>, and a checksum manifest. The first-time server installer stays in the source repository. Agent versions are injected at link time.</p>
+
+      <h3>Server update sequence</h3>
+      <ol class="steps">
+        <li>The console reads the installed version and latest stable GitHub release, requiring all expected assets.</li>
+        <li>An administrator confirms <strong>Install update</strong>. The console writes a narrow request file and the update restarts the services after installation.</li>
+        <li>The systemd path unit starts the updater as root and serializes work with a lock.</li>
+        <li>The updater validates repository, tag, version, release identity, asset URLs, checksums, and safe archive paths.</li>
+        <li>It creates a private pre-upgrade archive of state/PKI and runs <code>pg_dump</code> when a database URL is available.</li>
+        <li>It stages the release, preserves the API binary as <code>.bak</code>, atomically changes the console symlink, refreshes agent downloads, and restarts services.</li>
+        <li>It waits for both API and console health. Success marks the update complete; failure restores previous binaries/symlink and restarts the old version.</li>
+      </ol>
+      <div class="callout">
+        <strong>Rollback boundary.</strong> Binary and console rollback is automatic after failed health checks. The pre-upgrade archive and Postgres dump protect data, but a database restore remains an explicit operator operation. Review migrations and backup status before major-version changes.
+      </div>
+
+      <h3>Agent rollout sequence</h3>
+      <p>Updates maps release artifacts to endpoint architecture, then marks only outdated, online, supported agents as eligible. After administrator confirmation, the console submits signed update commands. Each agent independently verifies SHA-256 before replacement.</p>
+    </section>
+
+    <section id="troubleshooting" class="chapter">
+      <h1>17. Troubleshooting</h1>
+      <table>
+        <thead><tr><th>Symptom</th><th>Likely cause</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td>Console TLS/protocol error on 47261</td><td>HTTPS used against the default HTTP listener</td><td>Use <code>http://SERVER:47261</code>, or configure a reverse proxy.</td></tr>
+          <tr><td>Console or API unavailable</td><td>Install/build failure or service crash</td><td>Inspect <code>systemctl status</code> and <code>journalctl</code> for both units.</td></tr>
+          <tr><td>Agent TLS verification fails</td><td><code>--tls-server-name</code> does not match the certificate SAN</td><td>Use the advertised server hostname/IP. Regenerate PKI only with a planned fleet re-enrollment.</td></tr>
+          <tr><td>Agent does not appear</td><td>Wrong endpoints, secret, firewall, or service state</td><td>Check agent logs, ports 47262/47263, time synchronization, and the current enrollment command.</td></tr>
+          <tr><td>Agent downloads return 404</td><td>Bundle not generated or public URL wrong</td><td>Check <code>/var/lib/defendsec/downloads</code> and <code>DEFENDSEC_PUBLIC_CONSOLE_URL</code>.</td></tr>
+          <tr><td>Proxmox template download fails on <code>local-lvm</code></td><td>LVM-thin cannot store <code>vztmpl</code></td><td>Set <code>TEMPLATE_STORAGE=local</code> and keep CT disks on <code>local-lvm</code>.</td></tr>
+          <tr><td>Git reports dubious ownership in <code>/opt/defendsec</code></td><td>Root installer re-runs against the <code>defendsec</code>-owned tree</td><td>Use the current installer; it applies a process-scoped safe-directory setting for that exact path.</td></tr>
+          <tr><td>Installer prints <code>Using Go VERSION ()</code></td><td>Old installer lost the toolchain path in a subshell</td><td>Download the latest installer from <code>main</code> and re-run it.</td></tr>
+          <tr><td>Update fails</td><td>Asset/checksum/backup/health failure</td><td>Inspect <code>defendsec-update.service</code>, its journal, and <code>/var/lib/defendsec/update-status.json</code>.</td></tr>
+          <tr><td>Forgot admin token</td><td>Token is intentionally not printed at completion</td><td><code>pct exec &lt;CTID&gt; -- cat /var/lib/defendsec/admin-token.txt</code>.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Update diagnostics</h3>
+      <pre>systemctl status defendsec-update.service
+journalctl -u defendsec-update.service --no-pager -n 100
+cat /var/lib/defendsec/update-status.json</pre>
+
+      <h3>Do not destroy evidence prematurely</h3>
+      <p>Before purging state, capture service logs, update status, recent audit events, relevant Postgres records, and a protected backup. Reinstalling over the same data is generally nondestructive; destroying an LXC or using uninstall with <code>--purge-data</code> is not.</p>
+    </section>
+
+    <section id="limitations" class="chapter">
+      <h1>18. Limitations and design tradeoffs</h1>
+      <table>
+        <thead><tr><th>Area</th><th>Current boundary</th><th>Operational implication</th></tr></thead>
+        <tbody>
+          <tr><td>MDM</td><td>No wipe, lock, profiles, DEP/ABM, Windows CSP, or Android Enterprise.</td><td>Use a real MDM alongside DefendSec when those controls are required.</td></tr>
+          <tr><td>Vulnerability intelligence</td><td>Local catalog; optional OSV ingest is not enabled by default. Cross-ecosystem version comparison has limits.</td><td>Maintain catalog freshness and confirm consequential matches with upstream vendors.</td></tr>
+          <tr><td>Patching</td><td>Reports pending updates; does not install OS/package patches or orchestrate reboot windows.</td><td>Use existing configuration/patch management for remediation.</td></tr>
+          <tr><td>File integrity</td><td>Focused watched paths and accepted hashes, not a highly tuned enterprise rules engine.</td><td>Choose high-signal paths and expect to investigate/accept legitimate changes.</td></tr>
+          <tr><td>Live response</td><td>Bounded named commands; no arbitrary remote shell.</td><td>Safer capability surface, with less general remote administration power.</td></tr>
+          <tr><td>Platform reach</td><td>Packaged deployment and strongest endpoint path are Linux-oriented; some policy logic understands macOS/Windows reports.</td><td>Validate collection and response behavior on every supported endpoint class.</td></tr>
+          <tr><td>Console transport</td><td>Port 47261 is HTTP by default.</td><td>Use a trusted network or reverse-proxied HTTPS before carrying admin tokens across shared networks.</td></tr>
+          <tr><td>Multi-tenancy</td><td>Admin/viewer roles, not organization/team isolation.</td><td>Deploy separate instances when strong tenant boundaries are required.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="reference" class="chapter">
+      <h1>19. Reference</h1>
+      <h3>Ports</h3>
+      <table>
+        <thead><tr><th>Port</th><th>Service</th><th>Recommended reachability</th></tr></thead>
+        <tbody>
+          <tr><td>47261/tcp</td><td>Console and agent downloads (HTTP)</td><td>Administrative browsers and agents; preferably behind HTTPS.</td></tr>
+          <tr><td>47262/tcp</td><td>Enrollment and CA service (HTTPS)</td><td>Hosts being enrolled and enrolled agents as required.</td></tr>
+          <tr><td>47263/tcp</td><td>Agent control (mTLS gRPC)</td><td>Enrolled agents.</td></tr>
+          <tr><td>47264/tcp</td><td>Administrative API</td><td>Loopback only.</td></tr>
+          <tr><td>5432/tcp</td><td>PostgreSQL</td><td>Loopback only in the packaged deployment.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Important commands</h3>
+      <pre># Retrieve admin token from Proxmox host
+pct exec &lt;CTID&gt; -- cat /var/lib/defendsec/admin-token.txt
+
+# Enter the container
+pct enter &lt;CTID&gt;
+
+# Server health and logs
+systemctl status defendsec-apid defendsec-console
+journalctl -u defendsec-apid -u defendsec-console -f
+
+# Agent health and logs
+systemctl status defendsec-agentd
+journalctl -u defendsec-agentd -f
+
+# Update diagnostics
+systemctl status defendsec-update.service
+journalctl -u defendsec-update.service --no-pager -n 100</pre>
+
+      <h3>Glossary</h3>
+      <table>
+        <thead><tr><th>Term</th><th>Meaning in DefendSec</th></tr></thead>
+        <tbody>
+          <tr><td>Agent</td><td>Endpoint process that collects inventory and, for the Go implementation, receives signed commands.</td></tr>
+          <tr><td>Alert</td><td>Durable, triageable security observation with status and provenance.</td></tr>
+          <tr><td>Advisory</td><td>Catalog entry describing a vulnerable-version floor and severity.</td></tr>
+          <tr><td>Baseline</td><td>Accepted SHA-256 state for watched paths on a host.</td></tr>
+          <tr><td>FIM</td><td>File Integrity Monitoring; detecting changes to watched files.</td></tr>
+          <tr><td>mTLS</td><td>Mutual TLS, where both server and client present cryptographic identity.</td></tr>
+          <tr><td>PKI</td><td>Public Key Infrastructure used to issue and validate endpoint certificates.</td></tr>
+          <tr><td>SCA</td><td>Security Configuration Assessment; a defined host check that reports pass/fail/detail.</td></tr>
+          <tr><td>Viewer</td><td>Read-only console role that cannot enroll, mutate findings, respond, revoke, or update.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Source and further reading</h3>
+      <ul>
+        <li>Repository: <a href="https://github.com/WASP512/defendsec">github.com/WASP512/defendsec</a></li>
+        <li>Installation guide: <a href="https://github.com/WASP512/defendsec/blob/main/docs/INSTALL.md">docs/INSTALL.md</a></li>
+        <li>Operations guide: <a href="https://github.com/WASP512/defendsec/blob/main/docs/OPERATIONS.md">docs/OPERATIONS.md</a></li>
+        <li>Protocol definition: <a href="https://github.com/WASP512/defendsec/blob/main/proto/defendsec/v1/agent.proto">proto/defendsec/v1/agent.proto</a></li>
+      </ul>
+
+      <div class="end">
+        <svg width="34" height="40" viewBox="0 0 64 74" aria-hidden="true">
+          <path d="M32 2 59 13v20c0 19-10 31-27 39C15 64 5 52 5 33V13L32 2Z" fill="#24b8c9"/>
+          <path d="M32 11 50 18v15c0 13-6 22-18 29-12-7-18-16-18-29V18l18-7Z" fill="#101b35"/>
+          <path d="m22 35 7 7 14-17" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p><strong>DefendSec</strong><br>Self-hosted security inventory</p>
+        <p class="page-note">This document describes the codebase as of September 2026. Review release notes for subsequent changes.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
