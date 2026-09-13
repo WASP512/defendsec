@@ -120,9 +120,8 @@ export async function getApidAuthToken(request?: Request) {
     }
   }
   const session = await sessionTokenValue();
-  const role = tokenMatchesSession(session, admin, viewer);
-  if (role !== "") return session;
-  return admin;
+  if (tokenMatchesSession(session, admin, viewer) !== "") return session;
+  throw new Error("no authenticated session or bearer token for apid proxy");
 }
 
 export function adminCookieOptions() {

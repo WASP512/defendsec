@@ -32,6 +32,31 @@ import (
 	"defendsec/internal/storepg"
 )
 
+// requireLoopbackAdminAddr fails fast unless the admin API binds to loopback.
+// That listener trusts the bearer token alone with no other network control,
+// so exposing it beyond localhost turns a leaked/guessed admin token into
+// full remote control. Set DEFENDSEC_ALLOW_NONLOOPBACK_ADMIN=1 to override
+// when the operator has their own network isolation in front of it.
+func requireLoopbackAdminAddr(addr string) error {
+	if strings.TrimSpace(os.Getenv("DEFENDSEC_ALLOW_NONLOOPBACK_ADMIN")) == "1" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("admin-addr %q: %w", addr, err)
+	}
+	if host == "localhost" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf(
+		"admin-addr %q is not loopback; set DEFENDSEC_ALLOW_NONLOOPBACK_ADMIN=1 to override if you have your own network isolation in front of it",
+		addr,
+	)
+}
+
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(log); err != nil {
@@ -50,6 +75,10 @@ func run(log *slog.Logger) error {
 	advertise := flag.String("tls-hostname", strings.TrimSpace(os.Getenv("DEFENDSEC_TLS_HOSTNAME")), "extra hostname/IP SAN for the server certificate (or DEFENDSEC_TLS_HOSTNAME)")
 	dbURL := flag.String("db-url", "", "Postgres URL (or DATABASE_URL / DEFENDSEC_DATABASE_URL)")
 	flag.Parse()
+
+	if err := requireLoopbackAdminAddr(*adminAddr); err != nil {
+		return err
+	}
 
 	pkiDir := filepath.Join(*dataDir, "pki")
 	hosts := []string{}
