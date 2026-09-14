@@ -1,0 +1,11 @@
+[Unit]
+Description=DefendSec state/PKI/Postgres backup (one-shot)
+After=network-online.target defendsec-apid.service
+
+[Service]
+Type=oneshot
+User=defendsec
+EnvironmentFile=-/etc/defendsec/apid.env
+Environment=DEFENDSEC_DATA_DIR=/var/lib/defendsec
+WorkingDirectory=/opt/defendsec
+ExecStart=/opt/defendsec/scripts/backup.sh
