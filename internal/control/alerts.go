@@ -143,16 +143,27 @@ func (s *Server) recordAlert(alert presence.Alert) {
 }
 
 func (s *Server) ensureAlert(deviceID, kind, sourceID string, build func() presence.Alert) {
-	if s.store.HasOpenAlert(deviceID, kind, sourceID) {
-		return
-	}
+	// When Postgres is enabled it's the source of truth for reads (see
+	// listAlerts), so dedup must check it first, not the JSON store: if an
+	// earlier recordAlert wrote to JSON but its Postgres insert failed
+	// (transient DB error), checking JSON first would see "already open"
+	// forever and never retry the Postgres write, leaving the alert
+	// permanently invisible in the UI. Only fall back to the JSON check
+	// when Postgres itself can't answer, so a real outage still suppresses
+	// duplicate alert floods.
 	if s.pg != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		open, err := s.pg.HasOpenAlert(ctx, deviceID, kind, sourceID)
 		cancel()
-		if err == nil && open {
+		if err == nil {
+			if open {
+				return
+			}
+		} else if s.store.HasOpenAlert(deviceID, kind, sourceID) {
 			return
 		}
+	} else if s.store.HasOpenAlert(deviceID, kind, sourceID) {
+		return
 	}
 	s.recordAlert(build())
 }
