@@ -115,7 +115,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const token = await getApidAuthToken();
+    const token = await getApidAuthToken(request);
     const response = await fetch(new URL("/v1/saved-queries", APID_ADMIN_URL), {
       method: "POST",
       headers: {
