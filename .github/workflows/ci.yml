@@ -24,6 +24,12 @@ jobs:
       - name: Test
         run: go test ./...
       - name: govulncheck
+        # govulncheck's own go.mod can require a newer Go than this repo's
+        # pinned toolchain (go.mod's `go`/`toolchain` directives). Scope
+        # GOTOOLCHAIN=auto to just this step so it can fetch what it needs
+        # without changing the toolchain used to build the project itself.
+        env:
+          GOTOOLCHAIN: auto
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
