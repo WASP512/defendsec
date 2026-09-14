@@ -142,7 +142,18 @@ sudo bash -c 'set -a; . /etc/defendsec/apid.env; \
   DEFENDSEC_DATA_DIR=/var/lib/defendsec /opt/defendsec/scripts/backup.sh'
 ```
 
-The script prints the `.tar.gz` path.
+The script prints the `.tar.gz` path. Backups older than `DEFENDSEC_BACKUP_RETENTION_DAYS` (default 14) in the same directory are pruned automatically after each run.
+
+**Schedule it.** A manual backup you remember to run is not a backup plan. `packaging/systemd/defendsec-backup.service` and `defendsec-backup.timer` run the command above daily. This is **not** enabled automatically:
+
+```bash
+sudo install -m 0644 packaging/systemd/defendsec-backup.service /etc/systemd/system/
+sudo install -m 0644 packaging/systemd/defendsec-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now defendsec-backup.timer
+```
+
+Verify it: `systemctl list-timers defendsec-backup.timer` and `journalctl -u defendsec-backup.service`. Copy the resulting `.tar.gz` files off the host on your own schedule — a backup that only ever lives on the machine it backs up is not a disaster-recovery plan either.
 
 Restore on a server that already has DefendSec installed:
 

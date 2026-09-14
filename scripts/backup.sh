@@ -14,4 +14,9 @@ if [[ -n "${DEFENDSEC_DATABASE_URL:-${DATABASE_URL:-}}" ]]; then
   pg_dump "$URL" > "$OUT/postgres.sql"
 fi
 tar -C "$(dirname "$OUT")" -czf "${OUT}.tar.gz" "$(basename "$OUT")"
+rm -rf "$OUT"
+
+RETENTION_DAYS="${DEFENDSEC_BACKUP_RETENTION_DAYS:-14}"
+find "$(dirname "$OUT")" -maxdepth 1 -name 'defendsec-*.tar.gz' -mtime "+$RETENTION_DAYS" -delete 2>/dev/null || true
+
 echo "backup written to ${OUT}.tar.gz"
