@@ -599,6 +599,21 @@ against BoringCrypto now, while the signing path is still being changed — Ed25
 under FIPS 186-5, but only from inside a validated boundary, and finding that out later means
 revisiting the component the entire strategy rests on.
 
+*Resolved.* Probed rather than assumed, because the difference matters: `GODEBUG=fips140=on`
+routes standard-library cryptography through the validated module but **rejects nothing** —
+Argon2id kept working under it, because its Blake2b comes from `golang.org/x/crypto` and never
+enters the boundary. A deployment can therefore believe it is in FIPS mode while hashing
+passwords with an algorithm SP 800-132 does not approve, with nothing reporting a problem. Under
+`fips140=only` the entire signing surface passed unchanged — Ed25519 command signatures, ECDSA
+P-256 acknowledgements, SHA-256, the audit chain and its checkpoints. Only two things needed
+handling, and neither was the signing path: password hashing (Argon2id stays the default;
+PBKDF2-HMAC-SHA256 at 600k iterations is selected by `DEFENDSEC_FIPS_MODE=1`, both formats verify
+in either mode, and an account is re-hashed on its next login) and TOTP's HMAC-SHA1, which is
+approved under SP 800-131A but which Go's only-mode *panics* on — computed inside
+`fips140.WithoutEnforcement` so the deviation is marked rather than hidden. BoringCrypto was not
+needed. `GET /v1/crypto-posture` reports the live posture and names the deviations; see
+[OPERATIONS.md](./OPERATIONS.md#fips-140-3-mode).
+
 **1.9 — The audit layer.** Per-control status with the evidence behind it, gap tracking, and the
 self-assessment view an agency completes before an assessor arrives — built on the control mapping
 from 1.7 and the evidence export from 1.5. Roughly 6–10 weeks on top of Phases 0–2. It must mark

@@ -198,6 +198,7 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/users", svc.HandleUsers)
 	adminMux.HandleFunc("/v1/users/update", svc.HandleUserUpdate)
 	adminMux.HandleFunc("/v1/totp", svc.HandleTOTP)
+	adminMux.HandleFunc("/v1/crypto-posture", svc.HandleCryptoPosture)
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
 		Handler:           adminMux,

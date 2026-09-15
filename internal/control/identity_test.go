@@ -213,3 +213,58 @@ func TestRequireAdminActor(t *testing.T) {
 		}
 	}
 }
+
+func TestCryptoPostureRequiresAdmin(t *testing.T) {
+	s := testServer()
+	for token, wantOK := range map[string]bool{
+		"admin-token":  true,
+		"viewer-token": false,
+		"bogus":        false,
+		"":             false,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/crypto-posture", nil)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rec := httptest.NewRecorder()
+		s.HandleCryptoPosture(rec, req)
+		if wantOK && rec.Code != http.StatusOK {
+			t.Errorf("token %q: status=%d, want 200", token, rec.Code)
+		}
+		if !wantOK && rec.Code != http.StatusUnauthorized {
+			t.Errorf("token %q: status=%d, want 401", token, rec.Code)
+		}
+	}
+}
+
+func TestCryptoPostureReportsKDFAndDeviations(t *testing.T) {
+	s := testServer()
+	req := httptest.NewRequest(http.MethodGet, "/v1/crypto-posture", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec := httptest.NewRecorder()
+	s.HandleCryptoPosture(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var st identity.FIPSStatus
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.PasswordKDF == "" {
+		t.Error("passwordKdf is empty")
+	}
+	if len(st.Notes) == 0 {
+		t.Error("no notes, so the deviations are left to be inferred from silence")
+	}
+}
+
+func TestCryptoPostureRejectsWrongMethod(t *testing.T) {
+	s := testServer()
+	req := httptest.NewRequest(http.MethodPost, "/v1/crypto-posture", http.NoBody)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec := httptest.NewRecorder()
+	s.HandleCryptoPosture(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d, want 405", rec.Code)
+	}
+}

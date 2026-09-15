@@ -9,7 +9,9 @@
 package identity
 
 import (
+	"crypto/pbkdf2"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
@@ -32,16 +34,85 @@ const (
 	argonSaltLength = 16
 )
 
-// HashPassword returns a PHC-format argon2id hash.
+// PBKDF2 parameters for the FIPS path. SP 800-132 sets no iteration count, so
+// this follows OWASP's current guidance for PBKDF2-HMAC-SHA256. It is a weaker
+// defence against offline cracking than Argon2id at any iteration count, which
+// is why it is not the default — only the approved one.
+const (
+	pbkdf2Iterations = 600_000
+	pbkdf2KeyLength  = 32
+	pbkdf2SaltLength = 16
+)
+
+// HashPassword returns a PHC-format hash using whichever algorithm this
+// deployment requires. The algorithm is named in the output, so a store can
+// hold both and verification does not need to be told which is which.
 func HashPassword(password string) (string, error) {
 	if password == "" {
 		return "", fmt.Errorf("password must not be empty")
+	}
+	if ActiveKDF() == KDFPBKDF2 {
+		salt := make([]byte, pbkdf2SaltLength)
+		if _, err := rand.Read(salt); err != nil {
+			return "", fmt.Errorf("generate salt: %w", err)
+		}
+		return encodePBKDF2(password, salt, pbkdf2Iterations), nil
 	}
 	salt := make([]byte, argonSaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("generate salt: %w", err)
 	}
 	return encodeHash(password, salt, argonMemoryKiB, argonTime, argonThreads), nil
+}
+
+func encodePBKDF2(password string, salt []byte, iterations int) string {
+	// pbkdf2.Key only errors on a nil hash constructor or a non-positive key
+	// length, neither of which can happen here.
+	key, _ := pbkdf2.Key(sha256.New, password, salt, iterations, pbkdf2KeyLength)
+	return fmt.Sprintf("$pbkdf2-sha256$i=%d$%s$%s", iterations,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(key))
+}
+
+// verifyPBKDF2 checks a $pbkdf2-sha256$ hash.
+func verifyPBKDF2(password string, parts []string) bool {
+	// ["", "pbkdf2-sha256", "i=N", salt, hash]
+	if len(parts) != 5 {
+		return false
+	}
+	var iterations int
+	if _, err := fmt.Sscanf(parts[2], "i=%d", &iterations); err != nil || iterations <= 0 {
+		return false
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(parts[3])
+	if err != nil || len(salt) == 0 {
+		return false
+	}
+	want, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil || len(want) == 0 {
+		return false
+	}
+	got, err := pbkdf2.Key(sha256.New, password, salt, iterations, len(want))
+	if err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare(got, want) == 1
+}
+
+// NeedsRehash reports whether a stored hash uses a different algorithm than
+// this deployment now requires. Existing credentials keep working; they are
+// upgraded the next time the owner sets a password, because re-hashing needs
+// the plaintext and silently forcing a reset would lock people out.
+func NeedsRehash(encoded string) bool {
+	want := ActiveKDF()
+	switch {
+	case strings.HasPrefix(encoded, "$argon2id$"):
+		return want != KDFArgon2id
+	case strings.HasPrefix(encoded, "$pbkdf2-sha256$"):
+		return want != KDFPBKDF2
+	default:
+		return true
+	}
 }
 
 func encodeHash(password string, salt []byte, memory uint32, time, threads uint8) string {
@@ -57,6 +128,14 @@ func encodeHash(password string, salt []byte, memory uint32, time, threads uint8
 // hash, so a corrupted record cannot become an authentication bypass.
 func VerifyPassword(password, encoded string) bool {
 	parts := strings.Split(encoded, "$")
+	if len(parts) < 2 {
+		return false
+	}
+	// Both algorithms are accepted whatever the current mode, so switching a
+	// deployment to FIPS does not lock out every existing account.
+	if parts[1] == "pbkdf2-sha256" {
+		return verifyPBKDF2(password, parts)
+	}
 	// ["", "argon2id", "v=19", "m=...,t=...,p=...", salt, hash]
 	if len(parts) != 6 || parts[1] != "argon2id" {
 		return false
@@ -86,18 +165,23 @@ func VerifyPassword(password, encoded string) bool {
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
-// dummyHash is verified against when a login names an account that does not
-// exist, so an unknown username costs the same work as a wrong password and
-// the response does not leak which accounts are real.
-var dummyHash = func() string {
-	salt := make([]byte, argonSaltLength)
-	// A fixed salt is fine: this hash is never a credential, it only burns
-	// the same CPU a real verification would.
-	return encodeHash("defendsec-timing-equalizer", salt, argonMemoryKiB, argonTime, argonThreads)
-}()
+// dummyHashes are verified against when a login names an account that does
+// not exist, so an unknown username costs the same work as a wrong password
+// and the response does not leak which accounts are real.
+//
+// One per algorithm: burning Argon2id time while real verifications run
+// PBKDF2 (or the reverse) would reintroduce exactly the timing difference
+// this exists to remove. A fixed salt is fine — these are never credentials,
+// they only spend the same CPU a real verification would.
+var dummyHashes = map[KDF]string{
+	KDFArgon2id: encodeHash("defendsec-timing-equalizer",
+		make([]byte, argonSaltLength), argonMemoryKiB, argonTime, argonThreads),
+	KDFPBKDF2: encodePBKDF2("defendsec-timing-equalizer",
+		make([]byte, pbkdf2SaltLength), pbkdf2Iterations),
+}
 
 // BurnPasswordComparison performs a verification whose result is discarded.
 // Call it on the no-such-user path to keep login timing uniform.
 func BurnPasswordComparison(password string) {
-	_ = VerifyPassword(password, dummyHash)
+	_ = VerifyPassword(password, dummyHashes[ActiveKDF()])
 }

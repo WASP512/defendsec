@@ -407,3 +407,27 @@ func (s *Server) requireAdminActor(w http.ResponseWriter, r *http.Request) bool 
 	}
 	return true
 }
+
+// HandleCryptoPosture reports what cryptography is actually in force
+// (roadmap 1.8).
+//
+// An assessor asking "is this FIPS mode?" is asking a question the deployment
+// cannot answer from its own configuration: GODEBUG=fips140=on routes stdlib
+// crypto through the validated module but rejects nothing, so a system can
+// look compliant while hashing passwords with an unapproved algorithm. This
+// reports the runtime state and names the deviations, rather than leaving
+// them to be inferred from silence.
+//
+// Admin-only. The posture is not secret, but it tells an attacker which
+// algorithms to expect, and there is no reason to publish it.
+func (s *Server) HandleCryptoPosture(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.requireAdminActor(w, r) {
+		return
+	}
+	writeJSON(w, http.StatusOK, identity.Status())
+}

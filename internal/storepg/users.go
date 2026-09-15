@@ -234,6 +234,20 @@ func (s *Store) Authenticate(ctx context.Context, username, password, totpCode s
 		u.TOTPLastCounter = res.Counter
 	}
 
+	// The password is in hand and correct, which is the only moment a hash can
+	// be upgraded without forcing a reset. A deployment that switches to FIPS
+	// therefore migrates as people sign in, rather than locking anyone out.
+	if identity.NeedsRehash(u.PasswordHash) {
+		if rehashed, err := identity.HashPassword(password); err == nil {
+			if _, err := s.pool.Exec(ctx,
+				`UPDATE users SET password_hash=$2, updated_at=now() WHERE id=$1`, u.ID, rehashed); err != nil {
+				// Not fatal: the login is valid and the old hash still works.
+				// Failing here would deny access over a housekeeping problem.
+				_ = err
+			}
+		}
+	}
+
 	token, hash, err := identity.NewSessionToken()
 	if err != nil {
 		return identity.User{}, "", err

@@ -215,6 +215,81 @@ When Postgres is enabled, apid prunes on startup:
 
 ---
 
+## FIPS 140-3 mode
+
+CJIS and several federal regimes require cryptography from a FIPS 140-3 validated module.
+DefendSec has no crypto of its own beyond two exceptions named below, so this is a matter of
+starting the Go runtime in the right mode and selecting an approved password KDF.
+
+**To enable it**, run apid with Go's FIPS mode and DefendSec's own switch:
+
+```
+Environment=GODEBUG=fips140=only
+Environment=DEFENDSEC_FIPS_MODE=1
+```
+
+`GODEBUG=fips140=on` is the weaker setting: it routes standard-library cryptography through the
+validated module but **rejects nothing**. A deployment can run under it while hashing passwords
+with an algorithm SP 800-132 does not approve, and nothing anywhere reports a problem. Use
+`=only`, which rejects non-approved use.
+
+`DEFENDSEC_FIPS_MODE=1` is what selects the approved password KDF. Set it even under `=only`,
+and set it on its own if you are required to use approved algorithms but cannot run the Go
+module in FIPS mode. `GODEBUG=fips140` alone is also honoured, so a deployment that only sets
+that still gets approved password hashing.
+
+**Verify what is actually in force** — not what was intended — with the admin API:
+
+```
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  http://127.0.0.1:8443/v1/crypto-posture
+```
+
+It reports the Go module state, whether approved algorithms are being required, the password KDF
+in use, and the deviations in plain words. Hand it to an assessor rather than asserting the
+posture from configuration.
+
+### What changes, and what does not
+
+| Surface | Algorithm | Under FIPS |
+| --- | --- | --- |
+| Command signatures | Ed25519 (FIPS 186-5) | Unchanged; verified under `fips140=only` |
+| Acknowledgement signatures | ECDSA P-256 | Unchanged |
+| Audit chain and checkpoints | SHA-256 | Unchanged |
+| Session and enrollment tokens | `crypto/rand` | Unchanged |
+| Password hashing | Argon2id → PBKDF2-HMAC-SHA256 | **Changes** |
+| Second-factor codes | HMAC-SHA1 | Runs outside enforcement |
+
+Two things need a decision; neither is the signing path.
+
+**Passwords.** Argon2id is memory-hard and the better defence against offline cracking, so it
+stays the default. It is not FIPS-approved, and its Blake2b comes from `golang.org/x/crypto` and
+never enters the validated boundary — which is why `fips140=on` does not catch it. In FIPS mode
+new hashes use PBKDF2-HMAC-SHA256 at 600,000 iterations (SP 800-132).
+
+Both formats verify in either mode, so switching a running deployment to FIPS does not lock out
+existing accounts. An account whose stored hash uses the other algorithm is re-hashed
+transparently on its owner's next successful login. Re-hashing needs the plaintext, so an account
+that never logs in keeps its old hash until its password is next set; if approved hashing must
+hold for every account, force a password reset.
+
+**Second-factor codes.** TOTP uses HMAC-SHA1, which every authenticator app implements. HMAC-SHA1
+is approved for HMAC under SP 800-131A, but Go's `fips140=only` restricts HMAC to SHA-2 and SHA-3
+and *panics* rather than returning an error. Changing the digest would break Google Authenticator,
+Aegis, 1Password and the rest for no security gain, so that one HMAC is computed inside
+`fips140.WithoutEnforcement`. The deviation is marked in code and disclosed by
+`/v1/crypto-posture` rather than hidden.
+
+### What this does not claim
+
+Running in FIPS mode is not a validation. Go's module carries its own CMVP certificate status,
+which is the Go project's to hold, not DefendSec's; the operating system's own module (for TLS
+termination in a reverse proxy, disk encryption, Postgres) is separately in scope for an
+assessor. DefendSec's claim is narrower and checkable: the algorithms it uses are approved ones,
+the exceptions are named, and the posture is reported by the running process.
+
+---
+
 ## Developer lab (not production)
 
 Console + apid + agent on one machine:
