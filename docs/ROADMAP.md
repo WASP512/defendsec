@@ -88,6 +88,11 @@ defensive framing into its strongest claim.
 Detection is table stakes and must improve (Phase 3). The **moat** is provable, policy-governed,
 bounded action — including action initiated by automation and AI.
 
+**Go to market through compliance.** This is the architecture thesis; §3 is how it is sold. The
+verifiable-control-plane claim has no budget line of its own, while audit evidence for NIST,
+CIS and CMMC does — and the controls those frameworks specify are, almost literally, what Phases
+1 and 2 build.
+
 ### Why this direction, now
 
 Three forces converged in the last eighteen months, and they all point at the same capability:
@@ -124,7 +129,157 @@ below deepens each one rather than trading any of them away.
 
 ---
 
-## 3. Roadmap
+## 3. Compliance and assurance positioning
+
+> **Short answer: yes — as the compliance *evidence* system, not as another compliance *scanner*.**
+>
+> Framed that way this is not a departure from §2; it is its go-to-market. "Cryptographically
+> bounded action channel" has no budget line. "CMMC Level 2 evidence" does.
+
+### 3.1 The trap: benchmark scanning is the worst available fight
+
+Positioning as a scanner that checks hosts against CIS/NIST benchmarks puts DefendSec against:
+
+| Competitor | Why it is a hard fight |
+| --- | --- |
+| **CIS-CAT Pro** | Built by CIS themselves. Authoritative by definition. |
+| **OpenSCAP + SCAP Security Guide** | Free, NIST-SCAP-validated, government-maintained content. |
+| **Wazuh** | Leads its own marketing with PCI DSS / NIST 800-53 / HIPAA / GDPR dashboards. |
+| **Tenable, Qualys Policy Compliance, Rapid7** | Certified content, huge platform coverage, entrenched in procurement. |
+| **Chef InSpec, Lynis** | Free, mature, large community profile libraries. |
+| **Drata, Vanta, Secureframe** | Own the SOC 2 / ISO 27001 evidence-collection workflow end to end. |
+
+Two structural problems make this unwinnable as a primary position:
+
+**Content is the product, and content is a treadmill.** Every OS release and every benchmark
+revision obsoletes part of your library. CIS maintains benchmarks for dozens of platforms; each is
+150–400 checks. DefendSec ships **15 checks across two Linux packs**. That is not a gap you close
+once — it is a permanent staffing commitment.
+
+**The engine cannot express most benchmark checks yet.** `internal/sca/sca.go` implements exactly
+two check types: `file_regex` (with drop-in config support — a thoughtful detail) and
+`inventory_field`. A representative CIS Linux benchmark also requires file permission and
+ownership checks, mount options, sysctl values, package presence and absence, systemd unit state,
+and command-output evaluation. The current engine can express roughly a quarter to a third of a
+typical benchmark.
+
+**Certification is a procurement gate.** CIS runs a SecureSuite vendor certification programme and
+NIST maintains an SCAP-validated products list. Assessors and buyers ask. Uncertified content is a
+second-class citizen regardless of quality.
+
+### 3.2 The distinction that decides whether this is winnable
+
+**CIS Controls and CIS Benchmarks are different products, and only one is a viable target.**
+
+| | CIS Benchmarks | CIS Controls v8 |
+| --- | --- | --- |
+| What it is | Per-platform configuration settings | 18 controls / 153 safeguards (IG1 = 56) |
+| Scope | ~150–400 checks × dozens of platforms | Organisation-level, platform-independent |
+| Revision rate | Continuous, per-platform | Stable across years |
+| DefendSec fit | **Poor** — pure content treadmill | **Good** — already evidences a real slice |
+
+Target the **Controls**. Ship enough Benchmark content to be credible on the platforms you
+genuinely support, publish coverage honestly, and never imply completeness. The same logic applies
+to NIST: map to **800-53 / 800-171 control families**, not to a promise of full SCAP content.
+
+### 3.3 The opening: everyone is fighting over the wrong half
+
+Compliance work splits into two halves, and the market has piled into one of them.
+
+| | Assessment | Evidence |
+| --- | --- | --- |
+| Question | "Are we configured correctly?" | "Prove the control operated for the whole audit period, and prove nobody edited the proof." |
+| Output | A point-in-time snapshot | A continuous, attributable, tamper-evident record |
+| Market | Saturated and commoditised | Thinly served |
+| DefendSec today | Weak (15 checks) | **Architecturally ahead of everyone** |
+
+Even the SaaS compliance platforms only partly solve the evidence half: they collect continuously,
+but the evidence lands in a mutable vendor database. The assessor is trusting the vendor's word
+that nothing was altered. **Nobody in this market chains the evidence cryptographically.**
+
+That is precisely what Phase 1 builds.
+
+### 3.4 The frameworks specify DefendSec's architecture almost literally
+
+This is the strongest argument for the compliance position: several controls that most vendors
+satisfy with a shrug are controls DefendSec can satisfy with mathematics.
+
+| Capability | Phase | Controls it evidences |
+| --- | --- | --- |
+| Hash-chained audit log | 1.2 | **NIST 800-53 AU-9(3)** *Cryptographic Protection*; **800-171 3.3.8**; **PCI DSS 4.0 10.3.2**; **ISO 27001 A.8.15** |
+| Signed commands + signed acknowledgements | 1.1, 1.3 | **NIST 800-53 AU-10** *Non-repudiation* |
+| Per-user identity | 1.0 | **800-171 3.3.2** *actions uniquely traced to individual users*; **PCI DSS 10.2.1.2**; **ISO 27001 A.8.2** |
+| Offline verifier + evidence export | 1.4, 1.5 | **AU-6** *Audit review*; the artifact an assessor actually asks for |
+| Transparency anchoring | 1.6 | Exceeds **AU-9(3)**; survives compromise of the system of record itself |
+| Policy engine, two-person integrity | 2.1–2.3 | **AC-6(9)** *Log Use of Privileged Functions*; **CM-5** *Access Restrictions for Change*; **CIS Control 5.4**; **ISO 27001 A.8.18** |
+| File integrity monitoring | shipped | **SI-7**; **PCI DSS 11.5.2**; **CIS Control 3** |
+| Asset and software inventory | shipped | **CM-8**; **CIS Controls 1 and 2** |
+| Vulnerability identification | 0.1–0.2 | **RA-5**; **CIS Control 7** |
+| Behavioural telemetry | 3.1–3.5 | **SI-4**; **AU-2 / AU-3**; **CIS Control 8.5** |
+
+**AU-9(3) and AU-10 are the headline.** Most products meet "protect audit information" with file
+permissions and RBAC, and meet non-repudiation with a policy statement. A hash-chained ledger of
+signed, individually attributed privileged actions, verifiable by a tool that does not trust the
+server, is a materially stronger answer than any competitor can give — and it is the same Phase 1
+work already recommended.
+
+### 3.5 Where this is sharpest: the defence supply chain
+
+If the goal is a commercial wedge rather than broad appeal, defence contracting is the strongest
+one available, for a reason specific to DefendSec's architecture.
+
+- **CMMC 2.0 Level 2 is NIST SP 800-171**, required across roughly 80,000 US Defense Industrial
+  Base contractors and assessed by third-party C3PAOs. Its audit-and-accountability family
+  (3.3.1, 3.3.2, 3.3.8) and privileged-function logging (3.1.7) are exactly Phases 1 and 2.
+- **Self-hosting inverts from a disadvantage to a requirement.** Controlled Unclassified Information
+  generally cannot be handed to arbitrary SaaS; cloud services need FedRAMP Moderate equivalency.
+  Most competitors in the evidence half of the market are SaaS. DefendSec's self-hosted posture —
+  currently framed as a preference for homelab users — becomes a procurement prerequisite.
+- **Australian DISP** (Defence Industry Security Program) follows the same logic under sovereign
+  hosting requirements, mapping to the ACSC **Information Security Manual** and **Essential Eight**.
+  Essential Eight is a notably tractable target: eight mitigation strategies with maturity levels
+  rather than hundreds of per-platform settings. DefendSec already touches patch applications,
+  patch operating systems, and restrict administrative privileges (Phase 2), and can report
+  maturity honestly against them.
+
+### 3.6 What this changes in the roadmap
+
+Five concrete adjustments. The first is cheap now and expensive later, so it should not wait.
+
+1. **Control mapping as a data model, not a report.** Every SCA check, alert, policy result and
+   signed action carries framework control IDs (`nist-800-53:AU-9(3)`, `cis-v8:5.4`,
+   `800-171:3.3.2`) as first-class fields. Retrofitting this after Phases 1–3 means re-tagging
+   every record type; doing it during Phase 1 costs a column and a lookup table.
+2. **Expand the SCA check types** (§3.1) — file mode and ownership, mount options, sysctl,
+   package presence, unit state, command output. This blocks *all* benchmark content, so it
+   belongs in Phase 3.7 rather than later.
+3. **Introduce an audit period.** Compliance evidence is about a window, not an instant. Retain
+   control state over time and render "this control held continuously from A to B, with these
+   three documented exceptions" — the sentence an assessor needs.
+4. **Per-control evidence packages.** Extend Phase 1.5 so an export can be scoped to a control or
+   a framework, not only to a host or incident.
+5. **Pick one framework to be excellent at before broadening.** Recommended order: **CIS Controls
+   v8 IG1** (breadth, stable, already partly covered) → **NIST 800-171 / CMMC L2** (the commercial
+   wedge) → others on demand.
+
+### 3.7 What not to claim
+
+The product's credibility currently rests on the Scope page and the white paper's limitations
+table. Compliance marketing is where that credibility is most easily spent.
+
+- Say **"maps to"**, never "compliant with" or "certified". Certification is a process DefendSec
+  has not been through, and assessors know the difference.
+- **Publish coverage as a fraction, with the denominator.** DefendSec can evidence technical
+  controls only. Of 800-171's 110 requirements, a realistic target after Phases 0–3 is roughly a
+  quarter to a third; the rest are organisational — policy, training, physical security, incident
+  response procedure. Saying so plainly is consistent with how this product already behaves, and
+  it is the difference between a tool an assessor trusts and one they discount.
+- **Never let a mapping imply the control is met.** DefendSec evidences that a control operated.
+  Whether the control is adequate is the assessor's judgement.
+
+---
+
+## 4. Roadmap
 
 Six phases. Each is independently shippable. Effort estimates assume one experienced engineer.
 
@@ -240,9 +395,16 @@ nothing.
 watch it name the exact entry, timestamp, and actor where the chain broke.
 
 **1.5 — Evidence export.** One console action producing a signed, timestamped bundle scoped to a
-host, an incident, or a date range: actions taken, who authorized them, endpoint acknowledgements,
-alert lifecycle, and the verification manifest. This is the artifact an auditor or an incident
-responder actually asks for, and today it has to be assembled by hand from four pages.
+host, an incident, a date range — or a framework control (§3.6): actions taken, who authorized
+them, endpoint acknowledgements, alert lifecycle, and the verification manifest. This is the
+artifact an auditor or an incident responder actually asks for, and today it has to be assembled
+by hand from four pages.
+
+**1.7 — Control mapping as a data model.** Carry framework control IDs (`nist-800-53:AU-9(3)`,
+`800-171:3.3.2`, `cis-v8:5.4`) as first-class fields on every check, alert, policy result and
+signed action, plus an audit-period model so control state can be rendered over a window rather
+than an instant. Cheap here — a column and a lookup table. Expensive after Phase 3, when it means
+re-tagging every record type. See §3.6.
 
 **1.6 — Transparency anchoring (optional, high-leverage).** Periodically publish signed checkpoint
 hashes somewhere the server cannot retroactively control: an RFC 3161 timestamp authority, a
@@ -340,9 +502,13 @@ thing state-based tools cannot provide.
 buffer for pre-alert context. Forward everything to the customer's real log platform over
 syslog / OTel / webhook. Stay explicitly out of the log-lake business, consistent with §2.
 
-**3.7 — Grow SCA coverage.** `packs/sca/` currently contains **15 checks across 2 Linux packs**.
-CIS Ubuntu Level 1 is roughly 200. Build toward genuine CIS L1 coverage for Debian/Ubuntu and
-RHEL-family, distributed as signed, versioned packs.
+**3.7 — Grow the SCA engine, then its content.** `internal/sca/sca.go` implements only two check
+types — `file_regex` and `inventory_field` — which can express roughly a quarter to a third of a
+real benchmark. Add file mode and ownership, mount options, sysctl values, package presence and
+absence, systemd unit state, and command-output evaluation. **This blocks all benchmark content,
+so the engine work comes first.** Then grow content: `packs/sca/` holds **15 checks across 2 Linux
+packs** against roughly 200 for CIS Ubuntu L1. Distribute as signed, versioned packs, tagged with
+control IDs per 1.7, and publish coverage as a fraction with its denominator (§3.7).
 
 **Acceptance:** a reverse shell, a `curl | sh` execution, and an SSH key added to
 `authorized_keys` are each detected within seconds, with full process ancestry, mapped to ATT&CK
@@ -422,7 +588,7 @@ tooling we give you for your fleet.*
 
 ---
 
-## 4. Recommended sequence
+## 5. Recommended sequence
 
 Ordered by (impact × credibility) ÷ effort:
 
@@ -431,17 +597,21 @@ Ordered by (impact × credibility) ÷ effort:
 2. **Phase 1.0** — per-user identity. Small, and everything downstream depends on it.
 3. **Phase 1.1–1.4** — persist signatures, chain the audit log, sign acks, ship `defendsec verify`.
    *This is the moat, and it is mostly plumbing around crypto that already works.*
-4. **Phase 2.1–2.3** — policy engine, blast radius, two-person integrity.
-5. **Phase 5.3** — HTTPS by default. Cheap; removes a standing credibility objection.
-6. **Phase 3** — eBPF and Sigma. The long pole; start it in parallel once 1–2 are underway.
-7. **Phase 4** — the AI layer, on top of the guarantees built in 1–2.
+4. **Phase 1.7** — control mapping and the audit-period model. Do it here; retrofitting it later
+   means re-tagging every record type.
+5. **Phase 2.1–2.3** — policy engine, blast radius, two-person integrity.
+6. **Phase 5.3** — HTTPS by default. Cheap; removes a standing credibility objection.
+7. **Phase 3.7 engine work, then one framework** — CIS Controls v8 IG1 first, then 800-171/CMMC.
+   Enough coverage to be credible, published as a fraction, never as completeness.
+8. **Phase 3** — eBPF and Sigma. The long pole; start it in parallel once 1–2 are underway.
+9. **Phase 4** — the AI layer, on top of the guarantees built in 1–2.
 
 Phases 0, 1, and 2 are roughly four to six months of focused work and are enough to change what
 the product *is*. Phase 3 is the largest investment and can proceed in parallel with 4.
 
 ---
 
-## 5. White paper revisions to make alongside this work
+## 6. White paper revisions to make alongside this work
 
 - **Lead with the differentiator.** Move signed, bounded, provable response from Section 12 into
   the executive overview. Open the paper with the comparison table from §1 of this document.
@@ -458,7 +628,7 @@ the product *is*. Phase 3 is the largest investment and can proceed in parallel 
 
 ---
 
-## 6. Success metrics
+## 7. Success metrics
 
 | Dimension | Today | Target after Phases 0–2 |
 | --- | --- | --- |
@@ -468,14 +638,20 @@ the product *is*. Phase 3 is the largest investment and can proceed in parallel 
 | Actions attributable to a specific human | No — shared admin token | Every action, cryptographically |
 | Destructive action safeguards | UI confirmation dialog | Policy engine + blast radius + two-person integrity |
 | Mean time to detect an active intrusion | Not possible — no behavioral telemetry | Seconds, with process ancestry *(Phase 3)* |
+| Evidence that a control operated across an audit period | Not representable — no history model | Signed per-control export over any window |
+| NIST 800-171 technical requirements evidenced | Unmapped | Mapped, with the denominator published |
 
 ---
 
-## 7. The one-line summary
+## 8. The one-line summary
 
 DefendSec has quietly built the hardest part of a category-defining product — a cryptographically
 bounded action channel — and is currently describing it as a limitation while competing on an axis
 it cannot win. Keep the signatures, chain the log, govern the actions by policy, give it real
 behavioral eyes, and let AI drive it through a path it can never escape.
+
+Then sell it as what the frameworks have been asking for all along: not another scanner that
+asserts your hosts were configured correctly, but a system that *proves* your controls operated,
+to an assessor who does not have to trust you.
 
 That is a product nobody else is selling.
