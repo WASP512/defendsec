@@ -306,6 +306,103 @@ months later.
 
 ---
 
+### 3.9 Should the product *become* an audit tool?
+
+"Position it for audits" and "turn it into an auditing tool" are different proposals, and the
+second one hides four quite different products:
+
+| Product | What it is | Verdict |
+| --- | --- | --- |
+| **Compliance scanner** | Checks hosts against framework technical settings | **No** — §3.1. Content treadmill; CIS-CAT, OpenSCAP and Wazuh own it. |
+| **GRC platform** | Policy documents, control ownership, evidence requests, POA&Ms, risk register, questionnaires | **No** — roughly 70% non-technical workflow. Competing with Drata, Vanta and Archer on document management, where the cryptographic moat is irrelevant. |
+| **Audit evidence system** | Continuously collects technical evidence that controls operated, mapped to control IDs, exported for an assessor | **Yes** — already §3.3, already Phases 1.5 and 1.7. |
+| **Audit readiness assistant** | Per-control status, gap tracking, and the self-assessment an agency completes before the auditor arrives | **Yes** — a thin, high-value layer on the above. |
+
+**Recommendation: add an audit layer, do not pivot the application.** The layer maps what
+DefendSec already observes to control IDs, shows per-control status with the underlying evidence,
+produces the signed package, and — in keeping with how this product already behaves — marks
+plainly what it *cannot* evidence and hands that back to the agency. On top of Phases 0–2 that is
+roughly 6–10 weeks, not a rewrite.
+
+The moment it becomes a checklist-and-document application, the signed action channel stops being
+the product and becomes a vestigial feature, and the only defensible thing DefendSec owns is
+gone.
+
+**A note on sequencing.** The direction has now been framed four ways — verifiable control plane,
+compliance evidence, live vulnerability intelligence, audit assistance. Usefully, they do not
+compete: the engineering spine underneath is identical every time.
+
+> Fix the findings → prove the actions → govern the actions → give it real eyes.
+
+Choosing a vertical changes the *wrapper* and the order of the control-mapping work. It does not
+change that spine, and no vertical is worth pursuing before Phase 0 lands — a tool that reports
+patched hosts as vulnerable fails an audit conversation faster than one with no compliance
+features at all.
+
+### 3.10 CJIS is the strongest vertical named so far
+
+Stronger than generic NIST or CIS, and arguably stronger than CMMC, for four specific reasons:
+
+1. **CJIS Security Policy v6.0 is explicitly mapped to NIST SP 800-53 Rev 5.** The restructure away
+   from bespoke policy language means the control-mapping data model in Phase 1.7 covers CJIS
+   largely for free — one mapping table, several frameworks. CJIS is not additional architecture;
+   it is an additional column.
+2. **Policy Area 4 — Auditing and Accountability — is Phase 1 almost line for line.** It requires
+   specific events be logged, retained, protected from modification, and reviewable. A hash-chained
+   ledger of signed, individually attributed actions is a materially better answer than any
+   competitor gives, and it is work already on the roadmap.
+3. **The buyers are underserved in a way the CMMC market is not.** Roughly 18,000 US law
+   enforcement agencies, most of them small, most with no dedicated security staff, facing a
+   triennial audit they dread. Existing options are enterprise-priced platforms or a consultant
+   with a spreadsheet. CMMC, by contrast, already has a crowded vendor field.
+4. **The audit is a dated, recurring event** — a natural sales trigger and a natural renewal cycle.
+
+Self-hosting inverts here exactly as it does for CUI: criminal justice information has strict
+handling requirements, and a self-hosted posture is a prerequisite rather than a preference.
+
+**Honest coverage.** Of the 13 CJIS policy areas, DefendSec can substantially evidence **three**
+— Auditing and Accountability (4), Configuration Management (7), and System and Communications
+Protection / Information Integrity (10) — and partially evidence **three** more: Incident Response
+(3), Access Control (5), and Identification and Authentication (6). It can evidence **none** of
+Information Exchange Agreements (1), Security Awareness Training (2), Media Protection (8),
+Physical Protection (9), Personnel Security (12), or Mobile Devices (13) — the last being MDM,
+which §2 declines on purpose. Publish that breakdown rather than a coverage percentage.
+
+### 3.11 Three hard blockers CJIS imposes, all verifiable in the tree today
+
+These are not roadmap preferences. Each one is disqualifying on its own in a CJIS environment, and
+each is cheaper to address now than after a deal is in progress.
+
+**1. FIPS 140-3 validated cryptography.** CJIS requires FIPS-validated cryptographic modules for
+protecting CJI. The tree uses Go's standard library throughout — `ed25519` (19 call sites),
+`ecdsa` / P-256 (18), `sha256` (38) — and contains no reference to `boring` or `fips` anywhere.
+Go's default crypto is *not* a validated module. Options are Go 1.24+'s native FIPS 140-3 mode
+(the Go Cryptographic Module), BoringCrypto, or an external validated module. **Check this before
+Phase 1 hardens the signing path**: Ed25519 is permitted under FIPS 186-5, but the implementation
+must sit inside the validated boundary, and discovering otherwise later would mean revisiting the
+one component the whole strategy rests on.
+
+**2. Multi-factor authentication.** CJIS has required advanced authentication for CJI access since
+October 2024. DefendSec has no user accounts, no passwords, and no MFA of any kind — a grep for
+`mfa`, `totp`, `webauthn`, `oidc` and `password` across `internal/`, `app/` and `lib/` returns
+nothing but a demo-data string. Authentication is a single shared bearer token. This is not merely
+the attribution weakness noted in Phase 1.0; in a CJIS context it is a direct policy violation.
+**Phases 1.0 and 5.4 become mandatory rather than sequenced.**
+
+**3. Audit record retention.** CJIS sets a minimum retention of one year for audit records.
+DefendSec ships below that on two paths: resolved alerts default to **90 days**
+(`DEFENDSEC_ALERT_RETENTION_DAYS`) and live-query results to **30 days**, while `internal/cmdlog`
+keeps a **500-record ring buffer** that silently discards the oldest command history regardless of
+age. Command history is precisely the privileged-action record Policy Area 4 cares about. Raise
+the defaults, and replace the ring buffer with age-based retention on the Postgres path (§5.5).
+
+**What not to claim.** There is no FBI certification programme for products, and the *agency* is
+compliant, not the tool. Say "supports CJIS Policy Area 4 evidence," never "CJIS compliant" —
+auditors and CSA coordinators know the difference, and overclaiming here costs more credibility
+than it buys.
+
+---
+
 ## 4. Roadmap
 
 Six phases. Each is independently shippable. Effort estimates assume one experienced engineer.
@@ -447,8 +544,9 @@ Convert "we log what happened" into "we can prove what happened, and prove the l
 The signing primitives in `internal/sign/` are already correct; this phase keeps and chains their
 output.
 
-**1.0 — Per-user identity (prerequisite).** Non-repudiable attribution is impossible when every
-administrator shares one bearer token. Today `actor` defaults to the literal string `'admin'`
+**1.0 — Per-user identity and MFA (prerequisite).** Non-repudiable attribution is impossible when
+every administrator shares one bearer token — and under CJIS (§3.11) a shared token with no MFA is
+a direct policy violation, not merely a weakness. Today `actor` defaults to the literal string `'admin'`
 (`001_init.sql:78`). Everything else in this phase is undermined without this, so it comes first:
 
 - Local user accounts with per-user API credentials as the minimum viable step.
@@ -493,6 +591,19 @@ by hand from four pages.
 signed action, plus an audit-period model so control state can be rendered over a window rather
 than an instant. Cheap here — a column and a lookup table. Expensive after Phase 3, when it means
 re-tagging every record type. See §3.6.
+
+**1.8 — Settle the FIPS question before the signing path hardens.** CJIS and several federal
+regimes require FIPS 140-3 validated cryptographic modules. The tree uses Go's standard library
+throughout and references no validated module (§3.11). Evaluate Go 1.24+ native FIPS 140-3 mode
+against BoringCrypto now, while the signing path is still being changed — Ed25519 is permitted
+under FIPS 186-5, but only from inside a validated boundary, and finding that out later means
+revisiting the component the entire strategy rests on.
+
+**1.9 — The audit layer.** Per-control status with the evidence behind it, gap tracking, and the
+self-assessment view an agency completes before an assessor arrives — built on the control mapping
+from 1.7 and the evidence export from 1.5. Roughly 6–10 weeks on top of Phases 0–2. It must mark
+plainly what DefendSec *cannot* evidence (§3.10) rather than leaving a control silently blank.
+See §3.9: this is a layer, not a pivot.
 
 **1.6 — Transparency anchoring (optional, high-leverage).** Periodically publish signed checkpoint
 hashes somewhere the server cannot retroactively control: an RFC 3161 timestamp authority, a
@@ -661,8 +772,12 @@ isolated labs. Then delete the caveats.
 **5.4 — Enterprise identity (SSO/OIDC).** Completes Phase 1.0. Group-to-role mapping, session
 management, and per-user attribution throughout the ledger.
 
-**5.5 — Scale past the homelab.** Two hard caps today: `internal/cmdlog` keeps a **500-record ring
-buffer** and JSON files back much of the state. Move to Postgres-primary with JSON as an export
+**5.5 — Scale past the homelab, and meet retention minimums.** Two hard caps today:
+`internal/cmdlog` keeps a **500-record ring buffer** — silently discarding privileged-action
+history regardless of age, which is exactly the record CJIS Policy Area 4 requires kept for a year
+— and JSON files back much of the state. Alert retention also defaults to 90 days against a CJIS
+minimum of one year (§3.11). Replace the ring buffer with age-based retention and raise the
+defaults. Move to Postgres-primary with JSON as an export
 format, add pagination and server-side filtering across the console, and load-test to 10k hosts.
 Until this is done, fleet size is bounded by a Go slice.
 
@@ -689,8 +804,9 @@ Ordered by (impact × credibility) ÷ effort:
 2. **Phase 1.0** — per-user identity. Small, and everything downstream depends on it.
 3. **Phase 1.1–1.4** — persist signatures, chain the audit log, sign acks, ship `defendsec verify`.
    *This is the moat, and it is mostly plumbing around crypto that already works.*
-4. **Phase 1.7** — control mapping and the audit-period model. Do it here; retrofitting it later
-   means re-tagging every record type.
+4. **Phase 1.7 – 1.8** — control mapping and the audit-period model, plus the FIPS decision.
+   Retrofitting the mapping later means re-tagging every record type; discovering a FIPS
+   constraint later means reworking the signing path.
 5. **Phase 2.1–2.3** — policy engine, blast radius, two-person integrity.
 6. **Phase 5.3** — HTTPS by default. Cheap; removes a standing credibility objection.
 7. **Phase 3.7 engine work, then one framework** — CIS Controls v8 IG1 first, then 800-171/CMMC.
