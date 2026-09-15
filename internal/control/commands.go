@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -184,6 +185,7 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 		ExpiresUnix: now.Add(2 * time.Minute).Unix(),
 		Payload:     payload,
 	}
+	signature := s.signer.Sign(env)
 	rec := cmdlog.Record{
 		ID:        env.CommandID,
 		DeviceID:  env.DeviceID,
@@ -194,6 +196,17 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 		Message:   "waiting for connected agent",
 		CreatedAt: now.UTC().Format(time.RFC3339),
 		UpdatedAt: now.UTC().Format(time.RFC3339),
+
+		// Retain the proof of authority alongside the fact of the command.
+		Signature:    base64.StdEncoding.EncodeToString(signature),
+		SigningKeyID: s.signer.KeyID(),
+		IssuedUnix:   env.IssuedUnix,
+		ExpiresUnix:  env.ExpiresUnix,
+		// Every console session shares one bearer token today, so this
+		// records the role rather than a person. Per-user identity is
+		// roadmap 1.0, and until it lands these rows are not attributable
+		// to an individual.
+		ActorIdentity: "shared-admin-token",
 	}
 	if err := s.commands.Append(rec); err != nil {
 		s.log.Error("command log", "err", err)
@@ -202,7 +215,7 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	s.syncCommand(rec)
 	s.audit("admin", "command_issue", req.DeviceID, map[string]any{"type": req.Type, "commandId": id})
-	if s.pushSigned(env) {
+	if s.pushSigned(env, signature) {
 		_ = s.commands.Update(id, func(r *cmdlog.Record) {
 			r.Status = "sent"
 			r.Message = "signed command pushed on mTLS stream"
@@ -219,12 +232,15 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(rec)
 }
 
-func (s *Server) pushSigned(env sign.Envelope) bool {
+// pushSigned transmits an already-signed envelope. The signature is passed in
+// rather than recomputed so that the bytes stored as proof are exactly the
+// bytes put on the wire.
+func (s *Server) pushSigned(env sign.Envelope, signature []byte) bool {
 	cmd := &defendsecv1.ControlCommand{
 		CommandId:   env.CommandID,
 		Type:        env.Type,
 		Payload:     env.Payload,
-		Signature:   s.signer.Sign(env),
+		Signature:   signature,
 		IssuedUnix:  env.IssuedUnix,
 		ExpiresUnix: env.ExpiresUnix,
 		DeviceId:    env.DeviceID,
@@ -248,11 +264,28 @@ func (s *Server) flushQueued(deviceID string) {
 		if len(env.Payload) == 0 {
 			env.Payload = []byte("{}")
 		}
-		if s.pushSigned(env) {
+		signature := s.signer.Sign(env)
+		if s.pushSigned(env, signature) {
+			sigB64 := base64.StdEncoding.EncodeToString(signature)
+			keyID := s.signer.KeyID()
 			_ = s.commands.Update(rec.ID, func(r *cmdlog.Record) {
 				r.Status = "sent"
 				r.Message = "flushed to agent after reconnect"
+				// The envelope was re-signed with new issue and expiry
+				// timestamps, so the stored proof must track the envelope
+				// that actually went out.
+				r.Signature = sigB64
+				r.SigningKeyID = keyID
+				r.IssuedUnix = env.IssuedUnix
+				r.ExpiresUnix = env.ExpiresUnix
 			})
+			if s.pg != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				if err := s.pg.RecordCommandProof(ctx, rec.ID, sigB64, keyID, env.IssuedUnix, env.ExpiresUnix); err != nil {
+					s.log.Warn("record command proof", "err", err)
+				}
+				cancel()
+			}
 		}
 	}
 }

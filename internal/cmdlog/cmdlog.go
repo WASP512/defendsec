@@ -19,6 +19,21 @@ type Record struct {
 	Message   string `json:"message"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
+
+	// Proof of authority. The signature is retained rather than discarded
+	// after transmission, so the record can be verified later without
+	// trusting the server that wrote it (roadmap 1.1). The canonical bytes
+	// are rebuilt from DeviceID, ID, Type, IssuedUnix, ExpiresUnix and
+	// Payload, so they are not stored separately.
+	Signature    string `json:"signature,omitempty"`
+	SigningKeyID string `json:"signingKeyId,omitempty"`
+	IssuedUnix   int64  `json:"issuedUnix,omitempty"`
+	ExpiresUnix  int64  `json:"expiresUnix,omitempty"`
+
+	// ActorIdentity is who authorised the command. Until per-user identity
+	// lands (roadmap 1.0) this is the shared-token actor and cannot be
+	// attributed to an individual.
+	ActorIdentity string `json:"actorIdentity,omitempty"`
 }
 
 type File struct {

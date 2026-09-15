@@ -15,8 +15,23 @@ func TestEmbeddedMigrationsContainRequiredSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(names) != 4 {
-		t.Fatalf("embedded migrations = %v, want 4 files", names)
+	// Pin the exact set rather than a count, so a migration that is renamed
+	// or dropped fails loudly instead of being replaced by a new one.
+	want := []string{
+		"001_init.sql",
+		"002_alerts.sql",
+		"003_saved_queries.sql",
+		"004_alert_provenance.sql",
+		"005_command_proof.sql",
+		"006_audit_chain.sql",
+	}
+	if len(names) != len(want) {
+		t.Fatalf("embedded migrations = %v, want %v", names, want)
+	}
+	for i, name := range want {
+		if names[i] != name {
+			t.Fatalf("embedded migrations = %v, want %v", names, want)
+		}
 	}
 
 	var schema strings.Builder
@@ -27,9 +42,22 @@ func TestEmbeddedMigrationsContainRequiredSchema(t *testing.T) {
 		}
 		schema.Write(body)
 	}
-	for _, relation := range []string{"meta", "devices", "audit_log", "advisories", "alerts", "saved_queries"} {
+	for _, relation := range []string{"meta", "devices", "audit_log", "advisories", "alerts", "saved_queries", "audit_checkpoints"} {
 		if !strings.Contains(schema.String(), "CREATE TABLE IF NOT EXISTS "+relation) {
 			t.Errorf("embedded migrations do not create %s", relation)
+		}
+	}
+
+	// Phase 1 proof columns. These carry the signature and chain that make a
+	// stored record verifiable rather than merely asserted.
+	for _, col := range []string{"signature", "signing_key_id", "issued_unix", "expires_unix", "actor_identity"} {
+		if !strings.Contains(schema.String(), "ALTER TABLE commands ADD COLUMN IF NOT EXISTS "+col) {
+			t.Errorf("embedded migrations do not add commands.%s", col)
+		}
+	}
+	for _, col := range []string{"seq", "prev_hash", "entry_hash"} {
+		if !strings.Contains(schema.String(), "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS "+col) {
+			t.Errorf("embedded migrations do not add audit_log.%s", col)
 		}
 	}
 }

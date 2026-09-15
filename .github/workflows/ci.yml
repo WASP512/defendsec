@@ -69,7 +69,10 @@ jobs:
       - name: Test against Postgres (internal/storepg, db/migrations)
         env:
           TEST_DATABASE_URL: postgres://defendsec:defendsec@localhost:5432/defendsec?sslmode=disable
-        run: go test ./internal/storepg/... ./db/migrations/...
+        # -p 1 runs the packages one at a time. They share a database, and
+        # migration DDL takes ACCESS EXCLUSIVE on audit_log while an audit
+        # append holds it, so running them concurrently can deadlock.
+        run: go test -p 1 ./internal/storepg/... ./db/migrations/...
 
   node:
     runs-on: ubuntu-latest

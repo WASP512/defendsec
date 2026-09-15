@@ -2,11 +2,15 @@ package storepg
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"defendsec/internal/auditchain"
 	"defendsec/internal/cmdlog"
 	"defendsec/internal/presence"
 )
@@ -124,23 +128,191 @@ func (s *Store) Revoke(ctx context.Context, fingerprint, deviceID, reason string
 	return err
 }
 
+// auditChainLock serializes audit appends so the chain has one unambiguous
+// order. Without it, two concurrent writers could read the same tip and both
+// chain onto it.
+const auditChainLock = "SELECT pg_advisory_xact_lock(hashtext('defendsec:audit-chain'))"
+
+// Audit appends a hash-chained audit entry. Each entry commits to the one
+// before it, so a later edit, deletion or reordering is detectable by
+// VerifyAuditChain.
 func (s *Store) Audit(ctx context.Context, actor, action, deviceID string, detail any) error {
 	raw, _ := json.Marshal(detail)
 	if len(raw) == 0 {
 		raw = []byte("{}")
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO audit_log (actor, action, device_id, detail) VALUES ($1,$2,$3,$4::jsonb)
-	`, actor, action, deviceID, string(raw))
-	return err
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if _, err := tx.Exec(ctx, auditChainLock); err != nil {
+		return err
+	}
+
+	// Hash the canonical jsonb rendering rather than the bytes just
+	// marshalled: Postgres normalizes jsonb on input, so this is what the row
+	// will actually hold and what a verifier will read back.
+	var detailText string
+	if err := tx.QueryRow(ctx, `SELECT $1::jsonb::text`, string(raw)).Scan(&detailText); err != nil {
+		return err
+	}
+
+	var prevSeq int64
+	prevHash := auditchain.Genesis
+	err = tx.QueryRow(ctx, `
+		SELECT seq, entry_hash FROM audit_log WHERE seq IS NOT NULL ORDER BY seq DESC LIMIT 1
+	`).Scan(&prevSeq, &prevHash)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	entry := auditchain.Link(prevHash, auditchain.Entry{
+		Seq: prevSeq + 1,
+		// timestamptz keeps microseconds, so truncate before hashing or the
+		// value read back would not reproduce the hash.
+		At:       time.Now().UTC().Truncate(time.Microsecond),
+		Actor:    actor,
+		Action:   action,
+		DeviceID: deviceID,
+		Detail:   detailText,
+	})
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_log (at, actor, action, device_id, detail, seq, prev_hash, entry_hash)
+		VALUES ($1::timestamptz,$2,$3,$4,$5::jsonb,$6,$7,$8)
+	`, entry.At, entry.Actor, entry.Action, entry.DeviceID, detailText,
+		entry.Seq, entry.PrevHash, entry.EntryHash); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// ListAuditChain returns chained entries in sequence order, oldest first.
+// Entries written before migration 006 have no sequence and are excluded:
+// they were never chained and cannot be retroactively vouched for.
+func (s *Store) ListAuditChain(ctx context.Context, fromSeq int64, limit int) ([]auditchain.Entry, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT seq, at, actor, action, device_id, detail::text, prev_hash, entry_hash
+		FROM audit_log
+		WHERE seq IS NOT NULL AND seq >= $1
+		ORDER BY seq
+		LIMIT $2
+	`, fromSeq, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []auditchain.Entry
+	for rows.Next() {
+		var e auditchain.Entry
+		var at time.Time
+		if err := rows.Scan(&e.Seq, &at, &e.Actor, &e.Action, &e.DeviceID, &e.Detail, &e.PrevHash, &e.EntryHash); err != nil {
+			return nil, err
+		}
+		e.At = at.UTC()
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// VerifyAuditChain walks the stored chain from its start and reports the first
+// entry whose contents no longer match its hash, as an *auditchain.TamperError.
+func (s *Store) VerifyAuditChain(ctx context.Context) error {
+	entries, err := s.ListAuditChain(ctx, 1, 0)
+	if err != nil {
+		return err
+	}
+	return auditchain.Verify(entries)
+}
+
+// AppendCheckpoint signs the current tip of the chain, so that range can later
+// be validated from one signature and tail truncation becomes detectable.
+// It returns false when there is nothing chained yet.
+func (s *Store) AppendCheckpoint(ctx context.Context, priv ed25519.PrivateKey, keyID string) (auditchain.Checkpoint, bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return auditchain.Checkpoint{}, false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if _, err := tx.Exec(ctx, auditChainLock); err != nil {
+		return auditchain.Checkpoint{}, false, err
+	}
+
+	var seq int64
+	var hash string
+	err = tx.QueryRow(ctx, `
+		SELECT seq, entry_hash FROM audit_log WHERE seq IS NOT NULL ORDER BY seq DESC LIMIT 1
+	`).Scan(&seq, &hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auditchain.Checkpoint{}, false, nil
+	}
+	if err != nil {
+		return auditchain.Checkpoint{}, false, err
+	}
+
+	cp := auditchain.SignCheckpoint(priv, auditchain.Checkpoint{
+		ThroughSeq:   seq,
+		EntryHash:    hash,
+		At:           time.Now().UTC().Truncate(time.Microsecond),
+		SigningKeyID: keyID,
+	})
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_checkpoints (at, through_seq, entry_hash, signing_key_id, signature)
+		VALUES ($1::timestamptz,$2,$3,$4,$5)
+	`, cp.At, cp.ThroughSeq, cp.EntryHash, cp.SigningKeyID, cp.Signature); err != nil {
+		return auditchain.Checkpoint{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return auditchain.Checkpoint{}, false, err
+	}
+	return cp, true, nil
+}
+
+// LatestCheckpoint returns the most recent signed checkpoint.
+func (s *Store) LatestCheckpoint(ctx context.Context) (auditchain.Checkpoint, bool, error) {
+	var cp auditchain.Checkpoint
+	var at time.Time
+	err := s.pool.QueryRow(ctx, `
+		SELECT at, through_seq, entry_hash, signing_key_id, signature
+		FROM audit_checkpoints ORDER BY through_seq DESC LIMIT 1
+	`).Scan(&at, &cp.ThroughSeq, &cp.EntryHash, &cp.SigningKeyID, &cp.Signature)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auditchain.Checkpoint{}, false, nil
+	}
+	if err != nil {
+		return auditchain.Checkpoint{}, false, err
+	}
+	cp.At = at.UTC()
+	return cp, true, nil
 }
 
 func (s *Store) AppendCommand(ctx context.Context, rec cmdlog.Record) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO commands (id, device_id, hostname, type, payload, status, accepted, message, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10::timestamptz)
+		INSERT INTO commands (id, device_id, hostname, type, payload, status, accepted, message, created_at, updated_at,
+		                      signature, signing_key_id, issued_unix, expires_unix, actor_identity)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10::timestamptz,$11,$12,$13,$14,$15)
 		ON CONFLICT (id) DO NOTHING
-	`, rec.ID, rec.DeviceID, rec.Hostname, rec.Type, rec.Payload, rec.Status, rec.Accepted, rec.Message, rec.CreatedAt, rec.UpdatedAt)
+	`, rec.ID, rec.DeviceID, rec.Hostname, rec.Type, rec.Payload, rec.Status, rec.Accepted, rec.Message, rec.CreatedAt, rec.UpdatedAt,
+		rec.Signature, rec.SigningKeyID, rec.IssuedUnix, rec.ExpiresUnix, rec.ActorIdentity)
+	return err
+}
+
+// RecordCommandProof stores the signature actually transmitted to the agent.
+// The command path re-signs with fresh issue and expiry timestamps whenever a
+// queued command is flushed after a reconnect, so the retained proof is the
+// envelope most recently put on the wire.
+func (s *Store) RecordCommandProof(ctx context.Context, id, signature, keyID string, issuedUnix, expiresUnix int64) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE commands SET signature=$2, signing_key_id=$3, issued_unix=$4, expires_unix=$5, updated_at=now()
+		WHERE id=$1
+	`, id, signature, keyID, issuedUnix, expiresUnix)
 	return err
 }
 
@@ -153,7 +325,8 @@ func (s *Store) UpdateCommand(ctx context.Context, id string, status string, acc
 
 func (s *Store) ListCommands(ctx context.Context, deviceID string) ([]cmdlog.Record, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, device_id, hostname, type, payload, status, accepted, message, created_at, updated_at
+		SELECT id, device_id, hostname, type, payload, status, accepted, message, created_at, updated_at,
+		       signature, signing_key_id, issued_unix, expires_unix, actor_identity
 		FROM commands
 		WHERE ($1 = '' OR device_id = $1)
 		ORDER BY created_at DESC
@@ -167,7 +340,8 @@ func (s *Store) ListCommands(ctx context.Context, deviceID string) ([]cmdlog.Rec
 	for rows.Next() {
 		var rec cmdlog.Record
 		var created, updated time.Time
-		if err := rows.Scan(&rec.ID, &rec.DeviceID, &rec.Hostname, &rec.Type, &rec.Payload, &rec.Status, &rec.Accepted, &rec.Message, &created, &updated); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.DeviceID, &rec.Hostname, &rec.Type, &rec.Payload, &rec.Status, &rec.Accepted, &rec.Message, &created, &updated,
+			&rec.Signature, &rec.SigningKeyID, &rec.IssuedUnix, &rec.ExpiresUnix, &rec.ActorIdentity); err != nil {
 			return nil, err
 		}
 		rec.CreatedAt = created.UTC().Format(time.RFC3339)
@@ -276,8 +450,8 @@ func (s *Store) ExportAgentsJSON(ctx context.Context) ([]byte, error) {
 	}
 	defer rows.Close()
 	type snap struct {
-		UpdatedAt string            `json:"updatedAt"`
-		Devices   []presence.Device `json:"devices"`
+		UpdatedAt string              `json:"updatedAt"`
+		Devices   []presence.Device   `json:"devices"`
 		FimEvents []presence.FimEvent `json:"fimEvents"`
 	}
 	doc := snap{UpdatedAt: time.Now().UTC().Format(time.RFC3339), Devices: []presence.Device{}}
