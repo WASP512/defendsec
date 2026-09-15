@@ -11,6 +11,7 @@ import (
 
 	"defendsec/internal/alertmeta"
 	"defendsec/internal/controls"
+	"defendsec/internal/playbook"
 	"defendsec/internal/presence"
 	"defendsec/internal/sca"
 	"defendsec/internal/storepg"
@@ -141,6 +142,37 @@ func (s *Server) recordAlert(alert presence.Alert) {
 			s.log.Warn("alert postgres", "err", err)
 		}
 	}
+
+	// Automatic response (roadmap 2.6). Runs after the finding is stored, so
+	// the record of what happened exists before anything acts on it, and in
+	// the background so a slow response path cannot stall ingest.
+	s.considerAutomaticResponse(alert)
+}
+
+// considerAutomaticResponse offers a finding to the automatic playbooks.
+func (s *Server) considerAutomaticResponse(alert presence.Alert) {
+	if s.playbooks == nil || s.pg == nil {
+		return
+	}
+	pa := playbook.Alert{
+		ID: alert.ID, Kind: alert.Kind, Severity: alert.Severity,
+		DeviceID: alert.DeviceID, Hostname: alert.Hostname, Title: alert.Title,
+	}
+	if path, ok := alert.Detail[alertmeta.KeyFilePath].(string); ok {
+		pa.Path = path
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		classes, err := s.pg.DeviceClasses(ctx, alert.DeviceID)
+		cancel()
+		if err != nil {
+			// Evaluated as unclassified, which is the stricter reading: a
+			// trigger naming a class will not match.
+			s.log.Warn("read device classes for automatic response", "err", err)
+		}
+		s.maybeAutorun(pa, classes)
+	}()
 }
 
 func (s *Server) ensureAlert(deviceID, kind, sourceID string, build func() presence.Alert) {

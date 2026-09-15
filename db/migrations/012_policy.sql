@@ -92,3 +92,44 @@ CREATE TABLE IF NOT EXISTS break_glass (
 );
 
 CREATE INDEX IF NOT EXISTS break_glass_open_idx ON break_glass (expires_at DESC) WHERE closed_at IS NULL;
+
+-- Playbook runs (roadmap 2.5-2.6).
+--
+-- A run is a record of a sequence, not an authority for one. Each step is
+-- signed and policy-checked individually at the moment it executes, so this
+-- table describes what happened rather than granting anything.
+CREATE TABLE IF NOT EXISTS playbook_runs (
+  id            TEXT PRIMARY KEY,
+  playbook_id   TEXT        NOT NULL,
+  playbook_hash TEXT        NOT NULL DEFAULT '',
+  device_id     TEXT        NOT NULL DEFAULT '',
+  hostname      TEXT        NOT NULL DEFAULT '',
+  started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at   TIMESTAMPTZ,
+  -- running, completed, halted, denied
+  status        TEXT        NOT NULL DEFAULT 'running',
+  -- manual or automatic. Which of the two matters more than almost anything
+  -- else here, so it is a column rather than a detail buried in a payload.
+  origin        TEXT        NOT NULL DEFAULT 'manual',
+  actor         TEXT        NOT NULL DEFAULT '',
+  -- The finding that triggered an automatic run.
+  alert_id      TEXT        NOT NULL DEFAULT '',
+  detail        TEXT        NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS playbook_runs_started_idx ON playbook_runs (started_at DESC);
+CREATE INDEX IF NOT EXISTS playbook_runs_playbook_idx ON playbook_runs (playbook_id);
+
+CREATE TABLE IF NOT EXISTS playbook_run_steps (
+  run_id      TEXT        NOT NULL REFERENCES playbook_runs(id) ON DELETE CASCADE,
+  position    INT         NOT NULL,
+  step_id     TEXT        NOT NULL,
+  command_type TEXT       NOT NULL,
+  -- issued, denied, awaiting-approval, skipped, failed
+  status      TEXT        NOT NULL,
+  command_id  TEXT        NOT NULL DEFAULT '',
+  pending_id  TEXT        NOT NULL DEFAULT '',
+  detail      TEXT        NOT NULL DEFAULT '',
+  at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (run_id, position)
+);

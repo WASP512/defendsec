@@ -740,9 +740,30 @@ step is still individually signed and individually policy-checked. This turns th
 `run_script` / `quarantine_path` primitives (which the paper notes have no UI at all today) into
 an operator-visible capability.
 
+*Delivered.* A playbook is not an authority: each step is signed and policy-checked individually
+at the moment it runs, against the host it targets, because a sequence executing three commands on
+one decision would be a way to smuggle past the engine. A step that is refused or needs a second
+approver halts the run rather than being skipped — skipping quietly turns a four-step response
+into a three-step one, and the missing step is usually the dangerous one. Binding the triggering
+finding into a payload is done on decoded values, never on serialised text: these paths come from
+files on a possibly-compromised host, so a crafted filename interpolated into JSON would rewrite
+the rest of the command, and that command would then be correctly signed. A placeholder must be
+the whole value; embedded ones are refused rather than interpolated.
+
 **2.6 — Opt-in automatic response.** Only now is this safe: playbooks may fire without human
 confirmation *when policy allows it*, bounded by blast radius, fully attributed in the ledger.
 Preserves the paper's "default is human-approved" principle while removing the ceiling on it.
+
+*Delivered.* Three independent gates must agree: the playbook opts in, its trigger matches, and
+policy permits every step. Any one refusing stops it, which is what makes the feature safe to
+offer — the human confirmation is replaced by policy rather than removed. A second brake,
+independent of policy's limits, suppresses repeat automatic runs of the same playbook on the same
+host for an hour: it stops the loop where a playbook triggers on a finding it caused (FIM detects
+a change, the playbook quarantines the file, quarantining changes the filesystem, FIM detects
+that). Policy limits would eventually stop that too, but only after spending the fleet-wide budget
+a real incident needs. Suppression is recorded rather than silent. The one shipped automatic
+playbook only reads, and a test enforces that nothing shipped with `automatic: true` changes
+state.
 
 **Acceptance:** a policy denial is impossible to bypass through the API; a two-person command
 cannot be signed with one approval; blast-radius limits demonstrably stop a runaway playbook;

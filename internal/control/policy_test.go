@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"defendsec/internal/playbook"
 	"defendsec/internal/policy"
 )
 
@@ -222,5 +223,58 @@ func TestDenyResponseNamesTheRule(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("the refusal omits %q: %s", want, body)
 		}
+	}
+}
+
+// A playbook must not be an authority of its own: with no policy loaded,
+// every step is refused just as a single command would be.
+func TestPlaybookStepsAreNotExemptFromPolicy(t *testing.T) {
+	s := testServer()
+	d, err := s.authorise(t.Context(), policy.Request{
+		Actor: "system:automatic-response", Role: "admin",
+		CommandType: "isolate", DeviceID: "dev-1", At: time.Now().UTC(),
+		Approvals: []string{"system:automatic-response"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Allowed() {
+		t.Fatal("an automatic-response actor bypassed policy")
+	}
+}
+
+// Automatic response needs playbooks and a database; without either it must
+// be a quiet no-op rather than an error path nobody sees.
+func TestAutorunIsANoOpWithoutPlaybooks(t *testing.T) {
+	s := testServer()
+	s.maybeAutorun(playbook.Alert{ID: "a1", Kind: "fim", DeviceID: "dev-1"}, nil)
+}
+
+func TestPlaybooksEndpointRequiresAuth(t *testing.T) {
+	s := testServer()
+	for token, wantOK := range map[string]bool{
+		"admin-token":  true,
+		"viewer-token": true,
+		"bogus":        false,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/playbooks", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		s.HandlePlaybooks(rec, req)
+		if wantOK && rec.Code != http.StatusOK {
+			t.Errorf("token %q: status=%d, want 200", token, rec.Code)
+		}
+		if !wantOK && rec.Code != http.StatusUnauthorized {
+			t.Errorf("token %q: status=%d, want 401", token, rec.Code)
+		}
+	}
+
+	// Running one is admin-only: a sequence of signed commands is not a read.
+	req := httptest.NewRequest(http.MethodPost, "/v1/playbooks", http.NoBody)
+	req.Header.Set("Authorization", "Bearer viewer-token")
+	rec := httptest.NewRecorder()
+	s.HandlePlaybooks(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Error("a viewer ran a playbook")
 	}
 }

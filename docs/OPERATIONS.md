@@ -215,6 +215,172 @@ When Postgres is enabled, apid prunes on startup:
 
 ---
 
+## Response policy
+
+Before Phase 2, an admin token could issue any command to any host. Now a **deny-by-default policy
+engine sits between the API and the signer**: a command no rule permits is never signed, so it
+cannot run even if the console is bypassed entirely — the agent checks a signature that was never
+produced. A UI that hides a button enforces nothing; an unsigned command is inert.
+
+```bash
+DEFENDSEC_POLICY_FILE=/etc/defendsec/policy.yaml
+```
+
+**Without this set, every host command is refused.** That is the correct posture for an
+unconfigured response tool, and apid says so loudly at startup. Start from the shipped example:
+
+```bash
+sudo cp /opt/defendsec/packaging/policy/default.yaml /etc/defendsec/policy.yaml
+```
+
+Keep it in version control. "Who changed this rule, and when" is the first question asked after a
+command that should not have been permitted, and a policy editable only through a web form has no
+answer. A file that fails to parse **refuses to start** rather than half-loading — the rules that
+failed to parse are exactly the ones nobody notices are missing — and a misspelled key is an error,
+because silently dropping `host_clases` turns a narrow rule into a fleet-wide one.
+
+### How rules are evaluated
+
+1. Any matching **deny** wins, regardless of where it sits in the file. Order-dependent policy is
+   policy nobody can reason about.
+2. Otherwise the **strictest matching permit** applies, so adding a permissive rule never silently
+   removes an approval requirement.
+3. If nothing matches, the command is **denied**.
+
+```yaml
+rules:
+  - id: isolate-production-needs-two
+    effect: permit
+    commands: [isolate]
+    roles: [admin]
+    host_classes: [production]
+    require_approvals: 2
+
+  - id: never-disrupt-domain-controllers
+    effect: deny
+    commands: [kill_process, quarantine_path, run_script]
+    host_classes: [domain-controller]
+    reason: >-
+      A domain controller losing a process takes estate-wide authentication
+      down. Isolate it instead.
+
+limits:
+  - id: isolate-fleet-hourly
+    commands: [isolate]
+    scope: fleet      # fleet is the default; a per-host cap would let a
+    max: 5            # runaway isolate the estate one host at a time
+    per: 1h
+```
+
+A `reason` is **required** on every deny rule and is returned to whoever the rule stops. A refusal
+that says only "forbidden" produces a support ticket and then a request for a bypass; one that
+names the rule produces a conversation about the rule.
+
+### Host classes
+
+Rules match on classes carried by the host, so they stay correct as the estate changes:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"deviceId":"<id>","classes":["production","critical"]}' \
+  http://127.0.0.1:47264/v1/policy/host-classes
+```
+
+Reclassifying a host changes what policy permits against it, so it is an authorisation change and
+is recorded in the ledger.
+
+### Two-person integrity
+
+A command whose rule sets `require_approvals: 2` comes back `202 Accepted` and is stored
+**unsigned** — deliberately not a signed command with a pending flag, so flipping a status column
+in the database yields nothing an agent will execute. Approvals are keyed on (request, actor), so
+the same administrator clicking twice is one approval.
+
+```bash
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  http://127.0.0.1:47264/v1/policy/approvals
+
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' -d '{"pendingId":"<id>"}' \
+  http://127.0.0.1:47264/v1/policy/approvals
+```
+
+On the final approval the command is **re-evaluated against policy** before signing. Minutes have
+passed: a limit may now be exhausted, a window may have closed, the host may have been
+reclassified. Requests expire after 30 minutes, because one that never expires is a way to get a
+command signed weeks later under conditions nobody re-examined.
+
+### Break-glass
+
+A time-boxed bypass for an emergency policy did not anticipate:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"justification":"active ransomware on the finance segment","minutes":30}' \
+  http://127.0.0.1:47264/v1/policy/break-glass
+```
+
+A written justification of at least 20 characters is required and is shown to every administrator
+as an undismissable banner until it expires. Maximum four hours — an emergency lasting longer is a
+situation, and a situation should have a rule.
+
+**Two things it does not override**, by design:
+
+- **An explicit deny.** A bypass is for reaching what policy never anticipated, not for doing the
+  one thing it went out of its way to forbid.
+- **A two-person requirement.** The whole point of that control is that one person cannot act
+  alone; a bypass one person can open would remove it.
+
+### Playbooks
+
+Named, reviewable sequences in `DEFENDSEC_PLAYBOOK_DIR`:
+
+```bash
+DEFENDSEC_PLAYBOOK_DIR=/etc/defendsec/playbooks
+```
+
+A playbook is **not an authority**. Every step is signed and policy-checked individually, at the
+moment it runs, against the host it targets — a sequence that executed three commands on one
+policy decision would be a way to smuggle past the engine. A step that is refused or needs a
+second approver **halts the run** rather than being skipped: skipping quietly turns a four-step
+response into a three-step one, and the missing step is usually the dangerous one.
+
+Steps can reference the triggering finding (`{{alert.path}}`, `{{alert.deviceId}}`, and so on).
+A placeholder must be the **whole value**, never embedded in a longer string — these paths come
+from files on a possibly-compromised host, and interpolating one into a payload would let a
+crafted filename rewrite the rest of the command.
+
+### Automatic response
+
+Setting `automatic: true` on a playbook lets it run without anyone pressing a button. Three gates
+must all agree: the playbook opts in, its trigger matches, and **policy permits every step**. The
+human confirmation is replaced by policy, not removed. A second brake suppresses repeat automatic
+runs of the same playbook on the same host for an hour, which stops the loop where a playbook
+triggers on a finding it caused.
+
+The shipped example that runs automatically only performs a `live_query`. Nothing that changes
+state ships as automatic, and you should hold anything you add to the same bar until you trust the
+trigger on your own estate.
+
+### Reviewing decisions
+
+Every evaluation, permit and deny alike, goes to the tamper-evident ledger with the SHA-256 of the
+policy document that made it — so "what did the policy say at the time" is answerable from the
+ledger rather than from what is on disk today. The **Response** page shows the rules, the pending
+approvals and the recent decisions.
+
+```bash
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  'http://127.0.0.1:47264/v1/policy/decisions?effect=deny'
+```
+
+Denials are the half that matters after an incident. "Did anyone try" is a question only a
+deny-by-default engine can answer.
+
+---
+
 ## Transparency anchoring
 
 The hash chain defeats anyone who can edit the database. Signed checkpoints defeat anyone who can

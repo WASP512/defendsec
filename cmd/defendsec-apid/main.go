@@ -27,6 +27,7 @@ import (
 	"defendsec/internal/db"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
+	"defendsec/internal/playbook"
 	"defendsec/internal/policy"
 	"defendsec/internal/presence"
 	"defendsec/internal/secret"
@@ -247,6 +248,31 @@ func run(log *slog.Logger) error {
 			"fix", "set DEFENDSEC_POLICY_FILE to a policy document, for example packaging/policy/default.yaml")
 	}
 
+	// Playbooks (roadmap 2.5-2.6). Every step is still policy-checked and
+	// signed individually, so loading a playbook grants nothing on its own.
+	if dir := strings.TrimSpace(os.Getenv("DEFENDSEC_PLAYBOOK_DIR")); dir != "" {
+		set, err := playbook.LoadDir(dir)
+		if err != nil {
+			// One bad file fails the load. A partial set means the operator
+			// believes a playbook exists when it does not, and finds out
+			// during the incident it was written for.
+			return fmt.Errorf("playbooks: %w", err)
+		}
+		svc.SetPlaybooks(set)
+		var automatic int
+		for _, pb := range set.All() {
+			if pb.Automatic {
+				automatic++
+			}
+		}
+		log.Info("playbooks loaded", "count", set.Len(), "automatic", automatic, "dir", dir)
+		if automatic > 0 {
+			log.Warn("automatic response is enabled for some playbooks",
+				"automatic", automatic,
+				"note", "these run without human confirmation when policy permits every step")
+		}
+	}
+
 	// Transparency anchoring (roadmap 1.6).
 	adminMux.HandleFunc("/v1/audit/anchors", svc.HandleAnchors)
 	// The peer receive endpoint is on the admin listener because that is the
@@ -261,6 +287,7 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/policy/approvals", svc.HandleApprovals)
 	adminMux.HandleFunc("/v1/policy/break-glass", svc.HandleBreakGlass)
 	adminMux.HandleFunc("/v1/policy/host-classes", svc.HandleHostClasses)
+	adminMux.HandleFunc("/v1/playbooks", svc.HandlePlaybooks)
 
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
@@ -271,6 +298,31 @@ func run(log *slog.Logger) error {
 		Addr:              *httpAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Playbooks (roadmap 2.5-2.6). Every step is still policy-checked and
+	// signed individually, so loading a playbook grants nothing on its own.
+	if dir := strings.TrimSpace(os.Getenv("DEFENDSEC_PLAYBOOK_DIR")); dir != "" {
+		set, err := playbook.LoadDir(dir)
+		if err != nil {
+			// One bad file fails the load. A partial set means the operator
+			// believes a playbook exists when it does not, and finds out
+			// during the incident it was written for.
+			return fmt.Errorf("playbooks: %w", err)
+		}
+		svc.SetPlaybooks(set)
+		var automatic int
+		for _, pb := range set.All() {
+			if pb.Automatic {
+				automatic++
+			}
+		}
+		log.Info("playbooks loaded", "count", set.Len(), "automatic", automatic, "dir", dir)
+		if automatic > 0 {
+			log.Warn("automatic response is enabled for some playbooks",
+				"automatic", automatic,
+				"note", "these run without human confirmation when policy permits every step")
+		}
 	}
 
 	// Transparency anchoring (roadmap 1.6). Unset means no anchoring, which is
