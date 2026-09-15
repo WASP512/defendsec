@@ -206,3 +206,37 @@ func TestSameContentDifferentPositionHashesDifferently(t *testing.T) {
 		seen[e.EntryHash] = true
 	}
 }
+
+// Regression: a valid checkpoint presented with no entries must fail. Wiping
+// audit_log while leaving audit_checkpoints in place is precisely the attack
+// checkpoints exist to catch, and returning success there made the control
+// worthless against a database actor.
+func TestVerifyAgainstCheckpointRejectsEmptyRange(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain := buildChain(t, 5)
+	cp := SignCheckpoint(priv, Checkpoint{
+		ThroughSeq:   chain[4].Seq,
+		EntryHash:    chain[4].EntryHash,
+		At:           time.Date(2026, 9, 15, 9, 0, 0, 0, time.UTC),
+		SigningKeyID: "test-key",
+	})
+
+	err = VerifyAgainstCheckpoint(pub, Genesis, nil, cp)
+	if err == nil {
+		t.Fatal("a wiped chain must not verify against a still-valid checkpoint")
+	}
+	var te *TamperError
+	if !errors.As(err, &te) {
+		t.Fatalf("want *TamperError, got %T: %v", err, err)
+	}
+	if te.Seq != cp.ThroughSeq {
+		t.Errorf("failure should name the attested sequence %d, got %d", cp.ThroughSeq, te.Seq)
+	}
+
+	if err := VerifyAgainstCheckpoint(pub, Genesis, []Entry{}, cp); err == nil {
+		t.Fatal("an empty (non-nil) slice must fail the same way")
+	}
+}

@@ -198,8 +198,16 @@ func VerifyAgainstCheckpoint(pub ed25519.PublicKey, prevHash string, entries []E
 	if err := VerifyFrom(prevHash, entries); err != nil {
 		return err
 	}
+	// An empty range can never reach a checkpoint. Treating it as a match
+	// would pass exactly the wholesale deletion that checkpoints exist to
+	// catch: wipe audit_log, leave audit_checkpoints, and every signature
+	// still verifies against nothing.
 	if len(entries) == 0 {
-		return nil
+		return &TamperError{
+			Seq:    c.ThroughSeq,
+			At:     c.At,
+			Reason: fmt.Sprintf("checkpoint attests the chain through sequence %d, but no entries were supplied", c.ThroughSeq),
+		}
 	}
 	last := entries[len(entries)-1]
 	if last.Seq != c.ThroughSeq {

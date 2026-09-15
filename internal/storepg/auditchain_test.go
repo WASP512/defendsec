@@ -10,6 +10,7 @@ import (
 
 	"defendsec/internal/auditchain"
 	"defendsec/internal/cmdlog"
+	"defendsec/internal/evidence"
 	"defendsec/internal/sign"
 )
 
@@ -243,5 +244,137 @@ func TestCommandProofRoundTripAndVerifies(t *testing.T) {
 	if err := sign.VerifyStored(key.Public, again[0].DeviceID, again[0].ID, again[0].Type,
 		again[0].IssuedUnix, again[0].ExpiresUnix, []byte(again[0].Payload), again[0].Signature); err == nil {
 		t.Fatal("an edited payload must fail signature verification")
+	}
+}
+
+// Regression for the paging bypass: VerifyAuditChain used to read a single
+// default 1000-row page, so anything past sequence 1000 was reported intact no
+// matter what had been done to it. A database actor only had to wait out the
+// first thousand events.
+func TestVerifyAuditChainCoversBeyondOnePage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("writes more than a page of audit entries")
+	}
+	s := testStore(t)
+	ctx := context.Background()
+	resetAuditChain(t, s)
+
+	const total = auditChainPage + 25
+	for i := 0; i < total; i++ {
+		if err := s.Audit(ctx, "admin", "command_issue", "device-1", map[string]any{"i": i}); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+	if err := s.VerifyAuditChain(ctx); err != nil {
+		t.Fatalf("an intact chain longer than one page should verify: %v", err)
+	}
+
+	// Tamper past the old cut-off. This previously went undetected.
+	victim := int64(auditChainPage + 10)
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE audit_log SET actor='not-the-real-actor' WHERE seq=$1`, victim); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.VerifyAuditChain(ctx)
+	if err == nil {
+		t.Fatalf("tampering at sequence %d must be detected", victim)
+	}
+	var te *auditchain.TamperError
+	if !errors.As(err, &te) {
+		t.Fatalf("want *auditchain.TamperError, got %T: %v", err, err)
+	}
+	if te.Seq != victim {
+		t.Errorf("break localised to entry %d, want %d", te.Seq, victim)
+	}
+	t.Logf("detected past the page boundary: %v", err)
+}
+
+// Regression for the export bypass: ExportEvidence reused ListCommands, which
+// is hard-capped at 200 rows for console display, so a bundle silently omitted
+// older commands while claiming to cover them.
+func TestExportEvidenceDoesNotTruncateCommands(t *testing.T) {
+	if testing.Short() {
+		t.Skip("writes more than the console command cap")
+	}
+	s := testStore(t)
+	ctx := context.Background()
+	resetAuditChain(t, s)
+
+	key, err := sign.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := randID(t)
+
+	const total = 250 // above the 200-row console cap
+	for i := 0; i < total; i++ {
+		id := randID(t)
+		env := sign.Envelope{
+			DeviceID: device, CommandID: id, Type: "isolate",
+			IssuedUnix: 1789200000, ExpiresUnix: 1789200120,
+			Payload: []byte(`{"reason":"test"}`),
+		}
+		if err := s.AppendCommand(ctx, cmdlog.Record{
+			ID: id, DeviceID: device, Hostname: "host", Type: env.Type,
+			Payload: string(env.Payload), Status: "sent",
+			CreatedAt: "2026-09-15T08:00:00Z", UpdatedAt: "2026-09-15T08:00:00Z",
+			Signature:    base64.StdEncoding.EncodeToString(key.Sign(env)),
+			SigningKeyID: key.KeyID(), IssuedUnix: env.IssuedUnix, ExpiresUnix: env.ExpiresUnix,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	b, err := s.ExportEvidence(ctx, string(key.PublicPEM()), "srv", "scope", device, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Commands) != total {
+		t.Fatalf("bundle carries %d commands, want all %d — the export truncated", len(b.Commands), total)
+	}
+	if r := evidence.Verify(b); !r.OK() {
+		t.Fatalf("exported bundle should verify: %+v", r.Checks)
+	}
+	if r := evidence.Verify(b); r.CommandsVerified != total {
+		t.Errorf("verified %d commands, want %d", r.CommandsVerified, total)
+	}
+}
+
+// A bundle exported from a chain longer than one page must carry the whole
+// range, not a silently truncated prefix.
+func TestExportEvidenceDoesNotTruncateAuditChain(t *testing.T) {
+	if testing.Short() {
+		t.Skip("writes more than a page of audit entries")
+	}
+	s := testStore(t)
+	ctx := context.Background()
+	resetAuditChain(t, s)
+
+	key, err := sign.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const total = auditChainPage + 15
+	for i := 0; i < total; i++ {
+		if err := s.Audit(ctx, "admin", "command_issue", "device-1", map[string]any{"i": i}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok, err := s.AppendCheckpoint(ctx, key.Private, key.KeyID()); err != nil || !ok {
+		t.Fatalf("checkpoint: %v %v", ok, err)
+	}
+
+	b, err := s.ExportEvidence(ctx, string(key.PublicPEM()), "srv", "scope", "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Audit) != total {
+		t.Fatalf("bundle carries %d audit entries, want all %d", len(b.Audit), total)
+	}
+	// The checkpoint sits at the tip, so coverage must line up exactly.
+	r := evidence.Verify(b)
+	if !r.OK() {
+		t.Fatalf("a full-range export should verify: %+v", r.Checks)
 	}
 }

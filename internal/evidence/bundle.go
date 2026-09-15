@@ -240,9 +240,19 @@ func verifyCheckpoints(b *Bundle, pub ed25519.PublicKey, rep *Report) {
 			rep.add("checkpoints", false, "%v", err)
 			return
 		}
-		// A valid signature over a hash the entries do not reach means the
-		// range was altered after the server committed to it.
-		if hash, ok := byTip[cp.ThroughSeq]; ok && hash != cp.EntryHash {
+		// A checkpoint is only evidence if the entries it attests are here to
+		// compare against. Accepting one whose sequence is absent would pass
+		// the wholesale-deletion case checkpoints exist to catch: drop every
+		// audit row, keep the checkpoints, and each signature still verifies
+		// against nothing.
+		hash, present := byTip[cp.ThroughSeq]
+		if !present {
+			rep.add("checkpoints", false,
+				"checkpoint attests the chain through sequence %d, but no entry with that sequence is in this bundle",
+				cp.ThroughSeq)
+			return
+		}
+		if hash != cp.EntryHash {
 			rep.add("checkpoints", false,
 				"checkpoint %d attests hash %s but entry %d in this bundle hashes to %s",
 				cp.ThroughSeq, short(cp.EntryHash), cp.ThroughSeq, short(hash))
@@ -250,22 +260,19 @@ func verifyCheckpoints(b *Bundle, pub ed25519.PublicKey, rep *Report) {
 		}
 		rep.CheckpointsChecked++
 	}
-	rep.add("checkpoints", true, "%d signed checkpoint(s) verified", rep.CheckpointsChecked)
+	rep.add("checkpoints", true, "%d signed checkpoint(s) verified against the entries present", rep.CheckpointsChecked)
 
 	// Guard against a bundle that drops entries after its last checkpoint.
-	if len(b.Audit) > 0 {
-		highest := int64(0)
-		for _, cp := range b.Checkpoints {
-			if cp.ThroughSeq > highest {
-				highest = cp.ThroughSeq
-			}
+	highest := int64(0)
+	for _, cp := range b.Checkpoints {
+		if cp.ThroughSeq > highest {
+			highest = cp.ThroughSeq
 		}
-		if highest > b.Manifest.ThroughSeq {
-			rep.add("coverage", false,
-				"a checkpoint attests through sequence %d but the bundle stops at %d, so entries are missing",
-				highest, b.Manifest.ThroughSeq)
-			return
-		}
+	}
+	if highest > b.Manifest.ThroughSeq {
+		rep.add("coverage", false,
+			"a checkpoint attests through sequence %d but the bundle stops at %d, so entries are missing",
+			highest, b.Manifest.ThroughSeq)
 	}
 }
 

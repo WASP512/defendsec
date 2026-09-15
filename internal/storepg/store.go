@@ -224,14 +224,61 @@ func (s *Store) ListAuditChain(ctx context.Context, fromSeq int64, limit int) ([
 	return out, rows.Err()
 }
 
-// VerifyAuditChain walks the stored chain from its start and reports the first
-// entry whose contents no longer match its hash, as an *auditchain.TamperError.
+// auditChainPage is how many entries VerifyAuditChain pulls at a time. The
+// chain is verified in full regardless; this only bounds memory.
+const auditChainPage = 1000
+
+// VerifyAuditChain walks the entire stored chain and reports the first entry
+// whose contents no longer match its hash, as an *auditchain.TamperError.
+//
+// It pages rather than taking one bounded read. An earlier version asked
+// ListAuditChain for a single default page, which silently stopped checking
+// at sequence 1000 and reported everything beyond it as intact — a database
+// actor only had to wait out the first thousand events to edit freely.
 func (s *Store) VerifyAuditChain(ctx context.Context) error {
-	entries, err := s.ListAuditChain(ctx, 1, 0)
-	if err != nil {
-		return err
+	prevHash := auditchain.Genesis
+	var fromSeq int64 = 1
+	var seen int64
+
+	for {
+		entries, err := s.ListAuditChain(ctx, fromSeq, auditChainPage)
+		if err != nil {
+			return err
+		}
+		if len(entries) == 0 {
+			return nil
+		}
+		if seen == 0 && entries[0].Seq != 1 {
+			return &auditchain.TamperError{
+				Seq: entries[0].Seq, Actor: entries[0].Actor, Action: entries[0].Action, At: entries[0].At,
+				Reason: "chain does not start at sequence 1",
+			}
+		}
+		if err := auditchain.VerifyFrom(prevHash, entries); err != nil {
+			return err
+		}
+		last := entries[len(entries)-1]
+		prevHash = last.EntryHash
+		fromSeq = last.Seq + 1
+		seen += int64(len(entries))
+
+		if len(entries) < auditChainPage {
+			return nil
+		}
 	}
-	return auditchain.Verify(entries)
+}
+
+// AuditChainTip returns the sequence and hash of the newest chained entry.
+func (s *Store) AuditChainTip(ctx context.Context) (int64, string, error) {
+	var seq int64
+	var hash string
+	err := s.pool.QueryRow(ctx, `
+		SELECT seq, entry_hash FROM audit_log WHERE seq IS NOT NULL ORDER BY seq DESC LIMIT 1
+	`).Scan(&seq, &hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, auditchain.Genesis, nil
+	}
+	return seq, hash, err
 }
 
 // AppendCheckpoint signs the current tip of the chain, so that range can later
@@ -354,6 +401,60 @@ func (s *Store) ListCommands(ctx context.Context, deviceID string) ([]cmdlog.Rec
 		out = append(out, rec)
 	}
 	return out, rows.Err()
+}
+
+// listAllCommands pages through every command for a device, or the whole
+// fleet when deviceID is empty. ListCommands is capped at 200 for console
+// display; an evidence bundle that quietly dropped older commands would
+// misrepresent what it covers, so the export path uses this instead.
+func (s *Store) listAllCommands(ctx context.Context, deviceID string) ([]cmdlog.Record, error) {
+	const page = 500
+	var out []cmdlog.Record
+	var afterCreated time.Time
+	var afterID string
+	first := true
+
+	for {
+		rows, err := s.pool.Query(ctx, `
+			SELECT id, device_id, hostname, type, payload, status, accepted, message, created_at, updated_at,
+			       signature, signing_key_id, issued_unix, expires_unix, actor_identity,
+			       ack_signature, ack_result_hash, ack_executed_unix, ack_verified
+			FROM commands
+			WHERE ($1 = '' OR device_id = $1)
+			  AND ($2::boolean OR (created_at, id) > ($3::timestamptz, $4))
+			ORDER BY created_at, id
+			LIMIT $5
+		`, deviceID, first, afterCreated, afterID, page)
+		if err != nil {
+			return nil, err
+		}
+		n := 0
+		for rows.Next() {
+			var rec cmdlog.Record
+			var created, updated time.Time
+			if err := rows.Scan(&rec.ID, &rec.DeviceID, &rec.Hostname, &rec.Type, &rec.Payload, &rec.Status,
+				&rec.Accepted, &rec.Message, &created, &updated,
+				&rec.Signature, &rec.SigningKeyID, &rec.IssuedUnix, &rec.ExpiresUnix, &rec.ActorIdentity,
+				&rec.AckSignature, &rec.AckResultHash, &rec.AckExecutedUnix, &rec.AckVerified); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			rec.CreatedAt = created.UTC().Format(time.RFC3339)
+			rec.UpdatedAt = updated.UTC().Format(time.RFC3339)
+			out = append(out, rec)
+			afterCreated, afterID = created, rec.ID
+			n++
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		first = false
+		if n < page {
+			return out, nil
+		}
+	}
 }
 
 func (s *Store) UpsertAdvisory(ctx context.Context, id, cve, pkg, below, severity, summary, source string) error {
@@ -504,9 +605,22 @@ func (s *Store) ExportAgentsJSON(ctx context.Context) ([]byte, error) {
 // database, or any credential. Pass deviceID to scope the commands to one
 // host, or "" for all of them.
 func (s *Store) ExportEvidence(ctx context.Context, controlPubPEM, server, scope, deviceID string, fromSeq int64) (*evidence.Bundle, error) {
-	entries, err := s.ListAuditChain(ctx, fromSeq, 0)
-	if err != nil {
-		return nil, err
+	// Page the whole range. A single default read stopped at 1000 entries and
+	// produced a bundle that either failed its own coverage check or looked
+	// complete while missing its tail — either way misrepresenting what it
+	// attests.
+	var entries []auditchain.Entry
+	next := fromSeq
+	for {
+		page, err := s.ListAuditChain(ctx, next, auditChainPage)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, page...)
+		if len(page) < auditChainPage {
+			break
+		}
+		next = page[len(page)-1].Seq + 1
 	}
 
 	b := &evidence.Bundle{
@@ -536,12 +650,19 @@ func (s *Store) ExportEvidence(ctx context.Context, controlPubPEM, server, scope
 		}
 	}
 
+	// Only carry checkpoints that fall inside the range shipped. A checkpoint
+	// attesting past the last entry included would fail the verifier's
+	// coverage check for a reason that is an artefact of export, not tampering.
+	throughSeq := b.Manifest.ThroughSeq
+	if len(entries) == 0 {
+		throughSeq = 0
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT at, through_seq, entry_hash, signing_key_id, signature
 		FROM audit_checkpoints
-		WHERE through_seq >= $1
+		WHERE through_seq >= $1 AND through_seq <= $2
 		ORDER BY through_seq
-	`, fromSeq)
+	`, fromSeq, throughSeq)
 	if err != nil {
 		return nil, err
 	}
@@ -559,7 +680,7 @@ func (s *Store) ExportEvidence(ctx context.Context, controlPubPEM, server, scope
 		return nil, err
 	}
 
-	cmds, err := s.ListCommands(ctx, deviceID)
+	cmds, err := s.listAllCommands(ctx, deviceID)
 	if err != nil {
 		return nil, err
 	}

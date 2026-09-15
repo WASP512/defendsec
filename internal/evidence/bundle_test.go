@@ -151,8 +151,57 @@ func TestVerifyDetectsTruncatedTail(t *testing.T) {
 	if r.OK() {
 		t.Fatal("dropping entries the checkpoint covers must fail")
 	}
-	if c := failing(t, r); c.Name != "coverage" {
-		t.Errorf("want the coverage check to fail, got %+v", c)
+	// The checkpoint check now catches this first and more precisely: the
+	// attested sequence is simply not present. Either integrity check is a
+	// correct place to fail, so long as it fails.
+	c := failing(t, r)
+	if c.Name != "checkpoints" && c.Name != "coverage" {
+		t.Errorf("want an integrity check to fail, got %+v", c)
+	}
+	if !strings.Contains(c.Detail, "6") {
+		t.Errorf("failure should name the attested sequence, got %q", c.Detail)
+	}
+}
+
+// Regression for the wholesale-deletion bypass: dropping every audit entry
+// while leaving the signed checkpoints in place must not verify. Each
+// signature still checks out on its own, so the only thing standing between
+// an assessor and a false pass is requiring the attested entries to be here.
+func TestVerifyDetectsWipedAuditLogWithCheckpointsIntact(t *testing.T) {
+	b, _ := testBundle(t)
+	b.Audit = nil
+	b.Manifest.FromSeq = 0
+	b.Manifest.ThroughSeq = 0
+
+	r := Verify(b)
+	if r.OK() {
+		t.Fatal("a wiped audit log with checkpoints intact must not verify")
+	}
+	c := failing(t, r)
+	if c.Name != "checkpoints" {
+		t.Errorf("want the checkpoints check to fail, got %+v", c)
+	}
+}
+
+// The same wipe, but with the checkpoints dropped too. There is then nothing
+// left attesting the log existed, which is exactly why a bundle without
+// checkpoints is reported as weaker rather than as proof.
+func TestBundleWithoutCheckpointsSaysSo(t *testing.T) {
+	b, _ := testBundle(t)
+	b.Checkpoints = nil
+
+	r := Verify(b)
+	if !r.OK() {
+		t.Fatalf("a bundle with no checkpoints is not itself a failure: %+v", failing(t, r))
+	}
+	var detail string
+	for _, c := range r.Checks {
+		if c.Name == "checkpoints" {
+			detail = c.Detail
+		}
+	}
+	if !strings.Contains(detail, "not detectable") {
+		t.Errorf("the weaker guarantee must be stated, got %q", detail)
 	}
 }
 
