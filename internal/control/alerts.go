@@ -109,7 +109,7 @@ func (s *Server) updateAlertStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "alert not found", http.StatusNotFound)
 		return
 	}
-	s.audit("admin", "alert_status", "", map[string]any{"id": req.ID, "status": req.Status})
+	s.audit(s.actorIdentity(r), "alert_status", "", map[string]any{"id": req.ID, "status": req.Status})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }

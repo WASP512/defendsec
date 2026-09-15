@@ -82,7 +82,7 @@ func (s *Server) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.SetConnected(req.DeviceID, false)
-	s.audit("admin", "cert_revoke", req.DeviceID, map[string]any{
+	s.audit(s.actorIdentity(r), "cert_revoke", req.DeviceID, map[string]any{
 		"fingerprint": req.Fingerprint,
 		"reason":      req.Reason,
 	})
@@ -186,7 +186,7 @@ func (s *Server) HandleAdvisories(w http.ResponseWriter, r *http.Request) {
 			}
 			n++
 		}
-		s.audit("admin", "advisories_import", "", map[string]any{"count": n})
+		s.audit(s.actorIdentity(r), "advisories_import", "", map[string]any{"count": n})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "count": n})
 	default:
@@ -251,7 +251,7 @@ func (s *Server) HandleAgentReleases(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		s.audit("admin", "agent_release_publish", "", map[string]any{"version": req.Version, "channel": req.Channel})
+		s.audit(s.actorIdentity(r), "agent_release_publish", "", map[string]any{"version": req.Version, "channel": req.Channel})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	default:

@@ -14,6 +14,7 @@ import (
 	"defendsec/internal/agentcmd"
 	"defendsec/internal/cmdlog"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
+	"defendsec/internal/identity"
 	"defendsec/internal/sign"
 )
 
@@ -58,7 +59,7 @@ func (s *Server) HandleBaseline(w http.ResponseWriter, r *http.Request) {
 			s.syncDevice(got)
 		}
 	}
-	s.audit("admin", "baseline_accept", deviceID, nil)
+	s.audit(s.actorIdentity(r), "baseline_accept", deviceID, nil)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"ok":true}`))
 }
@@ -115,13 +116,16 @@ func (s *Server) tokenRole(got string) string {
 	return ""
 }
 
+// adminOK and adminWriteOK go through resolveActor, so a per-user session
+// token authorises exactly as the shared tokens did and every existing admin
+// handler gains named identity without being changed.
 func (s *Server) adminOK(r *http.Request) bool {
-	role := s.tokenRole(s.bearerToken(r))
-	return role == "admin" || role == "viewer"
+	role := s.resolveActor(r).Role
+	return role == identity.RoleAdmin || role == identity.RoleViewer
 }
 
 func (s *Server) adminWriteOK(r *http.Request) bool {
-	return s.tokenRole(s.bearerToken(r)) == "admin"
+	return s.resolveActor(r).Role == identity.RoleAdmin
 }
 
 func validateCommandPayload(cmdType string, payload []byte) error {
@@ -185,6 +189,7 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 		ExpiresUnix: now.Add(2 * time.Minute).Unix(),
 		Payload:     payload,
 	}
+	actor := s.resolveActor(r)
 	signature := s.signer.Sign(env)
 	rec := cmdlog.Record{
 		ID:        env.CommandID,
@@ -202,11 +207,11 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 		SigningKeyID: s.signer.KeyID(),
 		IssuedUnix:   env.IssuedUnix,
 		ExpiresUnix:  env.ExpiresUnix,
-		// Every console session shares one bearer token today, so this
-		// records the role rather than a person. Per-user identity is
-		// roadmap 1.0, and until it lands these rows are not attributable
-		// to an individual.
-		ActorIdentity: "shared-admin-token",
+		// Resolved from the caller's own session, so this names the person who
+		// authorised the command. A shared bootstrap token records an explicit
+		// unattributed marker instead of implying an attribution that does not
+		// exist.
+		ActorIdentity: actor.Identity(),
 	}
 	if err := s.commands.Append(rec); err != nil {
 		s.log.Error("command log", "err", err)
@@ -214,7 +219,7 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.syncCommand(rec)
-	s.audit("admin", "command_issue", req.DeviceID, map[string]any{"type": req.Type, "commandId": id})
+	s.audit(s.actorIdentity(r), "command_issue", req.DeviceID, map[string]any{"type": req.Type, "commandId": id})
 	if s.pushSigned(env, signature) {
 		_ = s.commands.Update(id, func(r *cmdlog.Record) {
 			r.Status = "sent"

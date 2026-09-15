@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Siren,
   Terminal,
+  Users,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ConsoleTools } from "@/components/console-tools";
@@ -50,6 +51,7 @@ const nav = [
   { href: "/audit", label: "Audit", icon: ScrollText },
   { href: "/updates", label: "Updates", icon: RefreshCw },
   { href: "/enroll", label: "Enroll", icon: Terminal },
+  { href: "/accounts", label: "Accounts", icon: Users },
   { href: "/scope", label: "Scope", icon: Scale },
 ];
 

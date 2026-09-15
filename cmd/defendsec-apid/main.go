@@ -189,6 +189,15 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/saved-queries", svc.HandleSavedQueries)
 	adminMux.HandleFunc("/v1/alerts", svc.HandleAlerts)
 	adminMux.HandleFunc("/v1/alerts/status", svc.HandleAlerts)
+
+	// Identity (roadmap 1.0). Login and session are unauthenticated by
+	// necessity; everything else resolves the caller's own session token.
+	adminMux.HandleFunc("/v1/login", svc.HandleLogin)
+	adminMux.HandleFunc("/v1/logout", svc.HandleLogout)
+	adminMux.HandleFunc("/v1/session", svc.HandleSession)
+	adminMux.HandleFunc("/v1/users", svc.HandleUsers)
+	adminMux.HandleFunc("/v1/users/update", svc.HandleUserUpdate)
+	adminMux.HandleFunc("/v1/totp", svc.HandleTOTP)
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
 		Handler:           adminMux,

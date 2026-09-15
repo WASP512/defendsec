@@ -61,7 +61,7 @@ func (s *Server) HandleEnrollSecret(w http.ResponseWriter, r *http.Request) {
 	s.secretMu.Lock()
 	s.secret = next
 	s.secretMu.Unlock()
-	s.audit("admin", "enroll_secret_rotate", "", nil)
+	s.audit(s.actorIdentity(r), "enroll_secret_rotate", "", nil)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"enrollSecret": next})
