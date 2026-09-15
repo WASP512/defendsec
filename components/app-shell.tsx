@@ -19,6 +19,7 @@ import {
   Siren,
   Terminal,
   Users,
+  ClipboardCheck,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ConsoleTools } from "@/components/console-tools";
@@ -49,6 +50,7 @@ const nav = [
   { href: "/integrity", label: "Integrity", icon: FileWarning },
   { href: "/policies", label: "Policies", icon: ShieldCheck },
   { href: "/audit", label: "Audit", icon: ScrollText },
+  { href: "/compliance", label: "Compliance", icon: ClipboardCheck },
   { href: "/updates", label: "Updates", icon: RefreshCw },
   { href: "/enroll", label: "Enroll", icon: Terminal },
   { href: "/accounts", label: "Accounts", icon: Users },
@@ -69,13 +71,19 @@ export function AppShell({
   readOnly?: boolean;
 }) {
   const pathname = usePathname();
-  const visibleNav = readOnly ? nav.filter((item) => item.href !== "/enroll") : nav;
+  const visibleNav = readOnly
+    ? nav.filter((item) => item.href !== "/enroll")
+    : nav;
   const current = nav.find((item) =>
-    item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`),
+    item.href === "/"
+      ? pathname === "/"
+      : pathname === item.href || pathname.startsWith(`${item.href}/`),
   );
   const destinations = navGroups.flatMap((group) =>
     group.items
-      .filter((item) => visibleNav.some((visible) => visible.href === item.href))
+      .filter((item) =>
+        visibleNav.some((visible) => visible.href === item.href),
+      )
       .map((item) => ({ ...item, group: group.label })),
   );
 
@@ -85,21 +93,29 @@ export function AppShell({
         <SidebarHeader className="border-b">
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton render={<Link href="/" />} size="lg" tooltip="DefendSec">
-                  <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                    <Anchor className="size-4" />
+              <SidebarMenuButton
+                render={<Link href="/" />}
+                size="lg"
+                tooltip="DefendSec"
+              >
+                <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                  <Anchor className="size-4" />
+                </span>
+                <span className="grid flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
+                  <span className="truncate font-semibold">DefendSec</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    Security inventory
                   </span>
-                  <span className="grid flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
-                    <span className="truncate font-semibold">DefendSec</span>
-                    <span className="truncate text-xs text-muted-foreground">Security inventory</span>
-                  </span>
+                </span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarHeader>
         <SidebarContent>
           {navGroups.map((group) => {
-            const items = group.items.filter((item) => visibleNav.some((visible) => visible.href === item.href));
+            const items = group.items.filter((item) =>
+              visibleNav.some((visible) => visible.href === item.href),
+            );
             if (items.length === 0) return null;
             return (
               <SidebarGroup key={group.label}>
@@ -111,12 +127,19 @@ export function AppShell({
                       const active =
                         item.href === "/"
                           ? pathname === "/"
-                          : pathname === item.href || pathname.startsWith(`${item.href}/`);
+                          : pathname === item.href ||
+                            pathname.startsWith(`${item.href}/`);
                       return (
                         <SidebarMenuItem key={item.href}>
-                          <SidebarMenuButton render={<Link href={item.href} />} isActive={active} tooltip={item.label}>
-                              <Icon />
-                              <span className="group-data-[collapsible=icon]:hidden">{item.label}</span>
+                          <SidebarMenuButton
+                            render={<Link href={item.href} />}
+                            isActive={active}
+                            tooltip={item.label}
+                          >
+                            <Icon />
+                            <span className="group-data-[collapsible=icon]:hidden">
+                              {item.label}
+                            </span>
                           </SidebarMenuButton>
                         </SidebarMenuItem>
                       );
@@ -133,7 +156,9 @@ export function AppShell({
               <form action="/api/logout" method="post">
                 <SidebarMenuButton type="submit" tooltip="Sign out">
                   <LogOut />
-                  <span className="group-data-[collapsible=icon]:hidden">Sign out</span>
+                  <span className="group-data-[collapsible=icon]:hidden">
+                    Sign out
+                  </span>
                 </SidebarMenuButton>
               </form>
             </SidebarMenuItem>
@@ -145,11 +170,16 @@ export function AppShell({
         <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-4 backdrop-blur">
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mx-1 h-4" />
-          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
+          <Link
+            href="/"
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
             Console
           </Link>
           <ChevronRight className="size-3.5 text-muted-foreground" />
-          <span className="text-sm font-medium">{current?.label ?? "DefendSec"}</span>
+          <span className="text-sm font-medium">
+            {current?.label ?? "DefendSec"}
+          </span>
           <div className="ml-auto flex items-center gap-1">
             <ConsoleTools destinations={destinations} />
           </div>
@@ -159,8 +189,9 @@ export function AppShell({
             <div className="mx-auto mb-6 flex max-w-6xl items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
               <ShieldAlert className="mt-0.5 size-4 shrink-0" />
               <p>
-                <span className="font-medium">Viewer session.</span> Signed commands, revoke, and
-                alert status changes require an admin token.
+                <span className="font-medium">Viewer session.</span> Signed
+                commands, revoke, and alert status changes require an admin
+                token.
               </p>
             </div>
           ) : null}

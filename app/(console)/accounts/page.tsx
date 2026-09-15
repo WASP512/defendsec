@@ -2,8 +2,18 @@ import { redirect } from "next/navigation";
 
 import { AccountsPanel } from "@/components/accounts-panel";
 import { PageHeader } from "@/components/console-ui";
-import { currentActorIdentity, currentUser, isAdminSession, isReadOnlySession } from "@/lib/auth";
-import { apidListUsers, getIdentityErrorMessage } from "@/lib/identity-server";
+import { CryptoPostureCard } from "@/components/crypto-posture-card";
+import {
+  currentActorIdentity,
+  currentUser,
+  isAdminSession,
+  isReadOnlySession,
+} from "@/lib/auth";
+import {
+  apidCryptoPosture,
+  apidListUsers,
+  getIdentityErrorMessage,
+} from "@/lib/identity-server";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +28,7 @@ export default async function AccountsPage() {
   const me = await currentUser();
   const actorIdentity = await currentActorIdentity();
   const { users, error } = await apidListUsers();
+  const posture = await apidCryptoPosture();
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -25,8 +36,9 @@ export default async function AccountsPage() {
         title="Accounts"
         description={
           <>
-            Operator accounts. Every signed command and audit entry records the account that
-            authorised it, so responses can be traced to a person rather than a shared token.
+            Operator accounts. Every signed command and audit entry records the
+            account that authorised it, so responses can be traced to a person
+            rather than a shared token.
           </>
         }
       />
@@ -38,6 +50,7 @@ export default async function AccountsPage() {
         totpEnabled={me?.totpEnabled ?? false}
         loadError={error ? getIdentityErrorMessage(error) : null}
       />
+      <CryptoPostureCard posture={posture} />
     </div>
   );
 }

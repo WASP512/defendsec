@@ -84,6 +84,10 @@ type Alert struct {
 	GeneratorID      string         `json:"generatorId,omitempty"`
 	GeneratorVersion string         `json:"generatorVersion,omitempty"`
 	Detail           map[string]any `json:"detail,omitempty"`
+	// Signal names what was observed, and ControlIDs are the framework
+	// controls it resolved to when the alert was raised (roadmap 1.7).
+	Signal     string   `json:"signal,omitempty"`
+	ControlIDs []string `json:"controlIds,omitempty"`
 }
 
 type Device struct {

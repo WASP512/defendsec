@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"defendsec/internal/evidence"
 )
@@ -87,6 +88,10 @@ func printReport(b *evidence.Bundle, r evidence.Report) {
 	}
 	fmt.Println()
 
+	if b.Compliance != nil {
+		printCompliance(b.Compliance)
+	}
+
 	if r.OK() {
 		fmt.Println("VERIFIED — every check passed.")
 		if r.CommandsUnsigned > 0 {
@@ -98,4 +103,60 @@ func printReport(b *evidence.Bundle, r evidence.Report) {
 		return
 	}
 	fmt.Println("FAILED — this bundle does not verify. See the failing check above.")
+}
+
+// printCompliance renders a scoped bundle's assessment.
+//
+// The per-control lines are grouped by status with the problems first,
+// because an assessor reading this wants the deficiencies and the gaps, not a
+// scroll through everything that passed. Nothing here is a percentage: what
+// DefendSec cannot evidence is listed by name so it cannot be rounded away.
+func printCompliance(c *evidence.ComplianceScope) {
+	fmt.Printf("compliance assessment — %s\n", c.FrameworkTitle)
+	if c.PeriodName != "" {
+		fmt.Printf("period    %s\n", c.PeriodName)
+	}
+	fmt.Printf("window    %s to %s\n\n",
+		c.From.UTC().Format("2006-01-02"), c.To.UTC().Format("2006-01-02"))
+
+	// Worst first. A reader who stops after the first screen should have seen
+	// the things that need attention.
+	order := []string{"deficient", "excepted", "no-evidence", "not-evidenced", "satisfied"}
+	byStatus := map[string][]evidence.ControlSummary{}
+	for _, cs := range c.Controls {
+		byStatus[cs.Status] = append(byStatus[cs.Status], cs)
+	}
+	for _, status := range order {
+		group := byStatus[status]
+		if len(group) == 0 {
+			continue
+		}
+		fmt.Printf("  %s (%d)\n", strings.ToUpper(status), len(group))
+		for _, cs := range group {
+			// A control DefendSec evidences only in part must not read as a
+			// clean pass just because it is in the satisfied group.
+			qualifier := ""
+			if status == "satisfied" && cs.Coverage == "partial" {
+				qualifier = "  [partial coverage]"
+			}
+			fmt.Printf("    %-22s %s%s\n", cs.ID, cs.Title, qualifier)
+			if status != "satisfied" || qualifier != "" {
+				fmt.Printf("      %s\n", cs.Statement)
+			}
+			for _, e := range cs.Exceptions {
+				fmt.Printf("      exception: %s (opened by %s, expires %s)\n",
+					e.Reason, e.OpenedBy, e.ExpiresAt.UTC().Format("2006-01-02"))
+			}
+		}
+		fmt.Println()
+	}
+
+	if len(c.Caveats) > 0 {
+		fmt.Println("  read this before relying on any of the above:")
+		for _, caveat := range c.Caveats {
+			fmt.Printf("    - %s\n", caveat)
+		}
+		fmt.Println()
+	}
+	fmt.Printf("  provenance: %s\n\n", c.Provenance)
 }

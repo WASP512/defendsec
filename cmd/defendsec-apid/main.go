@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	"defendsec/db/migrations"
+	"defendsec/internal/anchor"
 	"defendsec/internal/cmdlog"
 	"defendsec/internal/control"
 	"defendsec/internal/db"
@@ -118,6 +119,10 @@ func run(log *slog.Logger) error {
 		log.Info("viewer token enabled (GET-only admin API)")
 	}
 
+	// Held outside the block so the background checkpoint loop below can use
+	// it; nil when no database is configured.
+	var pg *storepg.Store
+
 	if url := db.ResolveURL(*dbURL); url != "" {
 		pool, err := db.Open(context.Background(), url)
 		if err != nil {
@@ -126,7 +131,7 @@ func run(log *slog.Logger) error {
 		if err := migrations.Apply(context.Background(), pool); err != nil {
 			return fmt.Errorf("postgres migrations: %w", err)
 		}
-		pg := storepg.New(pool)
+		pg = storepg.New(pool)
 		svc.SetPostgres(pg)
 		log.Info("postgres enabled")
 		alertDays := 90
@@ -157,6 +162,17 @@ func run(log *slog.Logger) error {
 		}
 		sessCancel()
 		pruneCancel()
+
+		// Materialise the compiled-in control catalog so compliance queries
+		// can join it in SQL (roadmap 1.7). The Go registry remains the
+		// source of truth; this is rebuilt from it on every start.
+		ctlCtx, ctlCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if n, err := pg.SyncControlCatalog(ctlCtx); err != nil {
+			log.Warn("control catalog sync", "err", err)
+		} else {
+			log.Info("control catalog sync", "controls", n)
+		}
+		ctlCancel()
 		defer pool.Close()
 	}
 
@@ -198,6 +214,26 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/users", svc.HandleUsers)
 	adminMux.HandleFunc("/v1/users/update", svc.HandleUserUpdate)
 	adminMux.HandleFunc("/v1/totp", svc.HandleTOTP)
+	adminMux.HandleFunc("/v1/crypto-posture", svc.HandleCryptoPosture)
+
+	// Compliance (roadmap 1.7).
+	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
+
+	// The audit layer (roadmap 1.9).
+	adminMux.HandleFunc("/v1/audit/periods", svc.HandleAuditPeriods)
+	adminMux.HandleFunc("/v1/audit/periods/close", svc.HandleAuditPeriodClose)
+	adminMux.HandleFunc("/v1/audit/exceptions", svc.HandleControlExceptions)
+	adminMux.HandleFunc("/v1/audit/assessment", svc.HandleAuditAssessment)
+	adminMux.HandleFunc("/v1/audit/evidence", svc.HandleEvidenceExport)
+
+	// Transparency anchoring (roadmap 1.6).
+	adminMux.HandleFunc("/v1/audit/anchors", svc.HandleAnchors)
+	// The peer receive endpoint is on the admin listener because that is the
+	// interface an operator chooses to expose; it authenticates with its own
+	// shared token rather than the admin one, so a peer never holds admin
+	// access to the instance it anchors for.
+	adminMux.HandleFunc("/v1/anchors/receive", svc.HandleAnchorReceive)
+
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
 		Handler:           adminMux,
@@ -207,6 +243,54 @@ func run(log *slog.Logger) error {
 		Addr:              *httpAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Transparency anchoring (roadmap 1.6). Unset means no anchoring, which is
+	// a real posture rather than a broken one — the ledger is still
+	// tamper-evident against anyone who cannot also sign checkpoints.
+	if raw := strings.TrimSpace(os.Getenv("DEFENDSEC_ANCHOR_TARGETS")); raw != "" {
+		targets, err := anchor.ParseTargets(raw)
+		if err != nil {
+			// Refused rather than skipped: an operator who mistyped a target
+			// would otherwise believe they have anchoring they do not have,
+			// and stop looking.
+			return fmt.Errorf("DEFENDSEC_ANCHOR_TARGETS: %w", err)
+		}
+		server := strings.TrimSpace(os.Getenv("DEFENDSEC_PUBLIC_CONSOLE_URL"))
+		if server == "" {
+			server, _ = os.Hostname()
+		}
+		svc.SetAnchoring(anchor.NewPublisher(targets, server),
+			strings.TrimSpace(os.Getenv("DEFENDSEC_PEER_ANCHOR_TOKEN")))
+		for _, t := range targets {
+			log.Info("anchor target configured", "kind", t.Kind, "target", t.Ref)
+		}
+	} else if token := strings.TrimSpace(os.Getenv("DEFENDSEC_PEER_ANCHOR_TOKEN")); token != "" {
+		// Holding anchors for a peer without publishing any of your own is a
+		// legitimate arrangement, so it is configured independently.
+		svc.SetAnchoring(nil, token)
+		log.Info("accepting peer anchors")
+	}
+
+	rootCtx, stopBackground := context.WithCancel(context.Background())
+	defer stopBackground()
+
+	// Checkpoint and anchor on a timer.
+	//
+	// Checkpoints were signed on demand and never scheduled, so in practice a
+	// deployment had none — and an anchor needs a checkpoint to anchor. The
+	// two run together: sign the tip, then publish it externally.
+	if pg != nil && signer != nil {
+		interval := 6 * time.Hour
+		if v := strings.TrimSpace(os.Getenv("DEFENDSEC_CHECKPOINT_INTERVAL")); v != "" {
+			if d, err := time.ParseDuration(v); err == nil && d >= time.Minute {
+				interval = d
+			} else {
+				log.Warn("ignoring DEFENDSEC_CHECKPOINT_INTERVAL", "value", v,
+					"reason", "must be a duration of at least one minute")
+			}
+		}
+		go runCheckpointLoop(rootCtx, pg, svc, signer, interval, log)
 	}
 
 	grpcSrv := grpc.NewServer(
@@ -247,11 +331,68 @@ func run(log *slog.Logger) error {
 		return err
 	case <-sig:
 		log.Info("shutting down")
+		stopBackground()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(ctx)
 		_ = adminSrv.Shutdown(ctx)
 		grpcSrv.GracefulStop()
 		return nil
+	}
+}
+
+// runCheckpointLoop signs the tip of the audit chain on an interval and
+// publishes it to any configured anchor targets.
+//
+// Anchoring failures are logged and otherwise ignored: a timestamp authority
+// being unreachable must not stop the next checkpoint from being signed, and
+// the failure is stored as an anchor record so it is visible in the console
+// rather than only in a log nobody reads.
+func runCheckpointLoop(
+	ctx context.Context,
+	pg *storepg.Store,
+	svc *control.Server,
+	signer *sign.Key,
+	interval time.Duration,
+	log *slog.Logger,
+) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		cp, ok, err := pg.AppendCheckpoint(runCtx, signer.Private, signer.KeyID())
+		if err != nil {
+			log.Warn("append audit checkpoint", "err", err)
+			cancel()
+			continue
+		}
+		if !ok {
+			// Nothing chained yet; nothing to attest.
+			cancel()
+			continue
+		}
+		log.Info("audit checkpoint signed", "throughSeq", cp.ThroughSeq)
+
+		if records, anchored, err := svc.AnchorLatest(runCtx); err != nil {
+			log.Warn("anchor checkpoint", "err", err)
+		} else if anchored {
+			for _, r := range records {
+				if r.OK() {
+					log.Info("checkpoint anchored", "kind", r.Kind, "target", r.Target,
+						"throughSeq", r.ThroughSeq, "reference", r.Reference)
+				} else {
+					log.Warn("checkpoint anchor failed", "kind", r.Kind, "target", r.Target,
+						"throughSeq", r.ThroughSeq, "err", r.Error)
+				}
+			}
+		}
+		cancel()
 	}
 }

@@ -398,3 +398,59 @@ func TestCountUsersDrivesBootstrap(t *testing.T) {
 		t.Fatalf("CountUsers = %d, %v; want 1", n, err)
 	}
 }
+
+// Switching a running deployment to FIPS mode must not lock anybody out, and
+// the accounts that do log in must end up on the approved algorithm without a
+// password reset. Both halves are asserted here because the operations doc
+// promises them.
+func TestAuthenticateRehashesOnAlgorithmChange(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	resetUsers(t, s)
+
+	// Created before the switch, so the stored hash is Argon2id.
+	t.Setenv("DEFENDSEC_FIPS_MODE", "")
+	u := seedUser(t, s, "alice", identity.RoleAdmin)
+	stored := func() string {
+		t.Helper()
+		var h string
+		if err := s.pool.QueryRow(ctx,
+			`SELECT password_hash FROM users WHERE id=$1`, u.ID).Scan(&h); err != nil {
+			t.Fatalf("read password hash: %v", err)
+		}
+		return h
+	}
+	if got := stored(); !strings.HasPrefix(got, "$argon2id$") {
+		t.Fatalf("seeded hash = %.20q, want argon2id", got)
+	}
+
+	// The deployment turns FIPS mode on. The old credential still works.
+	t.Setenv("DEFENDSEC_FIPS_MODE", "1")
+	if _, _, err := s.Authenticate(ctx, "alice", testPassword, "", time.Now().UTC()); err != nil {
+		t.Fatalf("an existing Argon2id account must still authenticate under FIPS: %v", err)
+	}
+	upgraded := stored()
+	if !strings.HasPrefix(upgraded, "$pbkdf2-sha256$") {
+		t.Fatalf("hash after login = %.20q, want pbkdf2-sha256", upgraded)
+	}
+	if !identity.VerifyPassword(testPassword, upgraded) {
+		t.Fatal("the re-hashed credential does not verify the same password")
+	}
+
+	// The upgraded hash is stable: a second login must not churn it.
+	if _, _, err := s.Authenticate(ctx, "alice", testPassword, "", time.Now().UTC()); err != nil {
+		t.Fatalf("second authenticate: %v", err)
+	}
+	if got := stored(); got != upgraded {
+		t.Error("a hash already on the active algorithm was re-hashed again")
+	}
+
+	// And back: turning FIPS off must not strand the PBKDF2 hash.
+	t.Setenv("DEFENDSEC_FIPS_MODE", "")
+	if _, _, err := s.Authenticate(ctx, "alice", testPassword, "", time.Now().UTC()); err != nil {
+		t.Fatalf("a PBKDF2 account must still authenticate outside FIPS: %v", err)
+	}
+	if got := stored(); !strings.HasPrefix(got, "$argon2id$") {
+		t.Errorf("hash after login = %.20q, want argon2id", got)
+	}
+}

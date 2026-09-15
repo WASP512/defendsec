@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"defendsec/internal/controls"
 	"defendsec/internal/presence"
 )
 
@@ -22,13 +23,20 @@ type Check struct {
 	MustMatch string `yaml:"must_match"`
 	Field     string `yaml:"field"`
 	Expect    string `yaml:"expect"`
+	// Controls are framework control identifiers this check speaks to
+	// (roadmap 1.7). They are carried in the pack rather than inferred,
+	// because only the person writing the check knows which control it is
+	// actually testing. A pack-level default applies where a check is silent.
+	Controls []string `yaml:"controls"`
 }
 
 type Pack struct {
-	ID       string  `yaml:"id"`
-	Name     string  `yaml:"name"`
-	Platform string  `yaml:"platform"`
-	Checks   []Check `yaml:"checks"`
+	ID       string `yaml:"id"`
+	Name     string `yaml:"name"`
+	Platform string `yaml:"platform"`
+	// Controls apply to every check in the pack that does not name its own.
+	Controls []string `yaml:"controls"`
+	Checks   []Check  `yaml:"checks"`
 }
 
 type Result struct {
@@ -38,6 +46,9 @@ type Result struct {
 	Severity string `json:"severity"`
 	Pass     bool   `json:"pass"`
 	Detail   string `json:"detail"`
+	// Controls travels with the result so an alert raised from it is tagged
+	// without the alerting code needing to reload the pack.
+	Controls []string `json:"controls,omitempty"`
 }
 
 func LoadPack(path string) (*Pack, error) {
@@ -52,7 +63,39 @@ func LoadPack(path string) (*Pack, error) {
 	if pack.ID == "" {
 		return nil, fmt.Errorf("sca pack missing id")
 	}
+	if err := pack.resolveControls(); err != nil {
+		return nil, fmt.Errorf("sca pack %s: %w", pack.ID, err)
+	}
 	return &pack, nil
+}
+
+// resolveControls validates every control tag and pushes the pack-level
+// default down onto the checks that do not name their own, so a Check is
+// self-describing everywhere it is used afterwards.
+//
+// A bad identifier fails the load. The alternative — dropping it quietly —
+// produces a pack that looks tagged and evidences nothing, which is the
+// failure mode hardest to notice and most damaging to find during an audit.
+func (p *Pack) resolveControls() error {
+	defaults, err := controls.ParseIDs(p.Controls)
+	if err != nil {
+		return fmt.Errorf("pack-level controls: %w", err)
+	}
+	p.Controls = controls.Strings(defaults)
+
+	for i := range p.Checks {
+		c := &p.Checks[i]
+		if len(c.Controls) == 0 {
+			c.Controls = append([]string(nil), p.Controls...)
+			continue
+		}
+		ids, err := controls.ParseIDs(c.Controls)
+		if err != nil {
+			return fmt.Errorf("check %s: %w", c.ID, err)
+		}
+		c.Controls = controls.Strings(ids)
+	}
+	return nil
 }
 
 func DefaultLinuxSSHPath() string {
@@ -97,6 +140,7 @@ func EvalFileRegex(check Check) Result {
 		CheckID:  check.ID,
 		Title:    check.Title,
 		Severity: check.Severity,
+		Controls: check.Controls,
 		Pass:     false,
 	}
 	if check.MustMatch == "" || check.Path == "" {
@@ -179,6 +223,7 @@ func EvalInventoryField(check Check, dev presence.Device) Result {
 		CheckID:  check.ID,
 		Title:    check.Title,
 		Severity: check.Severity,
+		Controls: check.Controls,
 		Pass:     false,
 	}
 	expect, err := parseExpect(check.Expect)

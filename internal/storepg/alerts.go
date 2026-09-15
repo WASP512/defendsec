@@ -24,6 +24,10 @@ type Alert struct {
 	GeneratorID      string
 	GeneratorVersion string
 	Detail           json.RawMessage
+	// Signal and ControlIDs are the compliance tags written at creation
+	// time (roadmap 1.7).
+	Signal     string
+	ControlIDs []string
 }
 
 type AlertFilters struct {
@@ -59,18 +63,21 @@ func (s *Store) InsertAlert(ctx context.Context, a Alert) error {
 			id, created_at, updated_at, detected_at, ingested_at,
 			device_id, hostname, kind, severity,
 			title, summary, status, source_type, source_id,
-			generator_id, generator_version, detail
+			generator_id, generator_version, detail,
+			signal, control_ids
 		) VALUES (
 			$1, $2::timestamptz, $3::timestamptz, $4::timestamptz, $5::timestamptz,
 			$6, $7, $8, $9,
 			$10, $11, $12, $13, $14,
-			$15, $16, $17::jsonb
+			$15, $16, $17::jsonb,
+			$18, $19
 		)
 		ON CONFLICT (id) DO NOTHING
 	`, a.ID, created, updated, detected, ingested,
 		a.DeviceID, a.Hostname, a.Kind, a.Severity,
 		a.Title, a.Summary, a.Status, a.SourceType, a.SourceID,
-		a.GeneratorID, a.GeneratorVersion, string(detail))
+		a.GeneratorID, a.GeneratorVersion, string(detail),
+		a.Signal, controlIDs(a.ControlIDs))
 	return err
 }
 
@@ -85,7 +92,7 @@ func (s *Store) ListAlerts(ctx context.Context, f AlertFilters) ([]Alert, error)
 		       device_id, hostname, kind, severity,
 		       title, summary, status, source_type, source_id,
 		       COALESCE(generator_id, ''), COALESCE(generator_version, ''),
-		       detail
+		       detail, COALESCE(signal, ''), COALESCE(control_ids, '{}')
 		FROM alerts
 		WHERE ($1 = '' OR status = $1)
 		  AND ($2 = '' OR kind = $2)
@@ -107,6 +114,7 @@ func (s *Store) ListAlerts(ctx context.Context, f AlertFilters) ([]Alert, error)
 			&a.DeviceID, &a.Hostname, &a.Kind, &a.Severity,
 			&a.Title, &a.Summary, &a.Status, &a.SourceType, &a.SourceID,
 			&a.GeneratorID, &a.GeneratorVersion, &detail,
+			&a.Signal, &a.ControlIDs,
 		); err != nil {
 			return nil, err
 		}
@@ -148,4 +156,14 @@ func (s *Store) ResolveOpenAlerts(ctx context.Context, deviceID, kind, sourceID 
 		return 0, err
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// controlIDs normalises a tag list for storage. A nil slice would be written
+// as SQL NULL, and the column is NOT NULL with an empty-array default — an
+// untagged record should read as "no controls", never as "unknown".
+func controlIDs(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
 }

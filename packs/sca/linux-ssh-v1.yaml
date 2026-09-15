@@ -1,38 +1,76 @@
 id: sca-linux-ssh-v1
 name: Linux SSH baseline
 platform: linux
+# Control tags (roadmap 1.7). Each check names the framework controls it
+# actually tests, so a finding is evidence against a control rather than an
+# untagged row a report has to guess at later. A bad identifier fails the
+# pack load: a pack that looks tagged but evidences nothing is the failure
+# mode hardest to notice and worst to discover during an audit.
 checks:
   - id: sshd-password-auth
+    controls:
+      - nist-800-53:CM-6
+      - nist-800-53:AC-3
+      - nist-800-53:IA-2
+      - cis-v8:4.1
+      - nist-800-171:3.4.2
+      - cjis-v6:6
     title: PasswordAuthentication should be no
     severity: high
     type: file_regex
     path: /etc/ssh/sshd_config
     must_match: '(?i)^PasswordAuthentication\s+no'
   - id: sshd-root-login
+    controls:
+      - nist-800-53:CM-6
+      - nist-800-53:AC-6(9)
+      - cis-v8:5.4
+      - nist-800-171:3.1.5
+      - cjis-v6:5
     title: PermitRootLogin should be no or prohibit-password
     severity: high
     type: file_regex
     path: /etc/ssh/sshd_config
     must_match: '(?i)^PermitRootLogin\s+(no|prohibit-password|without-password)'
   - id: sshd-pubkey-auth
+    controls:
+      - nist-800-53:CM-6
+      - nist-800-53:IA-2
+      - cis-v8:4.1
+      - nist-800-171:3.5.2
     title: PubkeyAuthentication should be enabled
     severity: medium
     type: file_regex
     path: /etc/ssh/sshd_config
     must_match: '(?i)^PubkeyAuthentication\s+yes'
   - id: sshd-empty-passwords
+    controls:
+      - nist-800-53:CM-6
+      - nist-800-53:IA-5
+      - cis-v8:4.1
+      - nist-800-171:3.5.10
+      - cjis-v6:6
     title: PermitEmptyPasswords should be no
     severity: high
     type: file_regex
     path: /etc/ssh/sshd_config
     must_match: '(?i)^PermitEmptyPasswords\s+no'
   - id: sshd-x11-forwarding
+    controls:
+      - nist-800-53:CM-6
+      - cis-v8:4.1
+      - nist-800-171:3.4.2
     title: X11Forwarding should be disabled
     severity: low
     type: file_regex
     path: /etc/ssh/sshd_config
     must_match: '(?i)^X11Forwarding\s+no'
   - id: sshd-max-auth-tries
+    controls:
+      - nist-800-53:CM-6
+      - nist-800-53:AC-7
+      - cis-v8:4.1
+      - nist-800-171:3.1.8
     title: MaxAuthTries should be 4 or less
     severity: medium
     type: file_regex
@@ -40,12 +78,23 @@ checks:
     must_match: '(?i)^MaxAuthTries\s+([1-4])\s*$'
   # Note: OpenSSH on Fedora/RHEL no longer uses the Protocol directive; Protocol 1 is gone.
   - id: firewall-enabled
+    controls:
+      - nist-800-53:CM-6
+      - nist-800-53:SC-8
+      - cis-v8:4.1
+      - nist-800-171:3.4.2
+      - cjis-v6:10
     title: Host firewall reported enabled
     severity: medium
     type: inventory_field
     field: firewall
     expect: "true"
   - id: disk-encryption
+    controls:
+      - nist-800-53:SC-28
+      - cis-v8:3.11
+      - nist-800-171:3.13.16
+      - cjis-v6:10
     title: Disk encryption reported enabled
     severity: high
     type: inventory_field

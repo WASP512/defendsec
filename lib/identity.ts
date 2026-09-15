@@ -78,7 +78,8 @@ export async function apidLogin(
   } catch {
     // non-JSON error body
   }
-  if (res.status === 401 && body.totpRequired) return { ok: false, totpRequired: true };
+  if (res.status === 401 && body.totpRequired)
+    return { ok: false, totpRequired: true };
   if (res.status === 429) return { ok: false, locked: true };
   // Every other failure is reported identically, mirroring the control
   // plane, so the console cannot be used to tell which accounts exist.
@@ -125,9 +126,18 @@ export async function apidListUsers(token: string): Promise<IdentityUser[]> {
 
 export async function apidCreateUser(
   token: string,
-  input: { username: string; displayName?: string; role: IdentityRole; password: string },
+  input: {
+    username: string;
+    displayName?: string;
+    role: IdentityRole;
+    password: string;
+  },
 ): Promise<{ ok: true; user: IdentityUser } | { ok: false; error: string }> {
-  const res = await apid("/v1/users", { method: "POST", token, body: JSON.stringify(input) });
+  const res = await apid("/v1/users", {
+    method: "POST",
+    token,
+    body: JSON.stringify(input),
+  });
   if (res.ok) {
     const body = (await res.json()) as { user: IdentityUser };
     return { ok: true, user: body.user };
@@ -138,7 +148,10 @@ export async function apidCreateUser(
   } catch {
     // non-JSON error body
   }
-  return { ok: false, error: body.error ?? `create user failed: ${res.status}` };
+  return {
+    ok: false,
+    error: body.error ?? `create user failed: ${res.status}`,
+  };
 }
 
 export async function apidUpdateUser(
@@ -157,7 +170,10 @@ export async function apidUpdateUser(
   } catch {
     // non-JSON error body
   }
-  return { ok: false, error: body.error ?? `update user failed: ${res.status}` };
+  return {
+    ok: false,
+    error: body.error ?? `update user failed: ${res.status}`,
+  };
 }
 
 export async function apidBeginTotp(
@@ -190,4 +206,28 @@ export async function apidConfirmTotp(
     // non-JSON error body
   }
   return { ok: false, error: body.error ?? "that code did not match" };
+}
+
+// Cryptographic posture (roadmap 1.8). Shown to an administrator because
+// "is this FIPS mode?" is not answerable from the console's own configuration:
+// GODEBUG=fips140=on routes standard-library crypto through the validated
+// module but rejects nothing, so a deployment can look compliant while using
+// an unapproved password KDF. This reports what the running process is
+// actually doing, including the deviations.
+export type CryptoPosture = {
+  goModuleEnabled: boolean;
+  goModuleEnforced: boolean;
+  approvedAlgorithmsRequired: boolean;
+  passwordKdf: string;
+  notes?: string[];
+};
+
+export async function apidCryptoPosture(token: string): Promise<CryptoPosture> {
+  const res = await apid("/v1/crypto-posture", { token });
+  if (!res.ok) {
+    throw new IdentityUnavailableError(
+      `Control plane returned ${res.status} for the cryptographic posture.`,
+    );
+  }
+  return (await res.json()) as CryptoPosture;
 }

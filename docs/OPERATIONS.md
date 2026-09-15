@@ -215,6 +215,279 @@ When Postgres is enabled, apid prunes on startup:
 
 ---
 
+## Transparency anchoring
+
+The hash chain defeats anyone who can edit the database. Signed checkpoints defeat anyone who can
+append to it. Neither defeats an attacker who owns the server, the database **and** the control
+signing key: that attacker can rebuild the whole ledger and sign a fresh checkpoint over it, and
+the result verifies perfectly.
+
+Anchoring publishes checkpoint hashes where that attacker cannot reach back and change them. They
+can stop new anchors appearing; they cannot rewrite the ones already out there, so a rebuilt chain
+stops matching and the forgery becomes visible.
+
+Configure targets as a comma-separated list in `/etc/defendsec/apid.env`:
+
+```bash
+DEFENDSEC_ANCHOR_TARGETS='rfc3161=https://freetsa.org/tsr,file=/var/lib/defendsec/anchors'
+DEFENDSEC_CHECKPOINT_INTERVAL=6h
+```
+
+A mistyped target refuses to start rather than being skipped — an operator who believes they have
+anchoring they do not have stops looking.
+
+| Kind | Form | What it is worth |
+| --- | --- | --- |
+| `rfc3161` | `rfc3161=<tsa url>` | Strongest. A third party signs that this hash existed at this time, and DefendSec never holds that key |
+| `file` | `file=<directory>` | Exactly what you do with the directory. Pointed at a git worktree that is committed and pushed, strong. Left on the same disk as the database, nearly worthless |
+| `peer` | `peer=<url>#<shared token>` | Mutual and free. Two agencies anchoring each other both gain, and compromising one does not reach the other's copy |
+
+Only the hash is sent. A timestamp authority learns nothing about what the ledger contains, which
+matters when the ledger describes an agency's security posture.
+
+### The file target and git
+
+The file target appends one JSON object per line to `anchors-YYYY-MM.jsonl`. It is append-only by
+intent: the file is never rewritten, so a diff shows additions and nothing else, and a history that
+only ever grows makes an alteration obvious to whoever reviews the repository.
+
+Point it at a checkout and commit on a timer:
+
+```bash
+cd /var/lib/defendsec/anchors && git add -A && git commit -m "anchors" && git push
+```
+
+The value is entirely in the push. Anchors that never leave the machine protect nothing.
+
+### Anchoring for a peer
+
+To hold another instance's checkpoints, set a shared token:
+
+```bash
+DEFENDSEC_PEER_ANCHOR_TOKEN='a-long-random-string'
+```
+
+The peer then uses `peer=https://your-console/v1/anchors/receive#a-long-random-string`. The token is
+separate from the admin token on purpose: a peer that anchors for you never holds admin access to
+your instance. Without the variable set, the endpoint refuses everything — holding anchors is opt-in.
+
+Peer anchors are stored apart from your own. They are somebody else's evidence held on their
+behalf, and mixing the two would let a compromised peer's claims be read as yours.
+
+### Checking them
+
+The comparison is the entire point, and it is the step that is usually skipped: anchors written and
+never checked detect nothing. The **Audit** page shows it, and so does the API:
+
+```bash
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  http://127.0.0.1:47264/v1/audit/anchors | jq .summary
+```
+
+A mismatch means the chain was rebuilt after that anchor was published. A valid signature over the
+current chain does **not** clear it — that signature is exactly what an attacker with the key would
+produce.
+
+`POST` to the same endpoint anchors the newest unanchored checkpoint immediately.
+
+### What DefendSec checks, and what it leaves to you
+
+For RFC 3161, DefendSec builds the request with a nonce, checks the authority's status, and
+verifies that the returned token timestamps **the hash it asked about** with **the nonce it sent** —
+which is what stops a compromised server presenting a token captured earlier for a hash it has
+since rewritten.
+
+It does **not** validate the authority's signature or certificate chain. That needs a full CMS
+implementation and a trust store of TSA roots, and a half-done version would be worse than none: it
+would report "verified" on the strength of checks it did not really make. The token is stored whole
+so you can do it with tooling that already exists:
+
+```bash
+# Extract the token and the hash it covers, then verify against your TSA roots
+openssl ts -verify -in token.tsr -data hash.bin -CAfile tsa-roots.pem
+```
+
+---
+
+## Compliance and audit evidence
+
+The **Compliance** page shows per-control status for a framework over a window: CIS Controls v8,
+NIST SP 800-171, CMMC 2.0 Level 2, NIST SP 800-53 Rev 5 and the CJIS Security Policy v6.0.
+
+Read the statuses carefully — two of them are easy to confuse and mean opposite things.
+
+| Status | What it means |
+| --- | --- |
+| Satisfied | Evidence across the window, nothing outstanding when it closed |
+| Deficient | Findings were still open at the close of the window |
+| Accepted deficiency | Still open, covered by a documented, time-limited exception. **Not a pass** |
+| No evidence recorded | DefendSec *can* evidence this and recorded nothing. Usually the check never ran |
+| Outside DefendSec | DefendSec *cannot* evidence this at all. Cover it another way |
+
+"No evidence recorded" is the one to watch. It is not a pass and it is not a scope boundary — it
+almost always means a check is not running on the hosts you think it is.
+
+There is no overall score, on purpose. A coverage percentage is where a control nobody has looked
+at disappears into a rounding error.
+
+A control marked **partial coverage** is satisfied only for the part DefendSec can see. Each one
+says which part it does not cover; read the note before citing it.
+
+### Audit periods
+
+An assessment is about a window, so define the window under review:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"name":"CJIS FY26","framework":"cjis-v6",
+       "startsAt":"2026-01-01T00:00:00Z","endsAt":"2026-12-31T23:59:59Z"}' \
+  http://127.0.0.1:47264/v1/audit/periods
+```
+
+Closing a period (`POST /v1/audit/periods/close` with `{"periodId":"...","closed":true}`) declares
+it final. Reopening is allowed, and both are recorded in the ledger.
+
+### Documented exceptions
+
+When a control cannot be met and the agency accepts that, record it rather than explaining it to
+the assessor from memory:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"controlId":"cis-v8:5.4","periodId":"<period id>",
+       "reason":"legacy jump host pending decommission",
+       "remediation":"replaced in Q3","owner":"ops",
+       "expiresAt":"2026-09-30T00:00:00Z"}' \
+  http://127.0.0.1:47264/v1/audit/exceptions
+```
+
+An expiry is required. An exception with no expiry is a permanent excuse, and DefendSec will not
+store one. When it lapses, the control returns to **Deficient** by itself.
+
+This is not a POA&M product. It records the exception, its owner and its expiry — it does not do
+approval routing or risk scoring.
+
+### Exporting evidence for an assessor
+
+```bash
+# Everything, unscoped
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -OJ http://127.0.0.1:47264/v1/audit/evidence
+
+# Scoped to a framework and a period, which adds the assessment to the bundle
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -OJ "http://127.0.0.1:47264/v1/audit/evidence?periodId=<period id>"
+```
+
+Verify it with the server switched off — that is the point of it:
+
+```bash
+defendsec-verify defendsec-evidence-*.json
+```
+
+The scope does **not** narrow the audit range. A hash chain filtered by content is not a chain, so
+the bundle carries the whole range and expresses its scope through what it asserts.
+
+**What the bundle proves, and what it does not.** The chain, the checkpoints and the command
+signatures verify on their own. The assessment does not: audit-entry counts are recomputed from
+the bundle's own chained entries and checked, but alert and command counts come from records that
+are not chained. `defendsec-verify` prints that distinction, and the bundle carries it in a
+provenance line that verification checks has not been edited. Hand an assessor the bundle, not a
+screenshot.
+
+### Control tags
+
+Every finding, signed action and ledger entry is tagged with the controls it speaks to at the
+moment it is written, so a period that has already closed reports what was true then rather than
+what today's mapping would say. Rows written before the tagging migration carry no tag; they are
+not backfilled, because backfilling would manufacture a claim that never existed.
+
+The SCA packs in `packs/sca/` name their own controls per check. A bad identifier fails the pack
+load rather than loading quietly — a pack that looks tagged and evidences nothing is the failure
+mode hardest to notice.
+
+`GET /v1/controls` serves the whole catalog, including every control DefendSec cannot evidence,
+each with the reason.
+
+---
+
+## FIPS 140-3 mode
+
+CJIS and several federal regimes require cryptography from a FIPS 140-3 validated module.
+DefendSec has no crypto of its own beyond two exceptions named below, so this is a matter of
+starting the Go runtime in the right mode and selecting an approved password KDF.
+
+**To enable it**, run apid with Go's FIPS mode and DefendSec's own switch:
+
+```
+Environment=GODEBUG=fips140=only
+Environment=DEFENDSEC_FIPS_MODE=1
+```
+
+`GODEBUG=fips140=on` is the weaker setting: it routes standard-library cryptography through the
+validated module but **rejects nothing**. A deployment can run under it while hashing passwords
+with an algorithm SP 800-132 does not approve, and nothing anywhere reports a problem. Use
+`=only`, which rejects non-approved use.
+
+`DEFENDSEC_FIPS_MODE=1` is what selects the approved password KDF. Set it even under `=only`,
+and set it on its own if you are required to use approved algorithms but cannot run the Go
+module in FIPS mode. `GODEBUG=fips140` alone is also honoured, so a deployment that only sets
+that still gets approved password hashing.
+
+**Verify what is actually in force** — not what was intended — with the admin API:
+
+```
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  http://127.0.0.1:8443/v1/crypto-posture
+```
+
+It reports the Go module state, whether approved algorithms are being required, the password KDF
+in use, and the deviations in plain words. Hand it to an assessor rather than asserting the
+posture from configuration.
+
+### What changes, and what does not
+
+| Surface | Algorithm | Under FIPS |
+| --- | --- | --- |
+| Command signatures | Ed25519 (FIPS 186-5) | Unchanged; verified under `fips140=only` |
+| Acknowledgement signatures | ECDSA P-256 | Unchanged |
+| Audit chain and checkpoints | SHA-256 | Unchanged |
+| Session and enrollment tokens | `crypto/rand` | Unchanged |
+| Password hashing | Argon2id → PBKDF2-HMAC-SHA256 | **Changes** |
+| Second-factor codes | HMAC-SHA1 | Runs outside enforcement |
+
+Two things need a decision; neither is the signing path.
+
+**Passwords.** Argon2id is memory-hard and the better defence against offline cracking, so it
+stays the default. It is not FIPS-approved, and its Blake2b comes from `golang.org/x/crypto` and
+never enters the validated boundary — which is why `fips140=on` does not catch it. In FIPS mode
+new hashes use PBKDF2-HMAC-SHA256 at 600,000 iterations (SP 800-132).
+
+Both formats verify in either mode, so switching a running deployment to FIPS does not lock out
+existing accounts. An account whose stored hash uses the other algorithm is re-hashed
+transparently on its owner's next successful login. Re-hashing needs the plaintext, so an account
+that never logs in keeps its old hash until its password is next set; if approved hashing must
+hold for every account, force a password reset.
+
+**Second-factor codes.** TOTP uses HMAC-SHA1, which every authenticator app implements. HMAC-SHA1
+is approved for HMAC under SP 800-131A, but Go's `fips140=only` restricts HMAC to SHA-2 and SHA-3
+and *panics* rather than returning an error. Changing the digest would break Google Authenticator,
+Aegis, 1Password and the rest for no security gain, so that one HMAC is computed inside
+`fips140.WithoutEnforcement`. The deviation is marked in code and disclosed by
+`/v1/crypto-posture` rather than hidden.
+
+### What this does not claim
+
+Running in FIPS mode is not a validation. Go's module carries its own CMVP certificate status,
+which is the Go project's to hold, not DefendSec's; the operating system's own module (for TLS
+termination in a reverse proxy, disk encryption, Postgres) is separately in scope for an
+assessor. DefendSec's claim is narrower and checkable: the algorithms it uses are approved ones,
+the exceptions are named, and the posture is reported by the running process.
+
+---
+
 ## Developer lab (not production)
 
 Console + apid + agent on one machine:

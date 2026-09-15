@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"crypto/fips140"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
@@ -64,9 +65,20 @@ func totpCode(secret string, counter int64) (string, error) {
 
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], uint64(counter))
-	mac := hmac.New(sha1.New, key)
-	mac.Write(buf[:])
-	sum := mac.Sum(nil)
+
+	// Go's fips140=only mode rejects HMAC over anything but SHA-2 and SHA-3,
+	// and panics rather than returning an error. HMAC-SHA1 is approved for
+	// HMAC under SP 800-131A, so only-mode is stricter than the standard
+	// requires — and changing the digest would break every authenticator app
+	// for no security gain. The call is made outside enforcement, which marks
+	// the boundary explicitly rather than crashing the process or quietly
+	// pretending the deviation does not exist. See internal/identity/fips.go.
+	var sum []byte
+	fips140.WithoutEnforcement(func() {
+		mac := hmac.New(sha1.New, key)
+		mac.Write(buf[:])
+		sum = mac.Sum(nil)
+	})
 
 	// Dynamic truncation, RFC 4226 section 5.3.
 	offset := sum[len(sum)-1] & 0x0f

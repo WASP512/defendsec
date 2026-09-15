@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"defendsec/internal/anchor"
 	"defendsec/internal/cmdlog"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
@@ -47,6 +48,20 @@ type Server struct {
 	hub         *Hub
 	signer      *sign.Key
 	log         *slog.Logger
+
+	// Transparency anchoring (roadmap 1.6). Both are optional: an instance
+	// with no targets simply publishes nothing, and one with no peer token
+	// refuses to hold anchors for anyone else.
+	anchors         *anchor.Publisher
+	peerAnchorToken string
+}
+
+// SetAnchoring configures checkpoint anchoring. Called at startup rather than
+// passed to New, so the existing constructor signature stays as it is for the
+// callers that do not anchor.
+func (s *Server) SetAnchoring(p *anchor.Publisher, peerToken string) {
+	s.anchors = p
+	s.peerAnchorToken = peerToken
 }
 
 func New(bundle *pki.Bundle, secret, adminToken, dataDir string, store *presence.File, commands *cmdlog.File, signer *sign.Key, log *slog.Logger) *Server {

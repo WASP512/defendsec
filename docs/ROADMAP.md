@@ -599,17 +599,65 @@ against BoringCrypto now, while the signing path is still being changed — Ed25
 under FIPS 186-5, but only from inside a validated boundary, and finding that out later means
 revisiting the component the entire strategy rests on.
 
+*Resolved.* Probed rather than assumed, because the difference matters: `GODEBUG=fips140=on`
+routes standard-library cryptography through the validated module but **rejects nothing** —
+Argon2id kept working under it, because its Blake2b comes from `golang.org/x/crypto` and never
+enters the boundary. A deployment can therefore believe it is in FIPS mode while hashing
+passwords with an algorithm SP 800-132 does not approve, with nothing reporting a problem. Under
+`fips140=only` the entire signing surface passed unchanged — Ed25519 command signatures, ECDSA
+P-256 acknowledgements, SHA-256, the audit chain and its checkpoints. Only two things needed
+handling, and neither was the signing path: password hashing (Argon2id stays the default;
+PBKDF2-HMAC-SHA256 at 600k iterations is selected by `DEFENDSEC_FIPS_MODE=1`, both formats verify
+in either mode, and an account is re-hashed on its next login) and TOTP's HMAC-SHA1, which is
+approved under SP 800-131A but which Go's only-mode *panics* on — computed inside
+`fips140.WithoutEnforcement` so the deviation is marked rather than hidden. BoringCrypto was not
+needed. `GET /v1/crypto-posture` reports the live posture and names the deviations; see
+[OPERATIONS.md](./OPERATIONS.md#fips-140-3-mode).
+
 **1.9 — The audit layer.** Per-control status with the evidence behind it, gap tracking, and the
 self-assessment view an agency completes before an assessor arrives — built on the control mapping
 from 1.7 and the evidence export from 1.5. Roughly 6–10 weeks on top of Phases 0–2. It must mark
 plainly what DefendSec *cannot* evidence (§3.10) rather than leaving a control silently blank.
 See §3.9: this is a layer, not a pivot.
 
+*Delivered.* The status set turns on one distinction that every compliance dashboard collapses:
+**no evidence recorded** (DefendSec can evidence this control and saw nothing — usually a check
+that never ran) is not the same fact as **outside DefendSec** (it cannot evidence this at all),
+and neither is ever rendered as a pass. An accepted deficiency is its own status, never a
+satisfied control, and its exception must carry an expiry — DefendSec refuses to store a
+permanent excuse. No coverage percentage is produced anywhere. A period still running is judged
+as of today rather than a date in the future. Whether a finding was open *at the close of the
+window* — not today — is what a period is judged on; DefendSec stores current status rather than
+a transition history, so that number is reconstructed, and the assessment says so rather than
+presenting it as exact. Evidence export is scoped to a framework and period without narrowing
+the audit range, because a hash chain filtered by content is not a chain; the assessment's
+audit-entry counts are recomputed from the bundle's own chain and verified, its alert and command
+counts are marked as unverifiable from the bundle alone, and the provenance line saying so is
+itself checked for edits.
+
 **1.6 — Transparency anchoring (optional, high-leverage).** Periodically publish signed checkpoint
 hashes somewhere the server cannot retroactively control: an RFC 3161 timestamp authority, a
 transparency log, a peer DefendSec instance, or a git repository. This defeats an attacker who
 fully compromises the server *and* the database — they can stop new entries but cannot rewrite
 anchored history. Very few products at any price can make this claim.
+
+*Delivered.* Three targets: an RFC 3161 timestamp authority, an append-only file directory meant
+to be pointed at a git worktree, and a peer DefendSec instance. Only the hash leaves the machine,
+so a timestamp authority learns nothing about what the ledger contains. For RFC 3161 DefendSec
+builds the request with a nonce and verifies the returned token covers *that hash* with *that
+nonce* — which is what stops a compromised server replaying a token captured before it rewrote the
+entry — and then stores the token verbatim. It deliberately does **not** validate the authority's
+signature chain: that needs full CMS and a TSA trust store, and a half-done version would report
+"verified" on the strength of checks it never made, so the token is stored whole for tooling that
+can do it properly, and the limitation is reported next to every anchor. Writing the parser caught
+a bug worth recording: an optional `asn1.RawValue` for TSTInfo's Accuracy field silently consumed
+the nonce that follows it, so every genuine token looked like a replay. Anchoring failures are
+stored rather than dropped — a run of them is the interesting signal. Building this also revealed
+that `AppendCheckpoint` had no caller at all, so a deployment had no checkpoints to anchor;
+checkpointing now runs on a timer alongside anchoring. Most importantly the console and the API
+show the *comparison* against the live chain, not a count of anchors written: anchors nobody
+checks detect nothing, and a valid signature over a rebuilt chain does not clear a mismatch,
+because that signature is exactly what an attacker holding the key would produce.
 
 **Acceptance:** every command row carries a signature verifiable by `defendsec verify` with the
 server offline; a row edited directly in Postgres is detected and localized; an evidence bundle
