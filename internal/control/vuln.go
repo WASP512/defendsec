@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"defendsec/internal/alertmeta"
+	"defendsec/internal/controls"
 	"defendsec/internal/presence"
 	"defendsec/internal/vuln"
 )
@@ -84,6 +85,8 @@ func (s *Server) alertFromVuln(dev presence.Device, adv map[string]string, sw pr
 		GeneratorID:      alertmeta.GeneratorVuln,
 		GeneratorVersion: alertmeta.GeneratorVersion,
 		Detail:           detail,
+		Signal:           string(controls.SignalVulnAssessment),
+		ControlIDs:       controls.Tag(controls.SignalVulnAssessment),
 	}
 }
 

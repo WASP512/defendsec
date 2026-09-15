@@ -157,6 +157,17 @@ func run(log *slog.Logger) error {
 		}
 		sessCancel()
 		pruneCancel()
+
+		// Materialise the compiled-in control catalog so compliance queries
+		// can join it in SQL (roadmap 1.7). The Go registry remains the
+		// source of truth; this is rebuilt from it on every start.
+		ctlCtx, ctlCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if n, err := pg.SyncControlCatalog(ctlCtx); err != nil {
+			log.Warn("control catalog sync", "err", err)
+		} else {
+			log.Info("control catalog sync", "controls", n)
+		}
+		ctlCancel()
 		defer pool.Close()
 	}
 
@@ -199,6 +210,9 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/users/update", svc.HandleUserUpdate)
 	adminMux.HandleFunc("/v1/totp", svc.HandleTOTP)
 	adminMux.HandleFunc("/v1/crypto-posture", svc.HandleCryptoPosture)
+
+	// Compliance (roadmap 1.7).
+	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
 		Handler:           adminMux,

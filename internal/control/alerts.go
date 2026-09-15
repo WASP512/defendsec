@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"defendsec/internal/alertmeta"
+	"defendsec/internal/controls"
 	"defendsec/internal/presence"
 	"defendsec/internal/sca"
 	"defendsec/internal/storepg"
@@ -210,6 +211,8 @@ func (s *Server) alertFromFimEvent(ev presence.FimEvent) presence.Alert {
 		GeneratorID:      alertmeta.GeneratorFIM,
 		GeneratorVersion: alertmeta.GeneratorVersion,
 		Detail:           detail,
+		Signal:           string(controls.SignalFIM),
+		ControlIDs:       controls.Tag(controls.SignalFIM),
 	}
 }
 
@@ -250,6 +253,8 @@ func (s *Server) alertFromDrift(dev presence.Device, path, prev, curr string) pr
 		GeneratorID:      alertmeta.GeneratorFIM,
 		GeneratorVersion: alertmeta.GeneratorVersion,
 		Detail:           detail,
+		Signal:           string(controls.SignalFIM),
+		ControlIDs:       controls.Tag(controls.SignalFIM),
 	}
 }
 
@@ -275,6 +280,10 @@ func (s *Server) alertFromSca(dev presence.Device, r sca.Result) presence.Alert 
 		GeneratorID:      alertmeta.GeneratorSCA,
 		GeneratorVersion: alertmeta.GeneratorVersion,
 		Detail:           detail,
+		Signal:           string(controls.SignalSCA),
+		// The check names the controls it actually tests, which is more
+		// specific than anything the signal alone can say.
+		ControlIDs: controls.Tag(controls.SignalSCA, r.Controls...),
 	}
 }
 
@@ -435,6 +444,7 @@ func storeAlert(a presence.Alert) storepg.Alert {
 		Status: a.Status, SourceType: a.SourceType, SourceID: a.SourceID,
 		GeneratorID: a.GeneratorID, GeneratorVersion: a.GeneratorVersion,
 		Detail: mustJSON(a.Detail),
+		Signal: a.Signal, ControlIDs: a.ControlIDs,
 	}
 }
 
@@ -451,6 +461,7 @@ func alertToMap(a storepg.Alert) map[string]any {
 		"severity": a.Severity, "title": a.Title, "summary": a.Summary,
 		"status": a.Status, "sourceType": a.SourceType, "sourceId": a.SourceID,
 		"generatorId": a.GeneratorID, "generatorVersion": a.GeneratorVersion,
+		"signal": a.Signal, "controlIds": a.ControlIDs,
 		"detail": detail,
 	}
 }

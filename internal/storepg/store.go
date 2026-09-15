@@ -12,6 +12,7 @@ import (
 
 	"defendsec/internal/auditchain"
 	"defendsec/internal/cmdlog"
+	"defendsec/internal/controls"
 	"defendsec/internal/evidence"
 	"defendsec/internal/presence"
 )
@@ -183,11 +184,15 @@ func (s *Store) Audit(ctx context.Context, actor, action, deviceID string, detai
 		Detail:   detailText,
 	})
 
+	// The control tag is stored for indexing, not as an independent claim.
+	// It is a pure function of the action, which the chain does hash, so an
+	// altered tag is detected by recomputing it — see controls.TagAuditAction.
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit_log (at, actor, action, device_id, detail, seq, prev_hash, entry_hash)
-		VALUES ($1::timestamptz,$2,$3,$4,$5::jsonb,$6,$7,$8)
+		INSERT INTO audit_log (at, actor, action, device_id, detail, seq, prev_hash, entry_hash, signal, control_ids)
+		VALUES ($1::timestamptz,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10)
 	`, entry.At, entry.Actor, entry.Action, entry.DeviceID, detailText,
-		entry.Seq, entry.PrevHash, entry.EntryHash); err != nil {
+		entry.Seq, entry.PrevHash, entry.EntryHash,
+		controls.AuditActionSignalName(action), controlIDs(controls.TagAuditAction(action))); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -343,14 +348,26 @@ func (s *Store) LatestCheckpoint(ctx context.Context) (auditchain.Checkpoint, bo
 	return cp, true, nil
 }
 
+// commandSignals are what every issued command evidences. A host mutation
+// through DefendSec is, by construction, a signed and attributed privileged
+// action; the command type varies but that fact does not.
+var commandSignals = []controls.Signal{
+	controls.SignalCommandSigned,
+	controls.SignalCommandAttributed,
+}
+
+const commandSignal = string(controls.SignalCommandSigned)
+
 func (s *Store) AppendCommand(ctx context.Context, rec cmdlog.Record) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO commands (id, device_id, hostname, type, payload, status, accepted, message, created_at, updated_at,
-		                      signature, signing_key_id, issued_unix, expires_unix, actor_identity)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10::timestamptz,$11,$12,$13,$14,$15)
+		                      signature, signing_key_id, issued_unix, expires_unix, actor_identity,
+		                      signal, control_ids)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::timestamptz,$10::timestamptz,$11,$12,$13,$14,$15,$16,$17)
 		ON CONFLICT (id) DO NOTHING
 	`, rec.ID, rec.DeviceID, rec.Hostname, rec.Type, rec.Payload, rec.Status, rec.Accepted, rec.Message, rec.CreatedAt, rec.UpdatedAt,
-		rec.Signature, rec.SigningKeyID, rec.IssuedUnix, rec.ExpiresUnix, rec.ActorIdentity)
+		rec.Signature, rec.SigningKeyID, rec.IssuedUnix, rec.ExpiresUnix, rec.ActorIdentity,
+		commandSignal, controlIDs(controls.Strings(controls.ForSignals(commandSignals...))))
 	return err
 }
 
