@@ -12,6 +12,7 @@ import (
 
 	"defendsec/internal/auditchain"
 	"defendsec/internal/cmdlog"
+	"defendsec/internal/evidence"
 	"defendsec/internal/presence"
 )
 
@@ -492,4 +493,80 @@ func (s *Store) ExportAgentsJSON(ctx context.Context) ([]byte, error) {
 		doc.FimEvents = append(doc.FimEvents, ev)
 	}
 	return json.MarshalIndent(doc, "", "  ")
+}
+
+// ExportEvidence builds a portable proof bundle for an audit range, so the
+// result can be verified by defendsec-verify without this server, this
+// database, or any credential. Pass deviceID to scope the commands to one
+// host, or "" for all of them.
+func (s *Store) ExportEvidence(ctx context.Context, controlPubPEM, server, scope, deviceID string, fromSeq int64) (*evidence.Bundle, error) {
+	entries, err := s.ListAuditChain(ctx, fromSeq, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	b := &evidence.Bundle{
+		Manifest: evidence.Manifest{
+			FormatVersion: evidence.FormatVersion,
+			GeneratedAt:   time.Now().UTC().Truncate(time.Second),
+			Server:        server,
+			Scope:         scope,
+		},
+		ControlPublicKeyPEM: controlPubPEM,
+		Audit:               entries,
+	}
+
+	if len(entries) > 0 {
+		b.Manifest.FromSeq = entries[0].Seq
+		b.Manifest.ThroughSeq = entries[len(entries)-1].Seq
+		// A range that does not start at the beginning of the chain needs the
+		// hash of the entry before it, or it cannot be anchored.
+		if entries[0].Seq > 1 {
+			var prev string
+			err := s.pool.QueryRow(ctx,
+				`SELECT entry_hash FROM audit_log WHERE seq = $1`, entries[0].Seq-1).Scan(&prev)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return nil, err
+			}
+			b.Manifest.PrevHash = prev
+		}
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT at, through_seq, entry_hash, signing_key_id, signature
+		FROM audit_checkpoints
+		WHERE through_seq >= $1
+		ORDER BY through_seq
+	`, fromSeq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cp auditchain.Checkpoint
+		var at time.Time
+		if err := rows.Scan(&at, &cp.ThroughSeq, &cp.EntryHash, &cp.SigningKeyID, &cp.Signature); err != nil {
+			return nil, err
+		}
+		cp.At = at.UTC()
+		b.Checkpoints = append(b.Checkpoints, cp)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	cmds, err := s.ListCommands(ctx, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range cmds {
+		b.Commands = append(b.Commands, evidence.CommandProof{
+			ID: c.ID, DeviceID: c.DeviceID, Hostname: c.Hostname, Type: c.Type,
+			Payload: c.Payload, Status: c.Status, Accepted: c.Accepted,
+			ActorIdentity: c.ActorIdentity,
+			Signature:     c.Signature, SigningKeyID: c.SigningKeyID,
+			IssuedUnix: c.IssuedUnix, ExpiresUnix: c.ExpiresUnix,
+		})
+	}
+	return b, nil
 }

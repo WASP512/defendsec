@@ -29,6 +29,16 @@ build linux arm64 ./cmd/defendsec-apid "defendsec-apid-linux-arm64"
 build linux amd64 ./cmd/defendsec-agentd "defendsec-agentd-linux-amd64"
 build linux arm64 ./cmd/defendsec-agentd "defendsec-agentd-linux-arm64"
 
+# The evidence verifier is built for the platforms an auditor is likely to be
+# on, not just the server's. It needs no server, database, network or
+# credential, so shipping it widely is what makes independent verification a
+# real option rather than a claim.
+build linux   amd64 ./cmd/defendsec-verify "defendsec-verify-linux-amd64"
+build linux   arm64 ./cmd/defendsec-verify "defendsec-verify-linux-arm64"
+build darwin  amd64 ./cmd/defendsec-verify "defendsec-verify-darwin-amd64"
+build darwin  arm64 ./cmd/defendsec-verify "defendsec-verify-darwin-arm64"
+build windows amd64 ./cmd/defendsec-verify "defendsec-verify-windows-amd64.exe"
+
 install -m 0644 packaging/agent/install.sh "${OUT}/install-agent.sh"
 install -m 0755 packaging/proxmox/update-server.sh "${OUT}/update-server.sh"
 
