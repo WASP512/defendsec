@@ -279,13 +279,40 @@ table. Compliance marketing is where that credibility is most easily spent.
 
 ---
 
+### 3.8 Why the vulnerability catalog syncs locally rather than querying live
+
+The shipped catalog is inadequate and must be fed from authoritative upstream sources (§0.3). But
+"tie it to online databases" and "query those databases at scan time" are different designs, and
+only one of them survives this product's own requirements.
+
+Live upstream queries break five things at once:
+
+| Problem | Consequence |
+| --- | --- |
+| **Air-gapped and CUI networks** | Cannot reach `api.nvd.nist.gov` at all. §3.5 identifies exactly those networks as the sharpest market — a design that requires outbound internet disqualifies the product from it. |
+| **Third-party availability** | NVD's 2024 enrichment backlog and repeated API outages are well documented. Fleet security posture should not go blind during someone else's incident. |
+| **Rate limits** | NVD allows 5 requests per 30 seconds unauthenticated, 50 with a key. Per-package queries across a fleet exhaust that immediately. |
+| **Inventory leakage** | `scripts/ingest-osv.py` currently reads distinct package names from `devices.software` and POSTs them to `api.osv.dev`. That tells a third party precisely what software the fleet runs — in a product self-hosted specifically so that data stays put. |
+| **Non-reproducible findings** | If a finding depends on what a remote API returned at query time, there is no way to prove what the catalog said on the day of the scan. This directly undermines §3.3. |
+
+The correct architecture is the one every serious scanner uses — Trivy, Grype, Dependency-Track,
+Dependabot all ship a local database that syncs on a schedule. **Local is not the problem;
+hand-curated and stale is the problem.** The fix is a continuous, versioned, signed mirror of
+authoritative feeds (§0.3–0.6), not runtime API calls.
+
+Done that way, the catalog stops being a liability and becomes part of the evidence story: a
+finding cites the snapshot and feed digests that produced it, and an assessor can reproduce it
+months later.
+
+---
+
 ## 4. Roadmap
 
 Six phases. Each is independently shippable. Effort estimates assume one experienced engineer.
 
 | Phase | Theme | Effort | Why now |
 | --- | --- | --- | --- |
-| **0** | Trustworthy findings | 3–5 weeks | A scanner that cries wolf gets switched off. Blocks everything. |
+| **0** | Trustworthy findings + real feeds | 6–9 weeks | A scanner that cries wolf gets switched off. Blocks everything. |
 | **1** | Provable action ledger | 6–10 weeks | Builds the moat. Cheap — the crypto already exists. |
 | **2** | Policy-governed response | 6–8 weeks | Makes automation safe. Prerequisite for Phase 4. |
 | **3** | Behavioral detection | 4–6 months | Largest capability gap. Earns the right to act. |
@@ -294,7 +321,7 @@ Six phases. Each is independently shippable. Effort estimates assume one experie
 
 ---
 
-### Phase 0 — Make findings trustworthy (3–5 weeks) · *blocks everything else*
+### Phase 0 — Make findings trustworthy (6–9 weeks) · *blocks everything else*
 
 The vulnerability matcher currently produces confidently wrong answers. Fix this first; nothing
 else matters if operators learn to ignore the output.
@@ -338,18 +365,79 @@ structurally incapable of being correct.
   *why* something was flagged.
 - Fix the test vector above and add regression cases for backports across all supported distros.
 
-**0.3 — Make feed freshness visible and honest.** The paper says catalog freshness "is an operator
-responsibility," which is fair, but the console currently gives no signal. Add feed age to the
-Advisories page and to the Fleet dashboard, and raise a system alert when any feed exceeds a
-threshold. Stale intel presented as current is worse than no intel.
+**0.3 — Replace the hand-curated catalog with a real feed pipeline.** The shipped local catalog is
+the weakest input in the product. It should be continuously synced from authoritative upstream
+sources — but **synced into a local mirror, not queried live.** See §3.8 for why that distinction
+decides whether DefendSec can serve its best market at all.
 
-**0.4 — Ship the OSV/distro ingest as a first-class service.** `scripts/ingest-osv.py` (201 lines,
-with a `.timer.md` *sketch*) should become a supported unit in `packaging/systemd/` with status
-reported in the console, not a script an operator is expected to find and wire up.
+*Tier 1 — what is actually fixed. Without these, everything else produces backport false positives.*
 
-**Acceptance:** dpkg/rpm comparator passes upstream vector suites; a fully-patched Ubuntu 22.04
-and Rocky 9 host produce **zero** advisory findings; every finding names its source feed and feed
-date; feed staleness raises an alert.
+| Source | Provides |
+| --- | --- |
+| Ubuntu OVAL / USN, Debian Security Tracker, RHEL & Alma & Rocky OVAL, SUSE OVAL | The fixed **distro** version per CVE per release, plus fix state — the only correct answer for a packaged install |
+| OSV.dev **bulk export** (per-ecosystem zip, not the per-package query API) | Well-structured ranges across language ecosystems and several distros |
+| MITRE **CVE List V5** (bulk, from GitHub) | The CVE record of authority |
+
+*Tier 2 — prioritisation. This is where the largest product win is, and it is cheap.*
+
+| Source | Provides |
+| --- | --- |
+| **CISA KEV** | ~1,200 CVEs known to be *actively exploited*. A single small file, updated continuously. Turns "you have 400 open advisories" into "three of these are being exploited in the wild." Federal remediation deadlines under **BOD 22-01** attach to it, which ties straight back to §3. |
+| **EPSS** (FIRST.org) | Daily exploitation-probability score for ~250k CVEs. CVSS is a severity score and a famously poor prioritisation signal; KEV + EPSS is a defensible one. |
+| **NVD** | CVSS vectors, CPE, CWE — for enrichment, not as the source of truth about what is fixed. |
+
+*Tier 3 — enrichment.*
+
+- **GitHub Advisory Database** for language ecosystems.
+- **MITRE CVE-to-ATT&CK mappings**, and the CWE → CAPEC → ATT&CK chain, to answer "if this is
+  exploited, what does the attacker gain" in ATT&CK terms. This is the legitimate way to tie
+  advisories to ATT&CK; ATT&CK itself is an adversary-behaviour knowledge base and contains no
+  CVEs, versions or package names, so it cannot feed advisories directly. Detection-side ATT&CK
+  tagging stays in Phase 3.4.
+- Public exploit presence (Exploit-DB, Metasploit module) as a boolean.
+
+**0.4 — Rebuild the advisory data model.** The current schema cannot hold any of the above.
+`advisories (id, cve, package, below, severity, summary, source)` carries exactly one version
+floor per row, and `scripts/ingest-osv.py` fills it by keeping the **last** `fixed` event it
+encounters across all ranges — so a CVE fixed in both `1.1.1k` and `3.0.2` silently loses one.
+Severity is derived by string-prefix matching on the score (`startswith("9")`, `startswith("7")`),
+which misreads CVSS vectors. The script also defaults to ecosystem `Debian` and four packages.
+
+Required shape:
+
+- Multiple affected **ranges** per advisory, not a single `below`.
+- A `(distro, release)` dimension — the same CVE has different fixed versions per release.
+- **Fix state**: affected / fixed / will-not-fix / not-affected. Distros publish this, and
+  "not-affected" and "will-not-fix" eliminate a large class of false positives on their own.
+- `kev` flag, `epss` score, full CVSS vector, CWE.
+- `source` and `snapshot_version` per record, for the reproducibility requirement in 0.6.
+
+**0.5 — Offline and air-gapped sync is mandatory, not optional.** Publish signed catalog bundles
+that an operator downloads on a connected machine and imports on the isolated one. A CUI or
+classified network cannot reach `api.nvd.nist.gov`, and §3.5 identifies exactly those networks as
+the sharpest market. A scanner that still works in a SCIF is a differentiator, not a fallback.
+
+**0.6 — Pin findings to a catalog snapshot.** Every finding records the catalog snapshot and feed
+digests it was produced against, and the snapshot is recorded in the Phase 1 ledger. This makes a
+finding reproducible months later and provable to an assessor — *"this host was flagged against
+snapshot `2026-09-15T06:00Z`, feed digests as follows"* — which no other scanner can currently
+demonstrate. It is also the only way the evidence thesis in §3.3 survives contact with a
+vulnerability catalog that changes daily.
+
+**0.7 — Make feed freshness visible and honest.** The paper says catalog freshness "is an operator
+responsibility," which is fair, but the console gives no signal today. Show per-feed age on
+Advisories and Fleet, and raise a system alert when a feed exceeds its threshold. Stale intel
+presented as current is worse than no intel.
+
+**0.8 — Ship ingest as a first-class service.** `scripts/ingest-osv.py` (201 lines, with only a
+`.timer.md` *sketch*) becomes a supported unit in `packaging/systemd/` with sync status, last
+success, and per-feed digest reported in the console — not a script an operator has to find and
+wire up.
+
+**Acceptance:** dpkg/rpm comparators pass the upstream vector suites; a fully-patched Ubuntu 22.04
+and Rocky 9 host produce **zero** advisory findings; the Advisories page can be sorted by
+KEV-then-EPSS rather than CVSS alone; a catalog imports and verifies on a host with no outbound
+network; and every finding names its feed, feed date, and catalog snapshot.
 
 ---
 
@@ -492,7 +580,9 @@ let operators drop rules into a directory, signed and versioned like SCA packs.
 **3.4 — MITRE ATT&CK mapping and honest coverage matrix.** Tag every rule and alert with technique
 IDs, and ship a console page showing coverage — *including what DefendSec cannot see.* An honest
 coverage map is rare, extremely well received, and entirely consistent with the Scope page
-philosophy the product already has.
+philosophy the product already has. This is where ATT&CK belongs: it describes adversary
+behaviour, so it maps to *detections*. The advisory-side tie-in is the separate CVE-to-ATT&CK
+enrichment in §0.3 Tier 3, which answers what an attacker gains by exploiting a given CVE.
 
 **3.5 — Process-tree context on alerts.** When an alert fires, attach the process ancestry,
 command line, user, and network activity. This is the single thing analysts need most and the
@@ -592,8 +682,10 @@ tooling we give you for your fleet.*
 
 Ordered by (impact × credibility) ÷ effort:
 
-1. **Phase 0.1–0.2** — fix the version comparator and backport handling. *Nothing else matters
-   while the tool reports patched hosts as vulnerable.*
+1. **Phase 0.1–0.4** — fix the comparator and backport handling, then replace the hand-curated
+   catalog with synced feeds and a data model that can hold them. *Nothing else matters while the
+   tool reports patched hosts as vulnerable.* Add **CISA KEV and EPSS** early: they are small,
+   cheap feeds and they change the Advisories page from a list into a priority queue.
 2. **Phase 1.0** — per-user identity. Small, and everything downstream depends on it.
 3. **Phase 1.1–1.4** — persist signatures, chain the audit log, sign acks, ship `defendsec verify`.
    *This is the moat, and it is mostly plumbing around crypto that already works.*
@@ -633,6 +725,9 @@ the product *is*. Phase 3 is the largest investment and can proceed in parallel 
 | Dimension | Today | Target after Phases 0–2 |
 | --- | --- | --- |
 | Advisory false-positive rate on a fully-patched host | Unmeasured; structurally high | Zero on supported distros |
+| Vulnerability intelligence | Hand-curated local catalog, no sync | Synced distro/OSV/CVE feeds, KEV + EPSS prioritised |
+| Finding reproducibility | None — catalog state not recorded | Pinned to a signed catalog snapshot |
+| Works on an air-gapped network | Catalog goes stale silently | Signed offline bundles, verified on import |
 | Time to produce audit evidence for an incident | Manual assembly across 4 console pages | One signed export, verifiable offline |
 | Detectable tampering with the action record | None — plain mutable table | Any edit detected and localized |
 | Actions attributable to a specific human | No — shared admin token | Every action, cryptographically |
