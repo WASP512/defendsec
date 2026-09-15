@@ -1,9 +1,6 @@
 package vuln
 
-import (
-	"strconv"
-	"strings"
-)
+import "strings"
 
 var packageAliases = map[string]string{
 	"docker.io":            "docker",
@@ -14,19 +11,19 @@ var packageAliases = map[string]string{
 	"google chrome":        "google chrome",
 	"adobe-photoshop":      "adobe photoshop",
 	// Fedora/RHEL RPM names ↔ common advisory package labels
-	"openssh":        "openssh",
-	"openssh-server": "openssh",
+	"openssh":         "openssh",
+	"openssh-server":  "openssh",
 	"openssh-clients": "openssh",
-	"openssl":        "openssl",
-	"openssl-libs":   "openssl",
-	"openssl-devel":  "openssl",
-	"kernel":         "kernel",
-	"kernel-core":    "kernel",
-	"kernel-modules": "kernel",
-	"glibc":          "glibc",
-	"glibc-common":   "glibc",
-	"curl":           "curl",
-	"libcurl":        "curl",
+	"openssl":         "openssl",
+	"openssl-libs":    "openssl",
+	"openssl-devel":   "openssl",
+	"kernel":          "kernel",
+	"kernel-core":     "kernel",
+	"kernel-modules":  "kernel",
+	"glibc":           "glibc",
+	"glibc-common":    "glibc",
+	"curl":            "curl",
+	"libcurl":         "curl",
 	"libcurl-minimal": "curl",
 }
 
@@ -38,50 +35,14 @@ func StripDebianEpoch(raw string) string {
 	return s
 }
 
-func parseVersion(raw string) []int {
-	s := StripDebianEpoch(raw)
-	var parts []int
-	for _, seg := range strings.FieldsFunc(s, func(r rune) bool { return r < '0' || r > '9' }) {
-		if seg == "" {
-			continue
-		}
-		n, err := strconv.Atoi(seg)
-		if err != nil {
-			continue
-		}
-		parts = append(parts, n)
-	}
-	return parts
-}
-
-// VersionOlderThan reports whether installed is strictly older than the patched floor.
+// VersionOlderThan reports whether installed is strictly older than the patched
+// floor.
+//
+// Deprecated: prefer Assess, which distinguishes "not vulnerable" from "cannot
+// tell". This wrapper collapses VerdictUnknown to false so that an undecidable
+// comparison never raises an alert on its own.
 func VersionOlderThan(installed, floor string) bool {
-	a := parseVersion(installed)
-	b := parseVersion(floor)
-	if len(a) == 0 || len(b) == 0 {
-		return false
-	}
-	n := len(a)
-	if len(b) > n {
-		n = len(b)
-	}
-	for i := 0; i < n; i++ {
-		left := 0
-		if i < len(a) {
-			left = a[i]
-		}
-		right := 0
-		if i < len(b) {
-			right = b[i]
-		}
-		if left < right {
-			return true
-		}
-		if left > right {
-			return false
-		}
-	}
-	return false
+	return Assess(installed, floor, SchemeAuto).Verdict == VerdictVulnerable
 }
 
 func canonicalPackage(name string) string {

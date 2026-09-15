@@ -2,16 +2,28 @@ package vuln
 
 import "testing"
 
+// Behavioural cases for the boolean wrapper. Version ordering itself is
+// covered by version_test.go and the backport semantics by compare_test.go.
 func TestVersionOlderThan(t *testing.T) {
 	cases := []struct {
 		installed string
 		floor     string
 		want      bool
 	}{
-		{"1:8.9p1-3ubuntu0.11", "9.8p1", true},
+		// Previously asserted true. Ubuntu 22.04 carries the fix for
+		// CVE-2024-6387 in 1:8.9p1-3ubuntu0.10, so flagging this host was a
+		// false positive; the honest answer is that a version comparison
+		// cannot decide, and an undecidable case must not alert.
+		{"1:8.9p1-3ubuntu0.11", "9.8p1", false},
 		{"1:9.8p1-1", "9.8p1", false},
-		{"3.0.2-0ubuntu1.18", "3.0.14", true},
+		{"3.0.2-0ubuntu1.18", "3.0.14", false},
 		{"3.0.14", "3.0.14", false},
+
+		// Plain upstream builds still resolve definitively.
+		{"3.0.2", "3.0.14", true},
+		{"1.1.1a", "1.1.1g", true},
+		{"2.0~rc1", "2.0", true},
+		{"3.0.15", "3.0.14", false},
 	}
 	for _, tc := range cases {
 		got := VersionOlderThan(tc.installed, tc.floor)
