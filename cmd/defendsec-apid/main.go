@@ -147,6 +147,15 @@ func run(log *slog.Logger) error {
 		} else if result.AlertsDeleted > 0 || result.LiveQueryDeleted > 0 {
 			log.Info("retention prune", "alerts", result.AlertsDeleted, "liveQueries", result.LiveQueryDeleted)
 		}
+		// Expired sessions are pruned alongside the other retention work
+		// rather than left to accumulate (roadmap 1.0).
+		sessCtx, sessCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if n, err := pg.PruneExpiredSessions(sessCtx, time.Now().UTC()); err != nil {
+			log.Warn("session prune", "err", err)
+		} else if n > 0 {
+			log.Info("session prune", "sessions", n)
+		}
+		sessCancel()
 		pruneCancel()
 		defer pool.Close()
 	}
