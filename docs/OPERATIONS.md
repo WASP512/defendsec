@@ -215,6 +215,100 @@ When Postgres is enabled, apid prunes on startup:
 
 ---
 
+## Transparency anchoring
+
+The hash chain defeats anyone who can edit the database. Signed checkpoints defeat anyone who can
+append to it. Neither defeats an attacker who owns the server, the database **and** the control
+signing key: that attacker can rebuild the whole ledger and sign a fresh checkpoint over it, and
+the result verifies perfectly.
+
+Anchoring publishes checkpoint hashes where that attacker cannot reach back and change them. They
+can stop new anchors appearing; they cannot rewrite the ones already out there, so a rebuilt chain
+stops matching and the forgery becomes visible.
+
+Configure targets as a comma-separated list in `/etc/defendsec/apid.env`:
+
+```bash
+DEFENDSEC_ANCHOR_TARGETS='rfc3161=https://freetsa.org/tsr,file=/var/lib/defendsec/anchors'
+DEFENDSEC_CHECKPOINT_INTERVAL=6h
+```
+
+A mistyped target refuses to start rather than being skipped — an operator who believes they have
+anchoring they do not have stops looking.
+
+| Kind | Form | What it is worth |
+| --- | --- | --- |
+| `rfc3161` | `rfc3161=<tsa url>` | Strongest. A third party signs that this hash existed at this time, and DefendSec never holds that key |
+| `file` | `file=<directory>` | Exactly what you do with the directory. Pointed at a git worktree that is committed and pushed, strong. Left on the same disk as the database, nearly worthless |
+| `peer` | `peer=<url>#<shared token>` | Mutual and free. Two agencies anchoring each other both gain, and compromising one does not reach the other's copy |
+
+Only the hash is sent. A timestamp authority learns nothing about what the ledger contains, which
+matters when the ledger describes an agency's security posture.
+
+### The file target and git
+
+The file target appends one JSON object per line to `anchors-YYYY-MM.jsonl`. It is append-only by
+intent: the file is never rewritten, so a diff shows additions and nothing else, and a history that
+only ever grows makes an alteration obvious to whoever reviews the repository.
+
+Point it at a checkout and commit on a timer:
+
+```bash
+cd /var/lib/defendsec/anchors && git add -A && git commit -m "anchors" && git push
+```
+
+The value is entirely in the push. Anchors that never leave the machine protect nothing.
+
+### Anchoring for a peer
+
+To hold another instance's checkpoints, set a shared token:
+
+```bash
+DEFENDSEC_PEER_ANCHOR_TOKEN='a-long-random-string'
+```
+
+The peer then uses `peer=https://your-console/v1/anchors/receive#a-long-random-string`. The token is
+separate from the admin token on purpose: a peer that anchors for you never holds admin access to
+your instance. Without the variable set, the endpoint refuses everything — holding anchors is opt-in.
+
+Peer anchors are stored apart from your own. They are somebody else's evidence held on their
+behalf, and mixing the two would let a compromised peer's claims be read as yours.
+
+### Checking them
+
+The comparison is the entire point, and it is the step that is usually skipped: anchors written and
+never checked detect nothing. The **Audit** page shows it, and so does the API:
+
+```bash
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  http://127.0.0.1:47264/v1/audit/anchors | jq .summary
+```
+
+A mismatch means the chain was rebuilt after that anchor was published. A valid signature over the
+current chain does **not** clear it — that signature is exactly what an attacker with the key would
+produce.
+
+`POST` to the same endpoint anchors the newest unanchored checkpoint immediately.
+
+### What DefendSec checks, and what it leaves to you
+
+For RFC 3161, DefendSec builds the request with a nonce, checks the authority's status, and
+verifies that the returned token timestamps **the hash it asked about** with **the nonce it sent** —
+which is what stops a compromised server presenting a token captured earlier for a hash it has
+since rewritten.
+
+It does **not** validate the authority's signature or certificate chain. That needs a full CMS
+implementation and a trust store of TSA roots, and a half-done version would be worse than none: it
+would report "verified" on the strength of checks it did not really make. The token is stored whole
+so you can do it with tooling that already exists:
+
+```bash
+# Extract the token and the hash it covers, then verify against your TSA roots
+openssl ts -verify -in token.tsr -data hash.bin -CAfile tsa-roots.pem
+```
+
+---
+
 ## Compliance and audit evidence
 
 The **Compliance** page shows per-control status for a framework over a window: CIS Controls v8,

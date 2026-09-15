@@ -641,6 +641,24 @@ transparency log, a peer DefendSec instance, or a git repository. This defeats a
 fully compromises the server *and* the database — they can stop new entries but cannot rewrite
 anchored history. Very few products at any price can make this claim.
 
+*Delivered.* Three targets: an RFC 3161 timestamp authority, an append-only file directory meant
+to be pointed at a git worktree, and a peer DefendSec instance. Only the hash leaves the machine,
+so a timestamp authority learns nothing about what the ledger contains. For RFC 3161 DefendSec
+builds the request with a nonce and verifies the returned token covers *that hash* with *that
+nonce* — which is what stops a compromised server replaying a token captured before it rewrote the
+entry — and then stores the token verbatim. It deliberately does **not** validate the authority's
+signature chain: that needs full CMS and a TSA trust store, and a half-done version would report
+"verified" on the strength of checks it never made, so the token is stored whole for tooling that
+can do it properly, and the limitation is reported next to every anchor. Writing the parser caught
+a bug worth recording: an optional `asn1.RawValue` for TSTInfo's Accuracy field silently consumed
+the nonce that follows it, so every genuine token looked like a replay. Anchoring failures are
+stored rather than dropped — a run of them is the interesting signal. Building this also revealed
+that `AppendCheckpoint` had no caller at all, so a deployment had no checkpoints to anchor;
+checkpointing now runs on a timer alongside anchoring. Most importantly the console and the API
+show the *comparison* against the live chain, not a count of anchors written: anchors nobody
+checks detect nothing, and a valid signature over a rebuilt chain does not clear a mismatch,
+because that signature is exactly what an attacker holding the key would produce.
+
 **Acceptance:** every command row carries a signature verifiable by `defendsec verify` with the
 server offline; a row edited directly in Postgres is detected and localized; an evidence bundle
 verifies on a machine that has never contacted the server.

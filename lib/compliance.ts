@@ -182,3 +182,54 @@ export const STATUS_HINT: Record<ControlStatusValue, string> = {
     "DefendSec cannot evidence this at all. It has to be covered another way.",
   satisfied: "Evidence across the window, nothing outstanding at the close.",
 };
+
+// Transparency anchoring (roadmap 1.6).
+
+export type AnchorRecord = {
+  id: string;
+  throughSeq: number;
+  entryHash: string;
+  kind: "rfc3161" | "file" | "peer";
+  target: string;
+  anchoredAt: string;
+  externalTime?: string;
+  reference?: string;
+  error?: string;
+};
+
+export type AnchorVerification = {
+  record: AnchorRecord;
+  matches: boolean;
+  currentHash?: string;
+  detail: string;
+};
+
+export type AnchorStatus = {
+  summary: {
+    total: number;
+    matching: number;
+    mismatched: number;
+    missing: number;
+    failed: number;
+    verdict: string;
+  };
+  verifications: AnchorVerification[];
+  peerAnchors: {
+    id: string;
+    peer: string;
+    throughSeq: number;
+    entryHash: string;
+    receivedAt: string;
+  }[];
+  targets: { kind: string; target: string }[];
+};
+
+export async function loadAnchorStatus(): Promise<AnchorStatus> {
+  const res = await apid("/v1/audit/anchors");
+  if (!res.ok) {
+    throw new ComplianceUnavailableError(
+      `Control plane returned ${res.status}.`,
+    );
+  }
+  return (await res.json()) as AnchorStatus;
+}
