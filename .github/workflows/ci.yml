@@ -20,10 +20,6 @@ jobs:
         uses: trufflesecurity/trufflehog@v3.97.4
         with:
           extra_args: --results=verified,unknown
-        # Non-blocking until the first real run confirms no false positives
-        # on this repo's placeholder/dev tokens (e.g. defendsec-local-admin).
-        # Flip to blocking once that's confirmed clean.
-        continue-on-error: true
 
   go:
     runs-on: ubuntu-latest
