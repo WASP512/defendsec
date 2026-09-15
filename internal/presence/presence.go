@@ -87,33 +87,37 @@ type Alert struct {
 }
 
 type Device struct {
-	ID              string      `json:"id"`
-	Hostname        string      `json:"hostname"`
-	AgentVersion    string      `json:"agentVersion,omitempty"`
-	Platform        string      `json:"platform"`
-	OSName          string      `json:"osName"`
-	OSVersion       string      `json:"osVersion"`
-	Arch            string      `json:"arch"`
-	UptimeSeconds   int64       `json:"uptimeSeconds"`
-	LastSeen        string      `json:"lastSeen"`
-	Connected       bool        `json:"connected"`
-	CertFingerprint string      `json:"certFingerprint"`
-	Transport       string      `json:"transport"`
-	Isolated        bool        `json:"isolated"`
-	Serial          string      `json:"serial,omitempty"`
-	HardwareModel   string      `json:"hardwareModel,omitempty"`
-	CPU             string      `json:"cpu,omitempty"`
-	MemoryMb        int64       `json:"memoryMb,omitempty"`
-	DiskEncryption  *bool       `json:"diskEncryption"`
-	Firewall        *bool       `json:"firewall"`
-	IPAddresses     []string    `json:"ipAddresses,omitempty"`
-	Username        string      `json:"username,omitempty"`
-	Software        []Software  `json:"software,omitempty"`
-	PendingUpdates  []Update    `json:"pendingUpdates,omitempty"`
-	PatchInventory  string      `json:"patchInventory,omitempty"`
-	Fim             []FimFile   `json:"fim,omitempty"`
-	FimBaseline     []FimFile   `json:"fimBaseline,omitempty"`
-	ScaResults      []ScaResult `json:"scaResults,omitempty"`
+	ID              string `json:"id"`
+	Hostname        string `json:"hostname"`
+	AgentVersion    string `json:"agentVersion,omitempty"`
+	Platform        string `json:"platform"`
+	OSName          string `json:"osName"`
+	OSVersion       string `json:"osVersion"`
+	Arch            string `json:"arch"`
+	UptimeSeconds   int64  `json:"uptimeSeconds"`
+	LastSeen        string `json:"lastSeen"`
+	Connected       bool   `json:"connected"`
+	CertFingerprint string `json:"certFingerprint"`
+	// AgentPublicKeyPEM is the public half of the enrolled certificate key,
+	// kept so acknowledgement signatures can be verified later without the
+	// agent being connected (roadmap 1.3).
+	AgentPublicKeyPEM string      `json:"agentPublicKeyPem,omitempty"`
+	Transport         string      `json:"transport"`
+	Isolated          bool        `json:"isolated"`
+	Serial            string      `json:"serial,omitempty"`
+	HardwareModel     string      `json:"hardwareModel,omitempty"`
+	CPU               string      `json:"cpu,omitempty"`
+	MemoryMb          int64       `json:"memoryMb,omitempty"`
+	DiskEncryption    *bool       `json:"diskEncryption"`
+	Firewall          *bool       `json:"firewall"`
+	IPAddresses       []string    `json:"ipAddresses,omitempty"`
+	Username          string      `json:"username,omitempty"`
+	Software          []Software  `json:"software,omitempty"`
+	PendingUpdates    []Update    `json:"pendingUpdates,omitempty"`
+	PatchInventory    string      `json:"patchInventory,omitempty"`
+	Fim               []FimFile   `json:"fim,omitempty"`
+	FimBaseline       []FimFile   `json:"fimBaseline,omitempty"`
+	ScaResults        []ScaResult `json:"scaResults,omitempty"`
 }
 
 type File struct {
@@ -181,6 +185,9 @@ func mergeHeartbeat(old, neu Device) Device {
 	out.LastSeen = neu.LastSeen
 	out.Connected = neu.Connected
 	out.Isolated = neu.Isolated
+	if neu.AgentPublicKeyPEM != "" {
+		out.AgentPublicKeyPEM = neu.AgentPublicKeyPEM
+	}
 	if neu.CertFingerprint != "" {
 		out.CertFingerprint = neu.CertFingerprint
 	}

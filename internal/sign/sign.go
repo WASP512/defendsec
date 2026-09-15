@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -121,6 +124,47 @@ func Verify(pub ed25519.PublicKey, e Envelope, sig []byte, now time.Time) error 
 	}
 	if e.IssuedUnix > 0 && now.Unix()-e.IssuedUnix > 5*60 {
 		return fmt.Errorf("command too old")
+	}
+	return nil
+}
+
+// KeyID is a stable short fingerprint of the public half, recorded alongside
+// every signature so a stored command can be matched to the key that signed it
+// after the control key is rotated.
+func (k *Key) KeyID() string {
+	return PublicKeyID(k.Public)
+}
+
+// PublicKeyID fingerprints an Ed25519 public key as the first 16 hex
+// characters of the SHA-256 of its PKIX encoding.
+func PublicKeyID(pub ed25519.PublicKey) string {
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// VerifyStored rebuilds the canonical envelope from persisted command fields
+// and checks the stored signature against it. Nothing but the row and the
+// public key is required, which is what lets the offline verifier work without
+// the server (roadmap 1.4).
+func VerifyStored(pub ed25519.PublicKey, deviceID, commandID, cmdType string, issuedUnix, expiresUnix int64, payload []byte, signatureB64 string) error {
+	raw, err := base64.StdEncoding.DecodeString(signatureB64)
+	if err != nil {
+		return fmt.Errorf("command %s: signature is not valid base64: %w", commandID, err)
+	}
+	env := Envelope{
+		DeviceID:    deviceID,
+		CommandID:   commandID,
+		Type:        cmdType,
+		IssuedUnix:  issuedUnix,
+		ExpiresUnix: expiresUnix,
+		Payload:     payload,
+	}
+	if !ed25519.Verify(pub, Canonical(env), raw) {
+		return fmt.Errorf("command %s: signature does not match the stored envelope", commandID)
 	}
 	return nil
 }

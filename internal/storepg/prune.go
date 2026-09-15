@@ -6,8 +6,8 @@ import (
 )
 
 type PruneResult struct {
-	AlertsDeleted      int64
-	LiveQueryDeleted   int64
+	AlertsDeleted    int64
+	LiveQueryDeleted int64
 }
 
 func (s *Store) PruneOld(ctx context.Context, alertRetentionDays, liveQueryRetentionDays int) (PruneResult, error) {

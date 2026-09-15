@@ -57,3 +57,9 @@ agent/.defendsec-node-key
 
 # release artifacts
 /dist/
+
+# Binaries built at the repo root by a bare `go build ./cmd/...`, which writes
+# the executable to the working directory rather than bin/.
+/defendsec-apid
+/defendsec-agentd
+/defendsec-verify

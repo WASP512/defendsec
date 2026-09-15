@@ -231,6 +231,56 @@ func fetchCA(httpBase string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 }
 
+// agentSigningKey loads the private half of the enrolled certificate. The
+// agent signs acknowledgements with it so the server can prove, after the
+// fact, that this endpoint reported the result — see internal/sign/ack.go for
+// why the certificate key is reused rather than a separate one being issued.
+func agentSigningKey(stateDir string) (*ecdsa.PrivateKey, error) {
+	raw, err := os.ReadFile(filepath.Join(stateDir, "client.key"))
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return nil, fmt.Errorf("invalid client.key PEM")
+	}
+	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	key, ok := parsed.(*ecdsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("client key is not ECDSA")
+	}
+	return key, nil
+}
+
+// signAck fills in the proof fields on an acknowledgement. A failure here is
+// not fatal: the acknowledgement still goes back, and the server records it as
+// unattested rather than losing the result entirely.
+func signAck(log *slog.Logger, key *ecdsa.PrivateKey, deviceID string, ack *defendsecv1.CommandAck) {
+	if key == nil || ack == nil {
+		return
+	}
+	ack.ExecutedUnix = time.Now().UTC().Unix()
+	ack.ResultHash = sign.HashResult(ack.GetMessage())
+	sig, err := sign.SignAck(key, sign.AckEnvelope{
+		CommandID:    ack.GetCommandId(),
+		DeviceID:     deviceID,
+		Accepted:     ack.GetAccepted(),
+		ResultHash:   ack.GetResultHash(),
+		ExecutedUnix: ack.GetExecutedUnix(),
+	})
+	if err != nil {
+		log.Warn("sign acknowledgement", "err", err, "command", ack.GetCommandId())
+		return
+	}
+	ack.Signature = sig
+}
+
 func clientTLS(stateDir, serverName string) (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(filepath.Join(stateDir, "client.pem"), filepath.Join(stateDir, "client.key"))
 	if err != nil {
@@ -313,6 +363,10 @@ func attachStream(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 	}
 	log.Info("control stream up")
 	replay := newReplay()
+	ackKey, keyErr := agentSigningKey(stateDir)
+	if keyErr != nil {
+		log.Warn("acknowledgements will be unsigned", "err", keyErr)
+	}
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
@@ -321,6 +375,7 @@ func attachStream(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 		switch body := msg.GetBody().(type) {
 		case *defendsecv1.ServerToAgent_Ping:
 			ack := &defendsecv1.CommandAck{CommandId: msg.GetRequestId(), Accepted: true, Message: "pong"}
+			signAck(log, ackKey, deviceID, ack)
 			if err := stream.Send(&defendsecv1.AgentToServer{
 				RequestId: msg.GetRequestId(),
 				Body:      &defendsecv1.AgentToServer_Ack{Ack: ack},
@@ -330,6 +385,7 @@ func attachStream(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 			log.Info("pong", "server_time", body.Ping.GetServerTimeUnix())
 		case *defendsecv1.ServerToAgent_Command:
 			ack, restart := executeCommand(log, pub, deviceID, stateDir, replay, body.Command)
+			signAck(log, ackKey, deviceID, ack)
 			if err := stream.Send(&defendsecv1.AgentToServer{
 				RequestId: msg.GetRequestId(),
 				Body:      &defendsecv1.AgentToServer_Ack{Ack: ack},
