@@ -56,11 +56,24 @@ func (s *Store) SyncControlCatalog(ctx context.Context) (int, error) {
 // window. It answers the compliance view's first question — is there anything
 // behind this control at all — without pulling the records themselves.
 type ControlRecordCounts struct {
-	ControlID    string `json:"controlId"`
-	Alerts       int    `json:"alerts"`
-	OpenAlerts   int    `json:"openAlerts"`
-	Commands     int    `json:"commands"`
-	AuditEntries int    `json:"auditEntries"`
+	ControlID string `json:"controlId"`
+	Alerts    int    `json:"alerts"`
+	// OpenAlerts is how many of those findings are open *now*.
+	OpenAlerts int `json:"openAlerts"`
+	// OpenAtEnd is how many were still open at the end of the window, which
+	// is the number a closed audit period is judged on.
+	//
+	// DefendSec stores an alert's current status and the time it last
+	// changed, not a full transition history, so this is reconstructed: a
+	// finding was open at the end of the window if it is open now, or if it
+	// was not touched until after the window closed. That is exact when a
+	// finding is resolved once and never reopened, which is the normal case.
+	// A finding that was resolved inside the window and reopened afterwards
+	// is counted as open at the end when it was not. The assessment says so
+	// in its caveats rather than presenting the number as exact.
+	OpenAtEnd    int `json:"openAtEnd"`
+	Commands     int `json:"commands"`
+	AuditEntries int `json:"auditEntries"`
 }
 
 // CountControlRecords counts tagged records per control between from and to.
@@ -81,7 +94,8 @@ func (s *Store) CountControlRecords(ctx context.Context, from, to string) (map[s
 	rows, err := s.pool.Query(ctx, `
 		SELECT unnest(control_ids) AS control_id,
 		       count(*) AS total,
-		       count(*) FILTER (WHERE status = 'open') AS open
+		       count(*) FILTER (WHERE status = 'open') AS open,
+		       count(*) FILTER (WHERE status = 'open' OR updated_at >= $2::timestamptz) AS open_at_end
 		FROM alerts
 		WHERE COALESCE(detected_at, created_at) >= $1::timestamptz
 		  AND COALESCE(detected_at, created_at) <  $2::timestamptz
@@ -92,12 +106,16 @@ func (s *Store) CountControlRecords(ctx context.Context, from, to string) (map[s
 	}
 	for rows.Next() {
 		var id string
-		var total, open int
-		if err := rows.Scan(&id, &total, &open); err != nil {
+		var total, open, openAtEnd int
+		if err := rows.Scan(&id, &total, &open, &openAtEnd); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		bump(id, func(c *ControlRecordCounts) { c.Alerts = total; c.OpenAlerts = open })
+		bump(id, func(c *ControlRecordCounts) {
+			c.Alerts = total
+			c.OpenAlerts = open
+			c.OpenAtEnd = openAtEnd
+		})
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {

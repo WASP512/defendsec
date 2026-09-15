@@ -13,11 +13,19 @@ import (
 // between runs.
 func clearWindow(t *testing.T, s *Store, from, to time.Time) {
 	t.Helper()
-	if _, err := s.pool.Exec(context.Background(), `
+	ctx := context.Background()
+	if _, err := s.pool.Exec(ctx, `
 		DELETE FROM alerts
 		WHERE COALESCE(detected_at, created_at) >= $1 AND COALESCE(detected_at, created_at) < $2
 	`, from, to); err != nil {
 		t.Fatalf("clear window: %v", err)
+	}
+	// Exceptions left by an earlier run would cover a deficiency this run
+	// expects to see uncovered.
+	if _, err := s.pool.Exec(ctx, `
+		DELETE FROM control_exceptions WHERE opened_at < $2 AND expires_at > $1
+	`, from, to); err != nil {
+		t.Fatalf("clear window exceptions: %v", err)
 	}
 }
 

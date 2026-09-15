@@ -215,6 +215,110 @@ When Postgres is enabled, apid prunes on startup:
 
 ---
 
+## Compliance and audit evidence
+
+The **Compliance** page shows per-control status for a framework over a window: CIS Controls v8,
+NIST SP 800-171, CMMC 2.0 Level 2, NIST SP 800-53 Rev 5 and the CJIS Security Policy v6.0.
+
+Read the statuses carefully — two of them are easy to confuse and mean opposite things.
+
+| Status | What it means |
+| --- | --- |
+| Satisfied | Evidence across the window, nothing outstanding when it closed |
+| Deficient | Findings were still open at the close of the window |
+| Accepted deficiency | Still open, covered by a documented, time-limited exception. **Not a pass** |
+| No evidence recorded | DefendSec *can* evidence this and recorded nothing. Usually the check never ran |
+| Outside DefendSec | DefendSec *cannot* evidence this at all. Cover it another way |
+
+"No evidence recorded" is the one to watch. It is not a pass and it is not a scope boundary — it
+almost always means a check is not running on the hosts you think it is.
+
+There is no overall score, on purpose. A coverage percentage is where a control nobody has looked
+at disappears into a rounding error.
+
+A control marked **partial coverage** is satisfied only for the part DefendSec can see. Each one
+says which part it does not cover; read the note before citing it.
+
+### Audit periods
+
+An assessment is about a window, so define the window under review:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"name":"CJIS FY26","framework":"cjis-v6",
+       "startsAt":"2026-01-01T00:00:00Z","endsAt":"2026-12-31T23:59:59Z"}' \
+  http://127.0.0.1:47264/v1/audit/periods
+```
+
+Closing a period (`POST /v1/audit/periods/close` with `{"periodId":"...","closed":true}`) declares
+it final. Reopening is allowed, and both are recorded in the ledger.
+
+### Documented exceptions
+
+When a control cannot be met and the agency accepts that, record it rather than explaining it to
+the assessor from memory:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"controlId":"cis-v8:5.4","periodId":"<period id>",
+       "reason":"legacy jump host pending decommission",
+       "remediation":"replaced in Q3","owner":"ops",
+       "expiresAt":"2026-09-30T00:00:00Z"}' \
+  http://127.0.0.1:47264/v1/audit/exceptions
+```
+
+An expiry is required. An exception with no expiry is a permanent excuse, and DefendSec will not
+store one. When it lapses, the control returns to **Deficient** by itself.
+
+This is not a POA&M product. It records the exception, its owner and its expiry — it does not do
+approval routing or risk scoring.
+
+### Exporting evidence for an assessor
+
+```bash
+# Everything, unscoped
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -OJ http://127.0.0.1:47264/v1/audit/evidence
+
+# Scoped to a framework and a period, which adds the assessment to the bundle
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -OJ "http://127.0.0.1:47264/v1/audit/evidence?periodId=<period id>"
+```
+
+Verify it with the server switched off — that is the point of it:
+
+```bash
+defendsec-verify defendsec-evidence-*.json
+```
+
+The scope does **not** narrow the audit range. A hash chain filtered by content is not a chain, so
+the bundle carries the whole range and expresses its scope through what it asserts.
+
+**What the bundle proves, and what it does not.** The chain, the checkpoints and the command
+signatures verify on their own. The assessment does not: audit-entry counts are recomputed from
+the bundle's own chained entries and checked, but alert and command counts come from records that
+are not chained. `defendsec-verify` prints that distinction, and the bundle carries it in a
+provenance line that verification checks has not been edited. Hand an assessor the bundle, not a
+screenshot.
+
+### Control tags
+
+Every finding, signed action and ledger entry is tagged with the controls it speaks to at the
+moment it is written, so a period that has already closed reports what was true then rather than
+what today's mapping would say. Rows written before the tagging migration carry no tag; they are
+not backfilled, because backfilling would manufacture a claim that never existed.
+
+The SCA packs in `packs/sca/` name their own controls per check. A bad identifier fails the pack
+load rather than loading quietly — a pack that looks tagged and evidences nothing is the failure
+mode hardest to notice.
+
+`GET /v1/controls` serves the whole catalog, including every control DefendSec cannot evidence,
+each with the reason.
+
+---
+
 ## FIPS 140-3 mode
 
 CJIS and several federal regimes require cryptography from a FIPS 140-3 validated module.

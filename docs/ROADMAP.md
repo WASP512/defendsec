@@ -620,6 +620,21 @@ from 1.7 and the evidence export from 1.5. Roughly 6–10 weeks on top of Phases
 plainly what DefendSec *cannot* evidence (§3.10) rather than leaving a control silently blank.
 See §3.9: this is a layer, not a pivot.
 
+*Delivered.* The status set turns on one distinction that every compliance dashboard collapses:
+**no evidence recorded** (DefendSec can evidence this control and saw nothing — usually a check
+that never ran) is not the same fact as **outside DefendSec** (it cannot evidence this at all),
+and neither is ever rendered as a pass. An accepted deficiency is its own status, never a
+satisfied control, and its exception must carry an expiry — DefendSec refuses to store a
+permanent excuse. No coverage percentage is produced anywhere. A period still running is judged
+as of today rather than a date in the future. Whether a finding was open *at the close of the
+window* — not today — is what a period is judged on; DefendSec stores current status rather than
+a transition history, so that number is reconstructed, and the assessment says so rather than
+presenting it as exact. Evidence export is scoped to a framework and period without narrowing
+the audit range, because a hash chain filtered by content is not a chain; the assessment's
+audit-entry counts are recomputed from the bundle's own chain and verified, its alert and command
+counts are marked as unverifiable from the bundle alone, and the provenance line saying so is
+itself checked for edits.
+
 **1.6 — Transparency anchoring (optional, high-leverage).** Periodically publish signed checkpoint
 hashes somewhere the server cannot retroactively control: an RFC 3161 timestamp authority, a
 transparency log, a peer DefendSec instance, or a git repository. This defeats an attacker who

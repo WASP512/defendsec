@@ -85,6 +85,11 @@ type Bundle struct {
 	Audit       []auditchain.Entry      `json:"audit"`
 	Checkpoints []auditchain.Checkpoint `json:"checkpoints"`
 	Commands    []CommandProof          `json:"commands"`
+
+	// Compliance is present when the bundle was scoped to a control or a
+	// framework (roadmap 1.9). It is partly verifiable and says so; see
+	// compliance.go for exactly which part.
+	Compliance *ComplianceScope `json:"compliance,omitempty"`
 }
 
 // Write serialises a bundle.
@@ -128,6 +133,10 @@ type Report struct {
 	AcksVerified   int `json:"acksVerified"`
 	AcksUnattested int `json:"acksUnattested"`
 	AcksFailed     int `json:"acksFailed"`
+
+	// ComplianceControls is how many controls a scoped bundle asserts. Zero
+	// means the bundle carries no assessment, not that it passed one.
+	ComplianceControls int `json:"complianceControls"`
 }
 
 // OK reports whether every check passed.
@@ -161,7 +170,28 @@ func Verify(b *Bundle) Report {
 	verifyCheckpoints(b, pub, &rep)
 	verifyCommands(b, pub, keyID, &rep)
 	verifyAcks(b, &rep)
+	verifyComplianceScope(b, &rep)
 	return rep
+}
+
+// verifyComplianceScope reports on a scoped bundle's assessment: the part that
+// can be recomputed is checked, and the part that cannot is named. A reader
+// must never be left to assume the whole section carries the chain's weight.
+func verifyComplianceScope(b *Bundle, rep *Report) {
+	if b.Compliance == nil {
+		return
+	}
+	rep.ComplianceControls = len(b.Compliance.Controls)
+
+	if problems := b.verifyCompliance(); len(problems) > 0 {
+		rep.add("compliance assessment", false, "%s", strings.Join(problems, "; "))
+		return
+	}
+	rep.add("compliance assessment", true,
+		"%d controls for %s over %s..%s; audit-entry counts recomputed from the chain and matched. "+
+			"Alert and command counts are derived from records outside the chain and are not verified here.",
+		len(b.Compliance.Controls), b.Compliance.FrameworkTitle,
+		b.Compliance.From.Format("2006-01-02"), b.Compliance.To.Format("2006-01-02"))
 }
 
 // verifyAcks checks each endpoint's signed claim that it executed a command.

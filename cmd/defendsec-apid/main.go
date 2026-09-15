@@ -213,6 +213,13 @@ func run(log *slog.Logger) error {
 
 	// Compliance (roadmap 1.7).
 	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
+
+	// The audit layer (roadmap 1.9).
+	adminMux.HandleFunc("/v1/audit/periods", svc.HandleAuditPeriods)
+	adminMux.HandleFunc("/v1/audit/periods/close", svc.HandleAuditPeriodClose)
+	adminMux.HandleFunc("/v1/audit/exceptions", svc.HandleControlExceptions)
+	adminMux.HandleFunc("/v1/audit/assessment", svc.HandleAuditAssessment)
+	adminMux.HandleFunc("/v1/audit/evidence", svc.HandleEvidenceExport)
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
 		Handler:           adminMux,

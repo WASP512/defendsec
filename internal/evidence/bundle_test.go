@@ -458,3 +458,129 @@ func TestVerifyCountsLegacyAckedCommandsAsUnattested(t *testing.T) {
 		t.Errorf("the unattestable claim must be reported, got %q", detail)
 	}
 }
+
+// A scoped bundle's assessment must not become an unverifiable claim sitting
+// beside verifiable ones. The audit-entry half is recomputed from the chain;
+// editing the summary alone must be caught.
+func scopedBundle(t *testing.T) *Bundle {
+	t.Helper()
+	b, _ := testBundle(t)
+
+	from := b.Audit[0].At.Add(-time.Second)
+	to := b.Audit[len(b.Audit)-1].At.Add(time.Second)
+
+	counts := b.auditCountsByControl(from, to)
+	var summaries []ControlSummary
+	for id, n := range counts {
+		summaries = append(summaries, ControlSummary{
+			ID: id, Title: "t", Coverage: "evidenced", Status: "satisfied",
+			Statement: "held", AuditEntries: n,
+		})
+	}
+	SortControlSummaries(summaries)
+
+	b.Compliance = &ComplianceScope{
+		Framework: "cis-v8", FrameworkTitle: "CIS Controls v8",
+		From: from, To: to, Controls: summaries,
+		Provenance: ComplianceProvenance,
+	}
+	return b
+}
+
+func TestScopedBundleVerifies(t *testing.T) {
+	b := scopedBundle(t)
+	if len(b.Compliance.Controls) == 0 {
+		t.Fatal("the fixture produced no control summaries; the audit actions are untagged")
+	}
+	rep := Verify(b)
+	if !rep.OK() {
+		t.Fatalf("scoped bundle failed: %+v", rep.Checks)
+	}
+	if rep.ComplianceControls != len(b.Compliance.Controls) {
+		t.Errorf("reported %d controls, bundle has %d", rep.ComplianceControls, len(b.Compliance.Controls))
+	}
+
+	// The report must say plainly which half is not verified, or a reader
+	// will take the whole section as proven.
+	var detail string
+	for _, c := range rep.Checks {
+		if c.Name == "compliance assessment" {
+			detail = c.Detail
+		}
+	}
+	if !strings.Contains(detail, "not verified") {
+		t.Errorf("the report does not disclose the unverified half: %q", detail)
+	}
+}
+
+func TestScopedBundleDetectsInflatedCounts(t *testing.T) {
+	b := scopedBundle(t)
+	b.Compliance.Controls[0].AuditEntries += 7
+	rep := Verify(b)
+	if rep.OK() {
+		t.Fatal("an inflated audit-entry count verified")
+	}
+}
+
+// Editing the provenance note is an attempt to present derived numbers as
+// proven ones, and must fail.
+func TestScopedBundleDetectsEditedProvenance(t *testing.T) {
+	b := scopedBundle(t)
+	b.Compliance.Provenance = "Everything in this bundle is cryptographically verified."
+	if Verify(b).OK() {
+		t.Fatal("an edited provenance statement verified")
+	}
+}
+
+// A window reaching back before a partial bundle's first entry means entries
+// inside it are missing, so the counts are understated. That must be reported.
+func TestScopedBundleRejectsWindowStartingBeforeAPartialRange(t *testing.T) {
+	b := scopedBundle(t)
+	// Make the bundle a partial range rather than one starting at the chain's
+	// beginning, which is the case where the omission is detectable.
+	b.Manifest.FromSeq = 40
+	b.Manifest.PrevHash = "not-the-genesis-hash"
+	b.Compliance.From = b.Audit[0].At.Add(-365 * 24 * time.Hour)
+	if Verify(b).OK() {
+		t.Fatal("a window reaching before a partial bundle's range verified")
+	}
+}
+
+// A bundle that starts at the beginning of the chain has nothing before its
+// first entry, so an earlier window start is not an omission.
+func TestScopedBundleAllowsEarlyWindowFromChainStart(t *testing.T) {
+	b := scopedBundle(t)
+	b.Compliance.From = b.Audit[0].At.Add(-365 * 24 * time.Hour)
+	rep := Verify(b)
+	for _, c := range rep.Checks {
+		if c.Name == "compliance assessment" && !c.OK {
+			t.Fatalf("a full-chain bundle was rejected: %s", c.Detail)
+		}
+	}
+}
+
+// The bundle carries an assessment but no entries at all: the recomputable
+// half has nothing to stand on.
+func TestScopedBundleRejectsAssessmentWithNoEntries(t *testing.T) {
+	b := scopedBundle(t)
+	b.Audit = nil
+	if Verify(b).OK() {
+		t.Fatal("an assessment with no audit entries verified")
+	}
+}
+
+func TestUnscopedBundleReportsNoComplianceControls(t *testing.T) {
+	b, _ := testBundle(t)
+	rep := Verify(b)
+	if !rep.OK() {
+		t.Fatalf("plain bundle failed: %+v", rep.Checks)
+	}
+	if rep.ComplianceControls != 0 {
+		t.Errorf("complianceControls = %d on an unscoped bundle", rep.ComplianceControls)
+	}
+	for _, c := range rep.Checks {
+		if c.Name == "compliance assessment" {
+			t.Error("an unscoped bundle produced a compliance check")
+		}
+	}
+}
