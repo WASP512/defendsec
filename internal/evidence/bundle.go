@@ -58,15 +58,26 @@ type CommandProof struct {
 	SigningKeyID string `json:"signingKeyId"`
 	IssuedUnix   int64  `json:"issuedUnix"`
 	ExpiresUnix  int64  `json:"expiresUnix"`
+
+	// The endpoint's signed claim that it ran the command. Without these the
+	// bundle can prove what was authorised but not what was carried out.
+	AckSignature    string `json:"ackSignature,omitempty"`
+	AckResultHash   string `json:"ackResultHash,omitempty"`
+	AckExecutedUnix int64  `json:"ackExecutedUnix,omitempty"`
 }
 
 // Bundle is the portable unit of proof.
 type Bundle struct {
-	Manifest            Manifest                `json:"manifest"`
-	ControlPublicKeyPEM string                  `json:"controlPublicKeyPem"`
-	Audit               []auditchain.Entry      `json:"audit"`
-	Checkpoints         []auditchain.Checkpoint `json:"checkpoints"`
-	Commands            []CommandProof          `json:"commands"`
+	Manifest            Manifest `json:"manifest"`
+	ControlPublicKeyPEM string   `json:"controlPublicKeyPem"`
+	// AgentPublicKeys maps device id to the PEM public half of that device's
+	// enrolled certificate key, so acknowledgement signatures verify without
+	// the agent or the server being reachable.
+	AgentPublicKeys map[string]string `json:"agentPublicKeys,omitempty"`
+
+	Audit       []auditchain.Entry      `json:"audit"`
+	Checkpoints []auditchain.Checkpoint `json:"checkpoints"`
+	Commands    []CommandProof          `json:"commands"`
 }
 
 // Write serialises a bundle.
@@ -106,6 +117,10 @@ type Report struct {
 	CommandsVerified   int `json:"commandsVerified"`
 	CommandsUnsigned   int `json:"commandsUnsigned"`
 	CommandsFailed     int `json:"commandsFailed"`
+
+	AcksVerified   int `json:"acksVerified"`
+	AcksUnattested int `json:"acksUnattested"`
+	AcksFailed     int `json:"acksFailed"`
 }
 
 // OK reports whether every check passed.
@@ -138,7 +153,52 @@ func Verify(b *Bundle) Report {
 	verifyAuditChain(b, &rep)
 	verifyCheckpoints(b, pub, &rep)
 	verifyCommands(b, pub, keyID, &rep)
+	verifyAcks(b, &rep)
 	return rep
+}
+
+// verifyAcks checks each endpoint's signed claim that it executed a command.
+// A command whose authorisation verifies still tells you only what was
+// ordered; this is what separates that from what was done.
+func verifyAcks(b *Bundle, rep *Report) {
+	var acked int
+	var failures []string
+	for _, c := range b.Commands {
+		if c.AckSignature == "" && c.AckExecutedUnix == 0 {
+			continue // never acknowledged
+		}
+		acked++
+		pubPEM := b.AgentPublicKeys[c.DeviceID]
+		if c.AckSignature == "" || pubPEM == "" {
+			rep.AcksUnattested++
+			continue
+		}
+		if err := sign.VerifyAckStored(pubPEM, c.ID, c.DeviceID, c.Accepted,
+			c.AckResultHash, c.AckExecutedUnix, c.AckSignature); err != nil {
+			rep.AcksFailed++
+			if len(failures) < 5 {
+				failures = append(failures, fmt.Sprintf("%s (%s on %s)", c.ID, c.Type, c.DeviceID))
+			}
+			continue
+		}
+		rep.AcksVerified++
+	}
+
+	if acked == 0 {
+		rep.add("acknowledgements", true, "no acknowledged commands in this bundle")
+		return
+	}
+	if rep.AcksFailed > 0 {
+		rep.add("acknowledgements", false,
+			"%d of %d acknowledgements do not match their signature: %v",
+			rep.AcksFailed, acked, failures)
+		return
+	}
+	detail := fmt.Sprintf("%d of %d acknowledgements verified", rep.AcksVerified, acked)
+	if rep.AcksUnattested > 0 {
+		detail += fmt.Sprintf("; %d carry no signature or no enrolled key and cannot be attested", rep.AcksUnattested)
+	}
+	rep.add("acknowledgements", true, "%s", detail)
 }
 
 func verifyAuditChain(b *Bundle, rep *Report) {

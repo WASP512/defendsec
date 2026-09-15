@@ -75,10 +75,23 @@ message Hello {
   string agent_version = 2;
 }
 
+// Signed with the agent's enrolled certificate key (ECDSA P-256) over a
+// canonical encoding of command_id, device_id, accepted, result_hash and
+// executed_unix. Without it the endpoint's claim to have executed a command
+// carries no proof of origin once it leaves the mTLS channel, so "sent" could
+// never be distinguished from "done" after the fact.
+//
+// Older agents send no signature; the server records the acknowledgement as
+// unattested rather than rejecting it.
 message CommandAck {
   string command_id = 1;
   bool accepted = 2;
   string message = 3;
+  // SHA-256 of message, so the proof covers the result without the signature
+  // growing with it.
+  string result_hash = 4;
+  int64 executed_unix = 5;
+  bytes signature = 6;
 }
 
 message AgentToServer {

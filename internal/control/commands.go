@@ -290,7 +290,13 @@ func (s *Server) flushQueued(deviceID string) {
 	}
 }
 
-func (s *Server) noteAck(deviceID string, accepted bool, commandID, message string) {
+func (s *Server) noteAck(deviceID string, accepted bool, commandID, message string, ack *defendsecv1.CommandAck) {
+	// Check the endpoint's proof that it ran the command. A missing or bad
+	// signature never discards the result — the acknowledgement is still
+	// recorded, marked unattested, so upgrading the server does not silently
+	// drop older agents and a forged one is visible rather than trusted.
+	sigB64, resultHash, executedUnix, verified := s.verifyAck(deviceID, commandID, accepted, ack)
+
 	var cmdType, cmdPayload string
 	_ = s.commands.Update(commandID, func(r *cmdlog.Record) {
 		cmdType = r.Type
@@ -298,10 +304,19 @@ func (s *Server) noteAck(deviceID string, accepted bool, commandID, message stri
 		r.Status = "acked"
 		r.Accepted = accepted
 		r.Message = message
+		r.AckSignature = sigB64
+		r.AckResultHash = resultHash
+		r.AckExecutedUnix = executedUnix
+		r.AckVerified = verified
 	})
 	if s.pg != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = s.pg.UpdateCommand(ctx, commandID, "acked", accepted, message)
+		if sigB64 != "" || executedUnix != 0 {
+			if err := s.pg.RecordAckProof(ctx, commandID, sigB64, resultHash, executedUnix, verified); err != nil {
+				s.log.Warn("record ack proof", "err", err, "command", commandID)
+			}
+		}
 		if cmdType == "live_query" {
 			queryID := liveQueryID(cmdPayload)
 			status := "error"
@@ -340,4 +355,45 @@ func liveQueryID(payload string) string {
 		return strings.TrimSpace(strings.ToLower(p.Query))
 	}
 	return "unknown"
+}
+
+// verifyAck checks an acknowledgement signature against the public half of the
+// device's enrolled certificate key, recorded at enrollment. It returns the
+// base64 signature, result hash, execution time, and whether the signature
+// verified.
+func (s *Server) verifyAck(deviceID, commandID string, accepted bool, ack *defendsecv1.CommandAck) (string, string, int64, bool) {
+	if ack == nil || len(ack.GetSignature()) == 0 {
+		return "", ack.GetResultHash(), ack.GetExecutedUnix(), false
+	}
+	sigB64 := base64.StdEncoding.EncodeToString(ack.GetSignature())
+	resultHash := ack.GetResultHash()
+	executedUnix := ack.GetExecutedUnix()
+
+	pubPEM := ""
+	if dev, ok := s.store.Get(deviceID); ok {
+		pubPEM = dev.AgentPublicKeyPEM
+	}
+	if pubPEM == "" && s.pg != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if stored, err := s.pg.AgentPublicKeyPEM(ctx, deviceID); err == nil {
+			pubPEM = stored
+		}
+		cancel()
+	}
+	if pubPEM == "" {
+		// Enrolled before migration 007, so there is no key to check against.
+		s.log.Warn("acknowledgement cannot be attested: no enrolled agent key",
+			"device", deviceID, "command", commandID)
+		return sigB64, resultHash, executedUnix, false
+	}
+
+	if err := sign.VerifyAckStored(pubPEM, commandID, deviceID, accepted, resultHash, executedUnix, sigB64); err != nil {
+		s.log.Warn("acknowledgement signature did not verify", "err", err,
+			"device", deviceID, "command", commandID)
+		s.audit("agent", "ack_signature_invalid", deviceID, map[string]any{
+			"commandId": commandID, "error": err.Error(),
+		})
+		return sigB64, resultHash, executedUnix, false
+	}
+	return sigB64, resultHash, executedUnix, true
 }

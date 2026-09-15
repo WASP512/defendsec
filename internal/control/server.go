@@ -2,9 +2,11 @@ package control
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -178,6 +180,18 @@ func (s *Server) HandleEnroll(w http.ResponseWriter, r *http.Request) {
 		LastSeen:  time.Now().UTC().Format(time.RFC3339),
 		Connected: false,
 		Transport: "mtls-grpc",
+	}
+	// Keep the public half of the key just certified. The agent signs its
+	// acknowledgements with the private half, and verifying those later must
+	// not depend on the agent still being connected.
+	if csr, err := x509.ParseCertificateRequest(block.Bytes); err == nil {
+		if pub, ok := csr.PublicKey.(*ecdsa.PublicKey); ok {
+			if pemBytes, err := sign.ECDSAPublicPEM(pub); err == nil {
+				dev.AgentPublicKeyPEM = string(pemBytes)
+			}
+		} else {
+			s.log.Warn("enroll: agent key is not ECDSA, acknowledgements from it cannot be verified", "device", deviceID)
+		}
 	}
 	_ = s.store.Upsert(dev)
 	s.syncDevice(dev)
@@ -384,7 +398,7 @@ func (s *Server) Connect(stream defendsecv1.AgentControl_ConnectServer) error {
 				}
 			case *defendsecv1.AgentToServer_Ack:
 				s.log.Info("ack", "device", id, "command", body.Ack.GetCommandId(), "ok", body.Ack.GetAccepted(), "msg", body.Ack.GetMessage())
-				s.noteAck(id, body.Ack.GetAccepted(), body.Ack.GetCommandId(), body.Ack.GetMessage())
+				s.noteAck(id, body.Ack.GetAccepted(), body.Ack.GetCommandId(), body.Ack.GetMessage(), body.Ack)
 			}
 		}
 	}()

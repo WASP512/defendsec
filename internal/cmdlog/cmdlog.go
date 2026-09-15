@@ -34,6 +34,15 @@ type Record struct {
 	// lands (roadmap 1.0) this is the shared-token actor and cannot be
 	// attributed to an individual.
 	ActorIdentity string `json:"actorIdentity,omitempty"`
+
+	// Proof of execution, signed by the endpoint with its enrolled
+	// certificate key. AckVerified records whether the server could check it
+	// when the acknowledgement arrived; agents predating this send none, and
+	// those are unattested rather than rejected.
+	AckSignature    string `json:"ackSignature,omitempty"`
+	AckResultHash   string `json:"ackResultHash,omitempty"`
+	AckExecutedUnix int64  `json:"ackExecutedUnix,omitempty"`
+	AckVerified     bool   `json:"ackVerified,omitempty"`
 }
 
 type File struct {

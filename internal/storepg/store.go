@@ -38,11 +38,11 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 		INSERT INTO devices (
 			id, hostname, platform, os_name, os_version, arch, serial, hardware_model, cpu, memory_mb,
 			disk_encryption, firewall, ip_addresses, username, uptime_seconds, software, pending_updates,
-			patch_inventory, fim, fim_baseline, last_seen, connected, isolated, cert_fingerprint, transport, updated_at
+			patch_inventory, fim, fim_baseline, last_seen, connected, isolated, cert_fingerprint, transport, agent_public_key_pem, updated_at
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
 			$11,$12,$13::jsonb,$14,$15,$16::jsonb,$17::jsonb,
-			$18,$19::jsonb,$20::jsonb,$21::timestamptz,$22,$23,$24,$25,now()
+			$18,$19::jsonb,$20::jsonb,$21::timestamptz,$22,$23,$24,$25,$26,now()
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			hostname=EXCLUDED.hostname,
@@ -68,11 +68,13 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 			connected=EXCLUDED.connected,
 			isolated=EXCLUDED.isolated,
 			cert_fingerprint=COALESCE(NULLIF(EXCLUDED.cert_fingerprint,''), devices.cert_fingerprint),
+			agent_public_key_pem=COALESCE(NULLIF(EXCLUDED.agent_public_key_pem,''), devices.agent_public_key_pem),
 			transport=EXCLUDED.transport,
 			updated_at=now()
 	`, d.ID, d.Hostname, d.Platform, d.OSName, d.OSVersion, d.Arch, d.Serial, d.HardwareModel, d.CPU, d.MemoryMb,
 		d.DiskEncryption, d.Firewall, string(ips), d.Username, d.UptimeSeconds, string(sw), string(pend),
-		d.PatchInventory, string(fim), string(base), lastSeen, d.Connected, d.Isolated, d.CertFingerprint, d.Transport)
+		d.PatchInventory, string(fim), string(base), lastSeen, d.Connected, d.Isolated, d.CertFingerprint, d.Transport,
+		d.AgentPublicKeyPEM)
 	return err
 }
 
@@ -327,7 +329,8 @@ func (s *Store) UpdateCommand(ctx context.Context, id string, status string, acc
 func (s *Store) ListCommands(ctx context.Context, deviceID string) ([]cmdlog.Record, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, device_id, hostname, type, payload, status, accepted, message, created_at, updated_at,
-		       signature, signing_key_id, issued_unix, expires_unix, actor_identity
+		       signature, signing_key_id, issued_unix, expires_unix, actor_identity,
+		       ack_signature, ack_result_hash, ack_executed_unix, ack_verified
 		FROM commands
 		WHERE ($1 = '' OR device_id = $1)
 		ORDER BY created_at DESC
@@ -342,7 +345,8 @@ func (s *Store) ListCommands(ctx context.Context, deviceID string) ([]cmdlog.Rec
 		var rec cmdlog.Record
 		var created, updated time.Time
 		if err := rows.Scan(&rec.ID, &rec.DeviceID, &rec.Hostname, &rec.Type, &rec.Payload, &rec.Status, &rec.Accepted, &rec.Message, &created, &updated,
-			&rec.Signature, &rec.SigningKeyID, &rec.IssuedUnix, &rec.ExpiresUnix, &rec.ActorIdentity); err != nil {
+			&rec.Signature, &rec.SigningKeyID, &rec.IssuedUnix, &rec.ExpiresUnix, &rec.ActorIdentity,
+			&rec.AckSignature, &rec.AckResultHash, &rec.AckExecutedUnix, &rec.AckVerified); err != nil {
 			return nil, err
 		}
 		rec.CreatedAt = created.UTC().Format(time.RFC3339)
@@ -559,6 +563,7 @@ func (s *Store) ExportEvidence(ctx context.Context, controlPubPEM, server, scope
 	if err != nil {
 		return nil, err
 	}
+	devices := map[string]bool{}
 	for _, c := range cmds {
 		b.Commands = append(b.Commands, evidence.CommandProof{
 			ID: c.ID, DeviceID: c.DeviceID, Hostname: c.Hostname, Type: c.Type,
@@ -566,7 +571,50 @@ func (s *Store) ExportEvidence(ctx context.Context, controlPubPEM, server, scope
 			ActorIdentity: c.ActorIdentity,
 			Signature:     c.Signature, SigningKeyID: c.SigningKeyID,
 			IssuedUnix: c.IssuedUnix, ExpiresUnix: c.ExpiresUnix,
+			AckSignature: c.AckSignature, AckResultHash: c.AckResultHash,
+			AckExecutedUnix: c.AckExecutedUnix,
 		})
+		devices[c.DeviceID] = true
+	}
+
+	// Carry the enrolled public key of every device the bundle mentions, so
+	// acknowledgement signatures verify without reaching the agent or server.
+	for id := range devices {
+		pubPEM, err := s.AgentPublicKeyPEM(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if pubPEM == "" {
+			continue
+		}
+		if b.AgentPublicKeys == nil {
+			b.AgentPublicKeys = map[string]string{}
+		}
+		b.AgentPublicKeys[id] = pubPEM
 	}
 	return b, nil
+}
+
+// AgentPublicKeyPEM returns the public half of a device's enrolled
+// certificate key, used to verify acknowledgement signatures. It returns an
+// empty string for devices enrolled before migration 007.
+func (s *Store) AgentPublicKeyPEM(ctx context.Context, deviceID string) (string, error) {
+	var pem string
+	err := s.pool.QueryRow(ctx,
+		`SELECT agent_public_key_pem FROM devices WHERE id = $1`, deviceID).Scan(&pem)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return pem, err
+}
+
+// RecordAckProof stores the endpoint's signed claim that it executed a
+// command. verified records whether the signature checked out when it arrived.
+func (s *Store) RecordAckProof(ctx context.Context, commandID, signature, resultHash string, executedUnix int64, verified bool) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE commands
+		SET ack_signature=$2, ack_result_hash=$3, ack_executed_unix=$4, ack_verified=$5, updated_at=now()
+		WHERE id=$1
+	`, commandID, signature, resultHash, executedUnix, verified)
+	return err
 }

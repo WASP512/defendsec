@@ -92,6 +92,9 @@ func printReport(b *evidence.Bundle, r evidence.Report) {
 		if r.CommandsUnsigned > 0 {
 			fmt.Printf("Note: %d command(s) carry no retained signature and are outside what this bundle can attest.\n", r.CommandsUnsigned)
 		}
+		if r.AcksUnattested > 0 {
+			fmt.Printf("Note: %d acknowledgement(s) are unattested, so what was authorised is proven but not what was carried out.\n", r.AcksUnattested)
+		}
 		return
 	}
 	fmt.Println("FAILED — this bundle does not verify. See the failing check above.")

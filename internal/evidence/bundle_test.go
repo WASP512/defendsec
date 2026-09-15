@@ -2,6 +2,9 @@ package evidence
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -233,5 +236,127 @@ func TestVerifyRejectsBadControlKey(t *testing.T) {
 func TestReadRejectsUnknownFormat(t *testing.T) {
 	if _, err := Read(strings.NewReader(`{"manifest":{"formatVersion":"something-else"}}`)); err == nil {
 		t.Fatal("an unknown bundle format must be rejected")
+	}
+}
+
+// --- Phase 1.3: acknowledgement proof -----------------------------------
+
+// withAck returns the fixture bundle with a signed acknowledgement attached,
+// plus the agent key that signed it.
+func withAck(t *testing.T) (*Bundle, *ecdsa.PrivateKey) {
+	t.Helper()
+	b, _ := testBundle(t)
+	agent, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &b.Commands[0]
+	c.Accepted = true
+	c.AckResultHash = sign.HashResult("isolated")
+	c.AckExecutedUnix = 1789200030
+	sig, err := sign.SignAck(agent, sign.AckEnvelope{
+		CommandID: c.ID, DeviceID: c.DeviceID, Accepted: c.Accepted,
+		ResultHash: c.AckResultHash, ExecutedUnix: c.AckExecutedUnix,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.AckSignature = base64.StdEncoding.EncodeToString(sig)
+
+	pemBytes, err := sign.ECDSAPublicPEM(&agent.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.AgentPublicKeys = map[string]string{c.DeviceID: string(pemBytes)}
+	return b, agent
+}
+
+func TestVerifyAcceptsSignedAcknowledgement(t *testing.T) {
+	b, _ := withAck(t)
+	r := Verify(b)
+	if !r.OK() {
+		t.Fatalf("a signed acknowledgement should verify: %+v", failing(t, r))
+	}
+	if r.AcksVerified != 1 || r.AcksUnattested != 0 {
+		t.Errorf("unexpected ack counts: %+v", r)
+	}
+}
+
+func TestVerifyDetectsEditedAcknowledgementResult(t *testing.T) {
+	b, _ := withAck(t)
+	// Rewrite what the endpoint reported, as someone with database access would.
+	b.Commands[0].AckResultHash = sign.HashResult("nothing happened")
+
+	r := Verify(b)
+	if r.OK() {
+		t.Fatal("an edited acknowledgement result must fail verification")
+	}
+	if c := failing(t, r); c.Name != "acknowledgements" {
+		t.Errorf("want the acknowledgements check to fail, got %+v", c)
+	}
+}
+
+// Flipping accepted is the interesting forgery: it turns a refusal into a
+// success without touching anything else.
+func TestVerifyDetectsFlippedAcceptance(t *testing.T) {
+	b, _ := withAck(t)
+	b.Commands[0].Accepted = false
+	if Verify(b).OK() {
+		t.Fatal("flipping the accepted flag must fail verification")
+	}
+}
+
+func TestVerifyDetectsAcknowledgementFromWrongAgent(t *testing.T) {
+	b, _ := withAck(t)
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemBytes, _ := sign.ECDSAPublicPEM(&other.PublicKey)
+	b.AgentPublicKeys[b.Commands[0].DeviceID] = string(pemBytes)
+
+	if Verify(b).OK() {
+		t.Fatal("an acknowledgement must not verify under another device's key")
+	}
+}
+
+// An agent that predates signed acknowledgements, or a device enrolled before
+// its key was retained, is counted as unattested rather than passed over or
+// treated as a failure.
+func TestVerifyCountsUnattestedAcknowledgements(t *testing.T) {
+	b, _ := withAck(t)
+	b.AgentPublicKeys = nil
+
+	r := Verify(b)
+	if !r.OK() {
+		t.Fatalf("a missing agent key is not a verification failure: %+v", failing(t, r))
+	}
+	if r.AcksUnattested != 1 || r.AcksVerified != 0 {
+		t.Errorf("unexpected ack counts: %+v", r)
+	}
+	var detail string
+	for _, c := range r.Checks {
+		if c.Name == "acknowledgements" {
+			detail = c.Detail
+		}
+	}
+	if !strings.Contains(detail, "cannot be attested") {
+		t.Errorf("unattested acknowledgements must be reported: %q", detail)
+	}
+}
+
+func TestAcknowledgementSurvivesJSONRoundTrip(t *testing.T) {
+	b, _ := withAck(t)
+	var buf bytes.Buffer
+	if err := Write(&buf, b); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Read(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Verify(got)
+	if !r.OK() || r.AcksVerified != 1 {
+		t.Fatalf("acknowledgement must survive a round trip: %+v", r)
 	}
 }
