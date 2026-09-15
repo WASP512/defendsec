@@ -27,6 +27,7 @@ import (
 	"defendsec/internal/db"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
+	"defendsec/internal/policy"
 	"defendsec/internal/presence"
 	"defendsec/internal/secret"
 	"defendsec/internal/sign"
@@ -226,6 +227,26 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/audit/assessment", svc.HandleAuditAssessment)
 	adminMux.HandleFunc("/v1/audit/evidence", svc.HandleEvidenceExport)
 
+	// Policy sits between the API and the signer (roadmap 2.1). A deployment
+	// with no policy file denies every command, which is the correct posture
+	// for an unconfigured response tool — but it would be a surprise, so it
+	// is stated loudly at startup rather than discovered at an incident.
+	if path := strings.TrimSpace(os.Getenv("DEFENDSEC_POLICY_FILE")); path != "" {
+		doc, err := policy.Load(path)
+		if err != nil {
+			// Refused rather than started without it. Coming up with no
+			// policy because the file had a typo would silently disable every
+			// host action, and the operator would find out during an incident.
+			return fmt.Errorf("policy: %w", err)
+		}
+		svc.SetPolicy(policy.NewEngine(doc))
+		log.Info("policy loaded", "name", doc.Name, "rules", len(doc.Rules),
+			"limits", len(doc.Limits), "hash", doc.Hash[:16], "source", doc.Source)
+	} else {
+		log.Warn("no policy file configured; every host command will be denied",
+			"fix", "set DEFENDSEC_POLICY_FILE to a policy document, for example packaging/policy/default.yaml")
+	}
+
 	// Transparency anchoring (roadmap 1.6).
 	adminMux.HandleFunc("/v1/audit/anchors", svc.HandleAnchors)
 	// The peer receive endpoint is on the admin listener because that is the
@@ -233,6 +254,13 @@ func run(log *slog.Logger) error {
 	// shared token rather than the admin one, so a peer never holds admin
 	// access to the instance it anchors for.
 	adminMux.HandleFunc("/v1/anchors/receive", svc.HandleAnchorReceive)
+
+	// Policy-governed response (roadmap 2.1-2.4).
+	adminMux.HandleFunc("/v1/policy", svc.HandlePolicy)
+	adminMux.HandleFunc("/v1/policy/decisions", svc.HandlePolicyDecisions)
+	adminMux.HandleFunc("/v1/policy/approvals", svc.HandleApprovals)
+	adminMux.HandleFunc("/v1/policy/break-glass", svc.HandleBreakGlass)
+	adminMux.HandleFunc("/v1/policy/host-classes", svc.HandleHostClasses)
 
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,

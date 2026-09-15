@@ -1,0 +1,130 @@
+# DefendSec response policy (roadmap 2.1).
+#
+# Deny by default: a command is refused unless a rule below permits it, and an
+# explicit deny always wins regardless of where it sits in the file. A command
+# policy refuses is never signed, so it cannot be executed even by something
+# that bypasses the console entirely.
+#
+# This file is meant to live in version control. "Who changed this rule, and
+# when" is the first question asked after a command that should not have been
+# permitted, and a policy editable only through a web form has no answer.
+#
+# Start here, then tighten. Every rule below is a decision somebody should
+# actually agree with rather than a default nobody read.
+
+version: 1
+name: default
+# Time windows are interpreted in this zone. UTC rather than the server's local
+# zone: a policy whose meaning depends on where the machine sits is one nobody
+# can review.
+timezone: UTC
+
+rules:
+  # --- Investigation ---------------------------------------------------
+  # Reading a host's state does not change it, so it is permitted broadly.
+  # This is what an operator reaches for first, and making it require approval
+  # trains people to use break-glass for routine work.
+  - id: admins-may-investigate
+    effect: permit
+    commands: [live_query]
+    roles: [admin]
+
+  # --- Containment ------------------------------------------------------
+  # Isolating an ordinary host is reversible and is the correct first response
+  # to a confirmed compromise, so one administrator may do it.
+  - id: isolate-ordinary-hosts
+    effect: permit
+    commands: [isolate, release]
+    roles: [admin]
+    exclude_host_classes: [production, critical, domain-controller]
+
+  # Isolating production takes a service down. That is sometimes right, and it
+  # should be somebody's considered decision rather than a reflex, so it needs
+  # a second administrator.
+  - id: isolate-production-needs-two
+    effect: permit
+    commands: [isolate]
+    roles: [admin]
+    host_classes: [production]
+    require_approvals: 2
+
+  # Critical hosts and domain controllers can still be isolated — with two
+  # administrators. Isolation is reversible and is the *safer* response on
+  # exactly these hosts, since the alternative rules below forbid killing
+  # processes and touching files there. Leaving them with no response at all
+  # would push an operator straight to break-glass.
+  - id: isolate-critical-needs-two
+    effect: permit
+    commands: [isolate]
+    roles: [admin]
+    host_classes: [critical, domain-controller]
+    require_approvals: 2
+
+  # Releasing is always allowed on one approval: recovering from an isolation
+  # must never be harder than causing one.
+  - id: release-anything
+    effect: permit
+    commands: [release]
+    roles: [admin]
+
+  # --- Remediation ------------------------------------------------------
+  - id: quarantine-and-script-on-ordinary-hosts
+    effect: permit
+    commands: [run_script, quarantine_path]
+    roles: [admin]
+    exclude_host_classes: [critical, domain-controller]
+
+  - id: kill-process-on-ordinary-hosts
+    effect: permit
+    commands: [kill_process]
+    roles: [admin]
+    exclude_host_classes: [critical, domain-controller]
+
+  # --- Never ------------------------------------------------------------
+  # A domain controller losing a process or a file takes authentication down
+  # for the estate, and the blast radius is far wider than the incident being
+  # responded to. Isolating one is still available, and is the safer tool.
+  - id: never-disrupt-domain-controllers
+    effect: deny
+    commands: [kill_process, quarantine_path, run_script]
+    host_classes: [domain-controller]
+    reason: >-
+      A domain controller losing a process or a file takes estate-wide
+      authentication down, which is almost always worse than the incident.
+      Isolate it instead, or change this rule deliberately.
+
+  # --- Maintenance ------------------------------------------------------
+  # Agent updates restart the agent. Confining them to a window keeps a routine
+  # action from coinciding with an incident nobody has finished investigating.
+  - id: agent-updates-in-hours
+    effect: permit
+    commands: [agent_update]
+    roles: [admin]
+    window:
+      hours: "09:00-17:00"
+      days: [mon, tue, wed, thu, fri]
+
+limits:
+  # Fleet-wide rather than per-host. A per-host limit would happily isolate the
+  # whole estate one host at a time, which is exactly the runaway this exists
+  # to stop.
+  - id: isolate-fleet-hourly
+    commands: [isolate]
+    scope: fleet
+    max: 5
+    per: 1h
+
+  # Killing processes repeatedly on one host is either a loop or a mistake.
+  - id: kill-per-host
+    commands: [kill_process]
+    scope: host
+    max: 5
+    per: 15m
+
+  # Scripts and quarantines change state and are the easiest to get wrong at
+  # scale, so they are capped tightly fleet-wide.
+  - id: state-changing-fleet-hourly
+    commands: [run_script, quarantine_path]
+    scope: fleet
+    max: 10
+    per: 1h

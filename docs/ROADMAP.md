@@ -679,18 +679,60 @@ blast radius)`. Declarative and version-controlled — reuse the existing YAML c
 `packs/sca/`. Evaluation is logged to the Phase 1 ledger whether it permits or denies, so denials
 are themselves evidence.
 
+*Delivered.* The engine sits immediately before `signer.Sign`, so a refused command never becomes
+a signed envelope and is inert even if everything above that line is bypassed — the agent checks
+a signature that was never produced. Nothing is permitted unless a rule permits it, and an
+explicit deny wins regardless of file order, because order-dependent policy is policy nobody can
+reason about. Where two rules both permit, the stricter wins: adding a permissive rule must never
+silently remove an approval requirement. A deployment with no policy file denies everything and
+says so loudly at startup, and a policy file that fails to parse refuses to start rather than
+half-loading — the rules that failed to parse are exactly the ones nobody notices are missing.
+A misspelled key is an error, since silently dropping `host_clases` turns a narrow rule into a
+fleet-wide one. Every decision carries the SHA-256 of the document that made it, so "what did the
+policy say at the time" is answerable from the ledger rather than from what is on disk today, and
+refusals return the rule id and reason to the caller — a refusal that says only "forbidden"
+produces a ticket and then a request for a bypass.
+
 **2.2 — Host classes and blast-radius limits.** Tag hosts (`production`, `critical`,
 `domain-controller`). Express limits like *"at most 3 isolates fleet-wide per hour"* and *"never
 `kill_process` on a host tagged `critical` without a second approver."* Rate limits and blast
 radius are what separate a response tool from an outage generator.
 
+*Delivered.* Classes live on the device rather than in the policy file, so a rule reads "hosts
+classed production" and stays correct as the estate changes; reclassifying a host is an
+authorisation change and is recorded in the ledger. Limits default to fleet scope, because a
+per-host default would happily isolate the whole estate one host at a time. A limit that cannot be
+evaluated — an unreadable usage count — denies rather than passing, since reporting "under the
+limit" would disable the control exactly when the database is struggling. Limits count commands
+actually issued, not evaluations, so a caller cannot exhaust one with requests that were all
+denied anyway.
+
 **2.3 — Two-person integrity.** Destructive commands require a second administrator's signature.
 Both signatures are stored in the ledger and both are checked by `defendsec verify`. This is a
 standing request in regulated environments and nothing free offers it.
 
+*Delivered.* A command awaiting approval is stored **unsigned** — deliberately not a signed
+command with a pending flag, so an attacker who flips a status column still has nothing an agent
+will execute. Approvals are rows keyed on (request, actor), so one administrator clicking twice is
+one approval. On the final approval the command is re-evaluated against policy before signing
+rather than trusting the earlier decision: minutes have passed, a limit may now be exhausted, a
+window may have closed, the host may have been reclassified. The request is claimed before signing
+and the status moves only from pending, so two approvers racing cannot both issue. Requests expire
+after thirty minutes — one that never expires is a way to get a command signed weeks later under
+conditions nobody re-examined.
+
 **2.4 — Break-glass.** A time-boxed bypass requiring written justification, which fires a
 high-severity alert, notifies every admin, and is recorded with maximum prominence. Emergencies
 are real; unlogged emergencies are how audits fail.
+
+*Delivered.* A bypass requires a written justification of at least twenty characters and is capped
+at four hours — an emergency lasting longer is a situation, and a situation should have a rule.
+Two things it deliberately does **not** override: an explicit deny, because a bypass is for
+reaching what policy never anticipated rather than doing the one thing it went out of its way to
+forbid; and a two-person requirement, because the whole point of that control is that one person
+cannot act alone, and a bypass one person can open would remove it. It is surfaced as a
+console-wide banner rather than an alert row: alerts are per-host by construction, so a fleet-wide
+bypass would have to be attached to an arbitrary host and would read as a finding about that host.
 
 **2.5 — Response playbooks.** Named, versioned, signed sequences of bounded commands — e.g. *on
 confirmed FIM drift under `/etc/ssh`: collect journal tail → quarantine the file → isolate*. Every

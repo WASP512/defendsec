@@ -28,6 +28,7 @@ import (
 	"defendsec/internal/cmdlog"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
+	"defendsec/internal/policy"
 	"defendsec/internal/presence"
 	"defendsec/internal/sca"
 	"defendsec/internal/sign"
@@ -54,6 +55,10 @@ type Server struct {
 	// refuses to hold anchors for anyone else.
 	anchors         *anchor.Publisher
 	peerAnchorToken string
+
+	// Policy sits between the API and the signer (roadmap 2.1). Nil means no
+	// policy is loaded, which denies everything rather than allowing it.
+	policy *policy.Engine
 }
 
 // SetAnchoring configures checkpoint anchoring. Called at startup rather than

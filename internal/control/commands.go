@@ -15,6 +15,7 @@ import (
 	"defendsec/internal/cmdlog"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/identity"
+	"defendsec/internal/policy"
 	"defendsec/internal/sign"
 )
 
@@ -175,6 +176,35 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown mTLS device", http.StatusNotFound)
 		return
 	}
+	// Policy decides before anything is signed (roadmap 2.1). This is the
+	// chokepoint: a command policy refuses never becomes a signed envelope,
+	// so it is inert regardless of what happens above this line.
+	polReq := s.policyRequest(r.Context(), r, req.Type, req.DeviceID, dev.Hostname)
+	decision, err := s.authorise(r.Context(), polReq)
+	if err != nil {
+		s.log.Error("authorise command", "err", err)
+		http.Error(w, "could not evaluate policy", http.StatusInternalServerError)
+		return
+	}
+
+	switch decision.Effect {
+	case policy.EffectDeny:
+		s.recordDecision(r.Context(), polReq, decision, "")
+		denyResponse(w, decision)
+		return
+
+	case policy.EffectRequireApproval:
+		pending, err := s.createPendingCommand(r.Context(), polReq, decision, payload)
+		if err != nil {
+			s.log.Error("create pending command", "err", err)
+			http.Error(w, "could not record the approval request", http.StatusInternalServerError)
+			return
+		}
+		s.recordDecision(r.Context(), polReq, decision, "")
+		approvalResponse(w, pending, decision)
+		return
+	}
+
 	id, err := newDeviceID()
 	if err != nil {
 		http.Error(w, "id", http.StatusInternalServerError)
@@ -191,6 +221,7 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := s.resolveActor(r)
 	signature := s.signer.Sign(env)
+	s.recordDecision(r.Context(), polReq, decision, id)
 	rec := cmdlog.Record{
 		ID:        env.CommandID,
 		DeviceID:  env.DeviceID,
