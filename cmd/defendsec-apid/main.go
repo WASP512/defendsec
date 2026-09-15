@@ -147,6 +147,15 @@ func run(log *slog.Logger) error {
 		} else if result.AlertsDeleted > 0 || result.LiveQueryDeleted > 0 {
 			log.Info("retention prune", "alerts", result.AlertsDeleted, "liveQueries", result.LiveQueryDeleted)
 		}
+		// Expired sessions are pruned alongside the other retention work
+		// rather than left to accumulate (roadmap 1.0).
+		sessCtx, sessCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if n, err := pg.PruneExpiredSessions(sessCtx, time.Now().UTC()); err != nil {
+			log.Warn("session prune", "err", err)
+		} else if n > 0 {
+			log.Info("session prune", "sessions", n)
+		}
+		sessCancel()
 		pruneCancel()
 		defer pool.Close()
 	}
@@ -180,6 +189,15 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/saved-queries", svc.HandleSavedQueries)
 	adminMux.HandleFunc("/v1/alerts", svc.HandleAlerts)
 	adminMux.HandleFunc("/v1/alerts/status", svc.HandleAlerts)
+
+	// Identity (roadmap 1.0). Login and session are unauthenticated by
+	// necessity; everything else resolves the caller's own session token.
+	adminMux.HandleFunc("/v1/login", svc.HandleLogin)
+	adminMux.HandleFunc("/v1/logout", svc.HandleLogout)
+	adminMux.HandleFunc("/v1/session", svc.HandleSession)
+	adminMux.HandleFunc("/v1/users", svc.HandleUsers)
+	adminMux.HandleFunc("/v1/users/update", svc.HandleUserUpdate)
+	adminMux.HandleFunc("/v1/totp", svc.HandleTOTP)
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
 		Handler:           adminMux,

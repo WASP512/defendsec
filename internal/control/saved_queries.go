@@ -86,7 +86,7 @@ func (s *Server) createSavedQuery(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		s.audit("admin", "saved_query_create", "", map[string]any{"id": id, "name": req.Name, "query": req.Query})
+		s.audit(s.actorIdentity(r), "saved_query_create", "", map[string]any{"id": id, "name": req.Name, "query": req.Query})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id": id, "name": req.Name, "query": req.Query,
@@ -99,7 +99,7 @@ func (s *Server) createSavedQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.audit("admin", "saved_query_create", "", map[string]any{"id": rec.ID, "name": rec.Name, "query": rec.Query})
+	s.audit(s.actorIdentity(r), "saved_query_create", "", map[string]any{"id": rec.ID, "name": rec.Name, "query": rec.Query})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(rec)
 }

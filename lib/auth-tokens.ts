@@ -107,7 +107,25 @@ export async function getApidAuthTokenWithSession(
   }
   const session = await sessionToken();
   if (tokenMatchesSession(session, admin, viewer) !== "") return session;
+  // Not one of the shared tokens, so it is an account session token. The
+  // console cannot validate one — only the control plane can, and it does so
+  // on every request — so forward it and let apid decide. Anything invalid
+  // comes back 401 from there rather than being guessed at here.
+  if (session) return session;
   throw new Error("no authenticated session or bearer token for apid proxy");
+}
+
+/**
+ * Classifies the cookie value. "shared" means one of the bootstrap tokens,
+ * whose actions cannot be attributed to a person; "session" means an opaque
+ * account token that only the control plane can resolve.
+ */
+export async function classifySessionToken(token: string): Promise<"none" | "shared" | "session"> {
+  if (!token) return "none";
+  const admin = await getAdminToken();
+  const viewer = getViewerToken();
+  if (tokenMatchesSession(token, admin, viewer) !== "") return "shared";
+  return "session";
 }
 
 export function adminCookieOptions() {
