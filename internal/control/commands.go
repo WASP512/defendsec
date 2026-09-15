@@ -369,6 +369,19 @@ func (s *Server) verifyAck(deviceID, commandID string, accepted bool, ack *defen
 	resultHash := ack.GetResultHash()
 	executedUnix := ack.GetExecutedUnix()
 
+	// The signature covers the result hash, not the result text, so the two
+	// have to be checked against each other on arrival. Without this an agent
+	// could sign the hash of one result and report another, and the stored
+	// record would verify while saying something the endpoint never attested.
+	if want := sign.HashResult(ack.GetMessage()); resultHash != want {
+		s.log.Warn("acknowledgement result hash does not match the reported result",
+			"device", deviceID, "command", commandID)
+		s.audit("agent", "ack_result_hash_mismatch", deviceID, map[string]any{
+			"commandId": commandID,
+		})
+		return sigB64, resultHash, executedUnix, false
+	}
+
 	pubPEM := ""
 	if dev, ok := s.store.Get(deviceID); ok {
 		pubPEM = dev.AgentPublicKeyPEM

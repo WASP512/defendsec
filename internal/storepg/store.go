@@ -689,8 +689,8 @@ func (s *Store) ExportEvidence(ctx context.Context, controlPubPEM, server, scope
 		b.Commands = append(b.Commands, evidence.CommandProof{
 			ID: c.ID, DeviceID: c.DeviceID, Hostname: c.Hostname, Type: c.Type,
 			Payload: c.Payload, Status: c.Status, Accepted: c.Accepted,
-			ActorIdentity: c.ActorIdentity,
-			Signature:     c.Signature, SigningKeyID: c.SigningKeyID,
+			Message: c.Message, ActorIdentity: c.ActorIdentity,
+			Signature: c.Signature, SigningKeyID: c.SigningKeyID,
 			IssuedUnix: c.IssuedUnix, ExpiresUnix: c.ExpiresUnix,
 			AckSignature: c.AckSignature, AckResultHash: c.AckResultHash,
 			AckExecutedUnix: c.AckExecutedUnix,

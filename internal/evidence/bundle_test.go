@@ -301,6 +301,7 @@ func withAck(t *testing.T) (*Bundle, *ecdsa.PrivateKey) {
 	}
 	c := &b.Commands[0]
 	c.Accepted = true
+	c.Message = "isolated"
 	c.AckResultHash = sign.HashResult("isolated")
 	c.AckExecutedUnix = 1789200030
 	sig, err := sign.SignAck(agent, sign.AckEnvelope{
@@ -407,5 +408,53 @@ func TestAcknowledgementSurvivesJSONRoundTrip(t *testing.T) {
 	r := Verify(got)
 	if !r.OK() || r.AcksVerified != 1 {
 		t.Fatalf("acknowledgement must survive a round trip: %+v", r)
+	}
+}
+
+// Regression: the acknowledgement signature covers a hash of the result, so
+// the result text has to travel with it and be checked. Otherwise anyone able
+// to edit commands.message changes what an assessor reads while verification
+// still passes — the bundle would confirm a digest whose preimage nobody has.
+func TestVerifyDetectsResultTextNotMatchingSignedHash(t *testing.T) {
+	b, _ := withAck(t)
+	b.Commands[0].Message = "isolated"
+	if r := Verify(b); !r.OK() {
+		t.Fatalf("matching result text should verify: %+v", failing(t, r))
+	}
+
+	b.Commands[0].Message = "nothing happened"
+	r := Verify(b)
+	if r.OK() {
+		t.Fatal("a result that does not match the signed hash must fail")
+	}
+	c := failing(t, r)
+	if c.Name != "acknowledgements" || !strings.Contains(c.Detail, "does not match the signed hash") {
+		t.Errorf("failure should name the mismatch, got %+v", c)
+	}
+}
+
+// Regression: a legacy row that claims execution without proof must be
+// counted as unattested, not skipped as if it were never acknowledged.
+func TestVerifyCountsLegacyAckedCommandsAsUnattested(t *testing.T) {
+	b, _ := testBundle(t)
+	b.Commands[0].Status = "acked"
+	b.Commands[0].Accepted = true
+	// No AckSignature, no AckExecutedUnix — exactly what a pre-1.3 agent leaves.
+
+	r := Verify(b)
+	if !r.OK() {
+		t.Fatalf("a legacy acknowledgement is not a verification failure: %+v", failing(t, r))
+	}
+	if r.AcksUnattested != 1 {
+		t.Fatalf("unattested acknowledgements = %d, want 1 — a claim of execution was skipped", r.AcksUnattested)
+	}
+	var detail string
+	for _, c := range r.Checks {
+		if c.Name == "acknowledgements" {
+			detail = c.Detail
+		}
+	}
+	if !strings.Contains(detail, "cannot be attested") {
+		t.Errorf("the unattestable claim must be reported, got %q", detail)
 	}
 }

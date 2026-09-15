@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"defendsec/internal/auditchain"
@@ -53,6 +54,12 @@ type CommandProof struct {
 	Status        string `json:"status,omitempty"`
 	Accepted      bool   `json:"accepted,omitempty"`
 	ActorIdentity string `json:"actorIdentity,omitempty"`
+	// Message is the result the endpoint reported. The acknowledgement
+	// signature covers its hash, so without the text itself a reader would be
+	// checking a digest whose preimage they do not have — and anyone able to
+	// edit the stored message could change what an assessor reads without
+	// breaking verification.
+	Message string `json:"message,omitempty"`
 
 	Signature    string `json:"signature"`
 	SigningKeyID string `json:"signingKeyId"`
@@ -164,13 +171,31 @@ func verifyAcks(b *Bundle, rep *Report) {
 	var acked int
 	var failures []string
 	for _, c := range b.Commands {
-		if c.AckSignature == "" && c.AckExecutedUnix == 0 {
-			continue // never acknowledged
+		// A record claiming execution counts even with no proof attached.
+		// Legacy agents and pre-migration rows still say "acked", and skipping
+		// them would show an assessor a clean result while leaving those
+		// execution claims silently unattestable.
+		claimsExecution := c.AckSignature != "" || c.AckExecutedUnix != 0 ||
+			strings.EqualFold(strings.TrimSpace(c.Status), "acked")
+		if !claimsExecution {
+			continue
 		}
 		acked++
+
 		pubPEM := b.AgentPublicKeys[c.DeviceID]
 		if c.AckSignature == "" || pubPEM == "" {
 			rep.AcksUnattested++
+			continue
+		}
+		// The signature covers the result hash, so the hash has to be checked
+		// against the result actually carried here. Otherwise the proof is
+		// vacuous: a valid signature over a digest of text nobody can see.
+		if sign.HashResult(c.Message) != c.AckResultHash {
+			rep.AcksFailed++
+			if len(failures) < 5 {
+				failures = append(failures, fmt.Sprintf("%s (%s on %s: reported result does not match the signed hash)",
+					c.ID, c.Type, c.DeviceID))
+			}
 			continue
 		}
 		if err := sign.VerifyAckStored(pubPEM, c.ID, c.DeviceID, c.Accepted,
