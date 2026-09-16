@@ -226,7 +226,7 @@ apply_release() {
     if systemctl is-active --quiet defendsec-apid \
       && systemctl is-active --quiet defendsec-console \
       && curl -kfsS https://127.0.0.1:47262/healthz >/dev/null \
-      && curl -fsS http://127.0.0.1:47261/login >/dev/null; then
+      && curl -fsS http://127.0.0.1:47265/login >/dev/null; then
       healthy=1
       break
     fi

@@ -5,13 +5,26 @@
 # installs the binary + systemd unit, and enrolls with the control plane.
 #
 # Usage:
-#   curl -fL --progress-bar http://SERVER:47261/downloads/install-agent.sh \
+#   curl -fL --progress-bar https://SERVER:47261/downloads/install-agent.sh \
 #     -o /tmp/install-agent.sh && sudo bash /tmp/install-agent.sh \
 #     --server-http https://SERVER:47262 \
 #     --server-grpc SERVER:47263 \
 #     --tls-server-name SERVER \
 #     --enroll-secret SECRET \
-#     --download-base http://SERVER:47261/downloads
+#     --download-base https://SERVER:47261/downloads
+#
+# The console serves HTTPS. If it uses the self-signed certificate generated at
+# install, pass the certificate so it can be verified:
+#
+#     --download-ca /path/to/console.crt
+#
+# Copy it from the server: /var/lib/defendsec/tls/console.crt
+#
+# --download-insecure skips that verification. Note what it costs: the binary
+# and its SHA256SUMS come from the same server over the same connection, so an
+# attacker who can intercept it substitutes both and the checksum check passes.
+# The checksum protects against corruption, not against an active attacker.
+# Use it only on a network where that is genuinely not a concern.
 #
 # Offline / local binary:
 #   sudo bash install-agent.sh --binary ./defendsec-agentd --enroll-secret SECRET ...
@@ -30,6 +43,8 @@ ENROLL_SECRET="${DEFENDSEC_ENROLL_SECRET:-}"
 DOWNLOAD_BASE="${DEFENDSEC_DOWNLOAD_BASE:-}"
 GITHUB_REPO="${DEFENDSEC_GITHUB_REPO:-WASP512/defendsec}"
 BINARY_PATH=""
+DOWNLOAD_CA="${DEFENDSEC_DOWNLOAD_CA:-}"
+DOWNLOAD_INSECURE="${DEFENDSEC_DOWNLOAD_INSECURE:-0}"
 STATE_DIR="${DEFENDSEC_STATE_DIR:-/var/lib/defendsec-agent}"
 INSTALL_BIN="${DEFENDSEC_INSTALL_BIN:-/usr/local/bin/defendsec-agentd}"
 
@@ -38,6 +53,8 @@ while [[ $# -gt 0 ]]; do
     --server-http) SERVER_HTTP="$2"; shift 2 ;;
     --server-grpc) SERVER_GRPC="$2"; shift 2 ;;
     --tls-server-name) TLS_SERVER_NAME="$2"; shift 2 ;;
+    --download-ca) DOWNLOAD_CA="$2"; shift 2 ;;
+    --download-insecure) DOWNLOAD_INSECURE=1; shift ;;
     --enroll-secret) ENROLL_SECRET="$2"; shift 2 ;;
     --download-base) DOWNLOAD_BASE="$2"; shift 2 ;;
     --github-repo) GITHUB_REPO="$2"; shift 2 ;;
@@ -81,6 +98,17 @@ esac
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
+# curl_tls holds how the download connection is verified. Built once so the
+# binary and its SHA256SUMS are always fetched the same way — fetching them
+# differently would be worse than either choice alone.
+curl_tls=()
+if [[ -n "$DOWNLOAD_CA" ]]; then
+  [[ -f "$DOWNLOAD_CA" ]] || die "certificate not found: $DOWNLOAD_CA"
+  curl_tls+=(--cacert "$DOWNLOAD_CA")
+elif [[ "$DOWNLOAD_INSECURE" == "1" ]]; then
+  curl_tls+=(--insecure)
+fi
+
 fetch_binary() {
   if [[ -n "$BINARY_PATH" ]]; then
     [[ -f "$BINARY_PATH" ]] || die "binary not found: $BINARY_PATH"
@@ -92,8 +120,16 @@ fetch_binary() {
   local name="defendsec-agentd-linux-${GOARCH}"
   if [[ -n "$DOWNLOAD_BASE" ]]; then
     info "Downloading ${name} from ${DOWNLOAD_BASE}"
-    curl -fL --progress-bar "${DOWNLOAD_BASE%/}/${name}" -o "$TMPDIR/defendsec-agentd"
-    curl -fL --progress-bar "${DOWNLOAD_BASE%/}/SHA256SUMS" -o "$TMPDIR/SHA256SUMS"
+    if [[ "$DOWNLOAD_INSECURE" == "1" && -z "$DOWNLOAD_CA" ]]; then
+      # Said plainly rather than buried in a flag name. The SHA256SUMS comes
+      # from the same connection as the binary, so an attacker who can
+      # intercept one substitutes both.
+      info "WARNING: the download connection is not being verified. The checksum" \
+           "is fetched over the same connection and does not protect against an" \
+           "attacker who can intercept it. Prefer --download-ca."
+    fi
+    curl -fL --progress-bar "${curl_tls[@]}" "${DOWNLOAD_BASE%/}/${name}" -o "$TMPDIR/defendsec-agentd"
+    curl -fL --progress-bar "${curl_tls[@]}" "${DOWNLOAD_BASE%/}/SHA256SUMS" -o "$TMPDIR/SHA256SUMS"
     verify_binary "$name"
     chmod 0755 "$TMPDIR/defendsec-agentd"
     return

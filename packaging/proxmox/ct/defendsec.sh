@@ -11,7 +11,7 @@
 #   curl -fL --progress-bar https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh \
 #     -o /tmp/defendsec.sh && bash /tmp/defendsec.sh
 #
-# After install, sign in at http://<ct-ip>:47261 and copy Agent install from Enroll.
+# After install, sign in at https://<ct-ip>:47261 and copy Agent install from Enroll.
 
 set -euo pipefail
 
@@ -311,7 +311,7 @@ cat <<EOF
 
 Container:  ${CTID} (${CT_HOSTNAME})
 Root pass:  ${ROOT_PW}
-Console:    http://${IP:-<ct-ip>}:47261
+Console:    https://${IP:-<ct-ip>}:47261
 Enroll TLS: https://${IP:-<ct-ip>}:47262
 gRPC:       ${IP:-<ct-ip>}:47263
 

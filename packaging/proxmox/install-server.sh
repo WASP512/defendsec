@@ -517,6 +517,7 @@ build_binaries() {
       export GOPATH=$(printf %q "${DATA_DIR}/go")
       export GOCACHE=$(printf %q "${DATA_DIR}/go/cache")
       go build -o bin/defendsec-apid ./cmd/defendsec-apid
+      go build -o bin/defendsec-web ./cmd/defendsec-web
       go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd ./cmd/defendsec-agentd
       GOOS=linux GOARCH=amd64 go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-linux-amd64 ./cmd/defendsec-agentd
       GOOS=linux GOARCH=arm64 go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-linux-arm64 ./cmd/defendsec-agentd
@@ -525,10 +526,12 @@ build_binaries() {
     info "Skipping build (--skip-build)"
   fi
   [[ -x "${INSTALL_ROOT}/bin/defendsec-apid" ]] || die "missing prebuilt bin/defendsec-apid"
+  [[ -x "${INSTALL_ROOT}/bin/defendsec-web" ]] || die "missing prebuilt bin/defendsec-web"
   [[ -x "${INSTALL_ROOT}/bin/defendsec-agentd" ]] || die "missing prebuilt bin/defendsec-agentd"
   [[ -x "${INSTALL_ROOT}/bin/defendsec-agentd-linux-amd64" ]] || die "missing prebuilt amd64 agent"
   [[ -x "${INSTALL_ROOT}/bin/defendsec-agentd-linux-arm64" ]] || die "missing prebuilt arm64 agent"
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-apid" /usr/local/bin/defendsec-apid
+  install -m 0755 "${INSTALL_ROOT}/bin/defendsec-web" /usr/local/bin/defendsec-web
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-agentd" /usr/local/bin/defendsec-agentd
   if [[ ! -s "${INSTALL_ROOT}/VERSION" ]]; then
     local installed_version
@@ -603,8 +606,9 @@ EOF
 
   cat >/etc/defendsec/console.env <<EOF
 NODE_ENV=production
-PORT=47261
-HOSTNAME=0.0.0.0
+# Loopback only. defendsec-web terminates HTTPS on 47261 in front of this.
+PORT=47265
+HOSTNAME=127.0.0.1
 DATABASE_URL=${db_url}
 DEFENDSEC_DATABASE_URL=${db_url}
 DEFENDSEC_ADMIN_TOKEN=${ADMIN_TOKEN}
@@ -614,10 +618,27 @@ DEFENDSEC_DOWNLOADS_DIR=${DOWNLOADS_DIR}
 DEFENDSEC_DATA_DIR=${DATA_DIR}
 DEFENDSEC_VERSION=${server_version}
 DEFENDSEC_UPDATE_REPO=WASP512/defendsec
-# The packaged console is served directly over HTTP. Set true behind an HTTPS proxy.
-DEFENDSEC_COOKIE_SECURE=false
+# The console is served over HTTPS by defendsec-web. Set false only alongside
+# DEFENDSEC_TLS=off, since a Secure cookie is not sent over plain HTTP.
+DEFENDSEC_COOKIE_SECURE=true
+DEFENDSEC_PUBLIC_CONSOLE_URL=https://${ADVERTISE_HOSTNAME}:47261
 EOF
   chmod 640 /etc/defendsec/console.env
+
+  # HTTPS in front of the console (roadmap 5.3). Self-signed by default: it
+  # works on a LAN with no DNS and no internet, and the browser warning is
+  # honest rather than a reason to ship plain HTTP.
+  if [[ ! -f /etc/defendsec/web.env ]]; then
+    cat >/etc/defendsec/web.env <<EOF
+DEFENDSEC_TLS=on
+DEFENDSEC_TLS_HOSTS=${TLS_HOSTS}
+DEFENDSEC_TLS_DIR=${DATA_DIR}/tls
+DEFENDSEC_WEB_ADDR=:47261
+DEFENDSEC_CONSOLE_UPSTREAM=http://127.0.0.1:47265
+EOF
+    chmod 640 /etc/defendsec/web.env
+    chown root:defendsec /etc/defendsec/web.env
+  fi
   chown root:defendsec /etc/defendsec/console.env
 
   cat >/etc/defendsec/update.env <<EOF
@@ -657,6 +678,7 @@ install_systemd_units() {
   info "Installing systemd units"
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-apid.service" /etc/systemd/system/defendsec-apid.service
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-console.service" /etc/systemd/system/defendsec-console.service
+  install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-web.service" /etc/systemd/system/defendsec-web.service
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-update.service" /etc/systemd/system/defendsec-update.service
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-update.path" /etc/systemd/system/defendsec-update.path
   install -m 0755 "${INSTALL_ROOT}/packaging/proxmox/update-server.sh" /usr/local/sbin/defendsec-update
@@ -710,8 +732,9 @@ EOF
   systemctl enable --now defendsec-update.path
   systemctl enable --now defendsec-apid
   systemctl enable --now defendsec-console
+  systemctl enable --now defendsec-web
 
-  local apid_ok=0 console_ok=0
+  local apid_ok=0 console_ok=0 web_ok=0
   for attempt in $(seq 1 30); do
     if systemctl is-active --quiet defendsec-apid \
       && curl -kfsS https://127.0.0.1:47262/healthz >/dev/null; then
@@ -732,7 +755,7 @@ EOF
 
   for attempt in $(seq 1 30); do
     if systemctl is-active --quiet defendsec-console \
-      && curl -fsS http://127.0.0.1:47261/login >/dev/null; then
+      && curl -fsS http://127.0.0.1:47265/login >/dev/null; then
       console_ok=1
       echo "    Console health check passed."
       break
@@ -748,6 +771,28 @@ EOF
     die "defendsec-console failed its startup health check"
   fi
 
+  # The HTTPS front-end is what an operator actually reaches, so a failure
+  # here is an install failure rather than a detail. -k because the
+  # certificate is self-signed by default and this check is about the
+  # listener, not the trust chain.
+  for attempt in $(seq 1 30); do
+    if systemctl is-active --quiet defendsec-web \
+      && curl -kfsS https://127.0.0.1:47261/login >/dev/null; then
+      web_ok=1
+      echo "    HTTPS front-end health check passed."
+      break
+    fi
+    if (( attempt == 1 || attempt % 5 == 0 )); then
+      echo "    Waiting for HTTPS health check (${attempt}/30)…"
+    fi
+    sleep 1
+  done
+  if [[ "$web_ok" -ne 1 ]]; then
+    systemctl --no-pager --full status defendsec-web || true
+    journalctl -u defendsec-web --no-pager -n 50 || true
+    die "defendsec-web failed its startup health check"
+  fi
+
   [[ -s "${DATA_DIR}/defendsec.json" ]] || die "apid is healthy but ${DATA_DIR}/defendsec.json is missing"
 }
 
@@ -757,7 +802,7 @@ print_summary() {
 
 DefendSec server install complete.
 
-  Console:     http://${host}:47261
+  Console:     https://${host}:47261
   Enroll TLS:  https://${host}:47262
   gRPC:        ${host}:47263
   Admin token: ${DATA_DIR}/admin-token.txt
