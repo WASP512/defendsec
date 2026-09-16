@@ -1,0 +1,187 @@
+id: sca-linux-cis-v8-ig1
+name: Linux baseline for CIS Controls v8 IG1
+platform: linux
+
+# Scope, stated up front because the alternative is implying completeness.
+#
+# This pack covers the host-level technical settings that CIS Controls v8
+# Implementation Group 1 asks for and that an agent can actually observe. It is
+# NOT a CIS Benchmark, and DefendSec does not claim to be a benchmark scanner —
+# a CIS Linux Benchmark is 150-400 checks per platform and a permanent staffing
+# commitment, which is a fight CIS-CAT and OpenSCAP already own.
+#
+# IG1 has 56 safeguards. Most are organisational: an asset-disposal process,
+# a designated incident contact, security awareness training. Nothing an agent
+# runs on a host evidences those, and the compliance view says so per control
+# rather than leaving them blank.
+#
+# Read the coverage as a fraction with its denominator. `GET /v1/controls`
+# gives the breakdown, including what DefendSec cannot evidence and why.
+
+checks:
+  # --- Control 3: Data protection -------------------------------------
+  - id: cis-3.11-disk-encryption
+    controls: [cis-v8:3.11, nist-800-53:SC-28, nist-800-171:3.13.16]
+    title: Disk encryption reported enabled
+    severity: high
+    type: inventory_field
+    field: diskEncryption
+    expect: "true"
+
+  # --- Control 4: Secure configuration --------------------------------
+  - id: cis-4.1-tmp-nodev
+    controls: [cis-v8:4.1, nist-800-53:CM-6, nist-800-171:3.4.2]
+    title: /tmp is a separate filesystem with nodev, nosuid and noexec
+    severity: medium
+    type: mount_option
+    mount_point: /tmp
+    require_options: [nodev, nosuid, noexec]
+
+  - id: cis-4.1-var-tmp-nodev
+    controls: [cis-v8:4.1, nist-800-53:CM-6]
+    title: /var/tmp carries nodev, nosuid and noexec
+    severity: low
+    type: mount_option
+    mount_point: /var/tmp
+    require_options: [nodev, nosuid, noexec]
+
+  - id: cis-4.1-ip-forward-disabled
+    controls: [cis-v8:4.1, nist-800-53:CM-6, nist-800-53:SC-8]
+    title: IP forwarding is disabled
+    severity: medium
+    # A host that forwards packets it was not meant to route is a path
+    # between segments somebody drew a boundary between.
+    type: sysctl
+    key: net.ipv4.ip_forward
+    expect: "0"
+
+  - id: cis-4.1-aslr-enabled
+    controls: [cis-v8:4.1, nist-800-53:SI-16, nist-800-53:CM-6]
+    title: Address space layout randomisation is fully enabled
+    severity: medium
+    type: sysctl
+    key: kernel.randomize_va_space
+    expect: "2"
+
+  - id: cis-4.1-no-source-routed-packets
+    controls: [cis-v8:4.1, nist-800-53:SC-8]
+    title: Source-routed packets are not accepted
+    severity: medium
+    type: sysctl
+    key: net.ipv4.conf.all.accept_source_route
+    expect: "0"
+
+  - id: cis-4.1-reverse-path-filtering
+    controls: [cis-v8:4.1, nist-800-53:SC-8]
+    title: Reverse path filtering is enabled
+    severity: low
+    type: sysctl
+    key: net.ipv4.conf.all.rp_filter
+    expect: "1"
+
+  # --- Control 5: Account management ----------------------------------
+  - id: cis-5.1-passwd-permissions
+    controls: [cis-v8:5.1, nist-800-53:AC-3, nist-800-53:CM-6]
+    title: /etc/passwd is owned by root and not writable by others
+    severity: medium
+    type: file_mode
+    path: /etc/passwd
+    max_mode: "0644"
+    owner: root
+    group: root
+
+  - id: cis-5.1-shadow-permissions
+    controls: [cis-v8:5.1, nist-800-53:AC-3, nist-800-53:IA-5]
+    title: /etc/shadow is not readable by group or other
+    severity: high
+    # The password hashes. World-readable here is the difference between
+    # needing a privilege escalation and already having the hashes.
+    type: file_mode
+    path: /etc/shadow
+    max_mode: "0640"
+    owner: root
+
+  - id: cis-5.1-group-permissions
+    controls: [cis-v8:5.1, nist-800-53:AC-3]
+    title: /etc/group is owned by root and not writable by others
+    severity: low
+    type: file_mode
+    path: /etc/group
+    max_mode: "0644"
+    owner: root
+    group: root
+
+  - id: cis-5.4-sudoers-permissions
+    controls: [cis-v8:5.4, nist-800-53:AC-6(9), nist-800-53:CM-5]
+    title: /etc/sudoers is not writable by group or other
+    severity: high
+    # Writable sudoers is a direct path to root for anyone who can edit it.
+    type: file_mode
+    path: /etc/sudoers
+    max_mode: "0440"
+    owner: root
+
+  # --- Control 8: Audit log management --------------------------------
+  - id: cis-8.2-auditd-installed
+    controls: [cis-v8:8.2, nist-800-53:AU-2, nist-800-171:3.3.1]
+    title: The audit daemon is installed
+    severity: medium
+    type: package
+    package: auditd
+    present: true
+
+  - id: cis-8.2-auditd-running
+    controls: [cis-v8:8.2, nist-800-53:AU-2, nist-800-53:AU-3]
+    title: The audit daemon is enabled and running
+    severity: medium
+    # Installed and not running is the common failure, and it looks identical
+    # to compliant in any check that only asks whether the package is present.
+    type: systemd_unit
+    unit: auditd.service
+    enabled: true
+    active: true
+
+  # --- Control 10: Malware defences -----------------------------------
+  # Deliberately absent. DefendSec is not an anti-malware product and does not
+  # scan for signatures; the control catalog marks CIS 10.1 as not evidenced,
+  # with the reason, rather than shipping a check that looks like coverage.
+
+  # --- Control 12: Network infrastructure -----------------------------
+  - id: cis-12.1-firewall-enabled
+    controls: [cis-v8:4.1, nist-800-53:CM-6, cjis-v6:10]
+    title: Host firewall reported enabled
+    severity: medium
+    type: inventory_field
+    field: firewall
+    expect: "true"
+
+  # --- Legacy services that should not be present ---------------------
+  - id: no-telnet-server
+    controls: [cis-v8:4.1, nist-800-53:CM-6, nist-800-53:SC-8]
+    title: A telnet server is not installed
+    severity: high
+    # Telnet carries credentials in clear text. Its presence on a modern host
+    # is almost always an accident nobody has noticed.
+    type: package
+    package: telnetd
+    present: false
+
+  - id: no-rsh-server
+    controls: [cis-v8:4.1, nist-800-53:CM-6]
+    title: An rsh server is not installed
+    severity: high
+    type: package
+    package: rsh-server
+    present: false
+
+  # --- SELinux / AppArmor ---------------------------------------------
+  - id: mandatory-access-control-enforcing
+    controls: [cis-v8:4.1, nist-800-53:AC-3, nist-800-53:SI-7]
+    title: SELinux is enforcing, where SELinux is in use
+    severity: medium
+    # A command check because the answer is not a file or a unit state. On a
+    # host without SELinux the command is absent and the check reports that
+    # rather than failing, which is the honest outcome on an AppArmor system.
+    type: command
+    command: [getenforce]
+    output_matches: "(?i)enforcing"

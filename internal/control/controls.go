@@ -2,9 +2,11 @@ package control
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 
 	"defendsec/internal/controls"
+	"defendsec/internal/sca"
 )
 
 // The control catalog endpoint (roadmap 1.7).
@@ -92,4 +94,90 @@ func (s *Server) HandleControls(w http.ResponseWriter, r *http.Request) {
 		body.Controls = []controls.Control{}
 	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+// HandleCheckCoverage reports what the shipped packs actually check
+// (roadmap 3.7, §3.7).
+//
+// Published as a fraction with its denominator, never as a percentage or a
+// claim of completeness. DefendSec ships a few dozen host checks; a CIS Linux
+// Benchmark is 150-400 per platform. Reporting "CIS coverage" without that
+// denominator is the claim §3.1 says not to make, and an assessor who later
+// discovers the gap discounts everything else the product says.
+func (s *Server) HandleCheckCoverage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.adminOK(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+
+	packs, err := sca.LoadDir(sca.PacksDir())
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"packs": []any{},
+			"error": err.Error(),
+			"detail": "The configuration packs failed to load, so no baseline checks are running. " +
+				"This is not the same as every check passing.",
+		})
+		return
+	}
+
+	type packSummary struct {
+		ID       string         `json:"id"`
+		Name     string         `json:"name"`
+		Checks   int            `json:"checks"`
+		ByType   map[string]int `json:"byType"`
+		Controls []string       `json:"controls"`
+	}
+
+	out := make([]packSummary, 0, len(packs))
+	controlSet := map[string]bool{}
+	total := 0
+	byType := map[string]int{}
+
+	for _, pack := range packs {
+		cov := sca.Describe(pack)
+		total += cov.Total
+		for t, n := range cov.ByType {
+			byType[t] += n
+		}
+		packControls := map[string]bool{}
+		for _, c := range pack.Checks {
+			for _, id := range c.Controls {
+				packControls[id] = true
+				controlSet[id] = true
+			}
+		}
+		ids := make([]string, 0, len(packControls))
+		for id := range packControls {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		out = append(out, packSummary{
+			ID: pack.ID, Name: pack.Name, Checks: cov.Total,
+			ByType: cov.ByType, Controls: ids,
+		})
+	}
+
+	touched := make([]string, 0, len(controlSet))
+	for id := range controlSet {
+		touched = append(touched, id)
+	}
+	sort.Strings(touched)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"packs":               out,
+		"totalChecks":         total,
+		"byType":              byType,
+		"controlsTouched":     touched,
+		"supportedCheckTypes": sca.KnownCheckTypes(),
+		"detail": "These are the host checks DefendSec ships, not a benchmark. A CIS Linux " +
+			"Benchmark is 150-400 checks per platform; DefendSec does not claim benchmark " +
+			"coverage and is not a certified benchmark scanner. Use this alongside " +
+			"/v1/controls, which states per control what DefendSec can and cannot evidence.",
+	})
 }

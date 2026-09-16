@@ -440,7 +440,7 @@ func runFimWatch(ctx context.Context, log *slog.Logger, client defendsecv1.Agent
 		case <-trigger:
 			hctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			snap := hostinv.Collect()
-			_, err := client.ReportInventory(hctx, inventoryReport(snap, stateDir))
+			_, err := client.ReportInventory(hctx, inventoryReport(log, snap, stateDir))
 			cancel()
 			if err != nil {
 				log.Warn("fim-triggered inventory", "err", err)
@@ -456,7 +456,7 @@ func runInventory(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 		snap := hostinv.Collect()
 		hctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
-		_, err := client.ReportInventory(hctx, inventoryReport(snap, stateDir))
+		_, err := client.ReportInventory(hctx, inventoryReport(log, snap, stateDir))
 		if err != nil {
 			log.Warn("inventory", "err", err)
 			return
@@ -476,7 +476,7 @@ func runInventory(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 	}
 }
 
-func inventoryReport(snap hostinv.Snapshot, stateDir string) *defendsecv1.InventoryReport {
+func inventoryReport(log *slog.Logger, snap hostinv.Snapshot, stateDir string) *defendsecv1.InventoryReport {
 	enc, fw := int32(0), int32(0)
 	if snap.DiskEncryption != nil {
 		if *snap.DiskEncryption {
@@ -520,12 +520,24 @@ func inventoryReport(snap hostinv.Snapshot, stateDir string) *defendsecv1.Invent
 		rep.Fim = append(rep.Fim, &defendsecv1.FimFile{Path: item.Path, Sha256: item.SHA256, Size: item.Size, Mtime: item.Mtime})
 	}
 	if snap.Platform == "linux" {
-		for _, load := range []func() (*sca.Pack, error){sca.LoadDefaultLinuxSSH, sca.LoadDefaultLinuxHost} {
-			pack, err := load()
-			if err != nil {
-				continue
-			}
-			for _, r := range sca.EvalFileRegexChecks(pack) {
+		// Every pack in the directory, rather than two named here. A pack
+		// that only runs when somebody remembers to add it to this list is a
+		// pack that silently stops running when they do not.
+		packs, err := sca.LoadDir(sca.PacksDir())
+		if err != nil {
+			// Loud, and no partial run: a half-loaded set reports a clean
+			// result for a benchmark half of which never executed.
+			log.Error("sca packs failed to load; no configuration checks will run", "err", err)
+			packs = nil
+		}
+		for _, pack := range packs {
+			// Every host-side check type, not just file_regex (roadmap 3.7).
+			// Bounded, because a pack with a slow command must not stall the
+			// inventory report behind it.
+			evalCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			results := sca.LocalHost().EvalPack(evalCtx, pack)
+			cancel()
+			for _, r := range results {
 				rep.ScaResults = append(rep.ScaResults, &defendsecv1.ScaResult{
 					PackId: r.PackID, CheckId: r.CheckID, Title: r.Title,
 					Severity: r.Severity, Pass: r.Pass, Detail: r.Detail,

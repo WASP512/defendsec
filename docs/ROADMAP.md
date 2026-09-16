@@ -822,6 +822,26 @@ so the engine work comes first.** Then grow content: `packs/sca/` holds **15 che
 packs** against roughly 200 for CIS Ubuntu L1. Distribute as signed, versioned packs, tagged with
 control IDs per 1.7, and publish coverage as a fraction with its denominator (§3.7).
 
+*Engine delivered; content started.* All six new types are in: file mode and ownership, mount
+options, sysctl, package presence and absence, systemd unit state, and command output. The
+important decision was scope. A `command` check makes a data file executable, and the same item
+wants packs distributed as signed artifacts — at which point "run whatever this YAML says" is
+remote code execution with a signature check in front of it, and a signature is a supply-chain
+control, not a sandbox. So five of the six were implemented natively and cannot run anything a
+pack chooses: file mode uses stat, sysctl reads `/proc/sys`, mount options parse `/proc/mounts`,
+and package and unit state call one fixed binary with a fixed argument shape. `command` is the
+only general one and is argv-only with an allowlist of read-only tools, fixed resolution
+directories, a timeout and an output cap — a reduction in blast radius, stated as such rather than
+as a guarantee. `file_mode` compares as a maximum rather than an equality, because benchmarks say
+"no more permissive than" and an exact match fails a correctly-hardened host. Packs are refused at
+load on an unknown type, a duplicate id, missing fields, a bad regular expression, a
+non-allowlisted command — and on a control identifier that is not in the catalog, which caught a
+real mistake in the first shipped pack. A new CIS Controls v8 IG1 pack takes the shipped set from
+15 checks to 30 across three packs and exercises every type;
+`GET /v1/controls/check-coverage` publishes that with its denominator and an explicit disclaimer
+that it is not a benchmark and DefendSec is not a certified benchmark scanner. The agent now loads
+every pack in the directory rather than two named in code.
+
 **Acceptance:** a reverse shell, a `curl | sh` execution, and an SSH key added to
 `authorized_keys` are each detected within seconds, with full process ancestry, mapped to ATT&CK
 techniques, and able to trigger a Phase 2 playbook.

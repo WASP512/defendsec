@@ -248,6 +248,7 @@ func run(log *slog.Logger) error {
 
 	// Compliance (roadmap 1.7).
 	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
+	adminMux.HandleFunc("/v1/controls/check-coverage", svc.HandleCheckCoverage)
 
 	// The audit layer (roadmap 1.9).
 	adminMux.HandleFunc("/v1/audit/periods", svc.HandleAuditPeriods)

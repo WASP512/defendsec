@@ -243,6 +243,13 @@ var native = []Control{
 		Note:     "Host-level integrity and configuration monitoring with a response path. Network monitoring and intrusion detection are not part of DefendSec.",
 	},
 	{
+		ID: MustParseID("nist-800-53:SI-16"), Family: "SI",
+		Title:    "Memory protection against unauthorised code execution",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalSCA},
+		Note:     "Baseline checks confirm kernel-level memory protections such as address space layout randomisation are enabled. DefendSec does not verify per-binary hardening, and it does not observe whether an exploit was attempted.",
+	},
+	{
 		ID: MustParseID("nist-800-53:SI-7"), Family: "SI",
 		Title:    "Software, firmware and information integrity",
 		Coverage: CoverageEvidenced,
