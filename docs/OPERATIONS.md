@@ -603,6 +603,13 @@ their reasons, and the hosts that have dropped events — before it reports what
 technique having a rule does not mean every way of performing that technique is detected; ATT&CK
 techniques are broad and a rule covers a behaviour.
 
+The console renders the same thing under **Detection**, in the same order, and deliberately without
+a coverage percentage: ATT&CK has no denominator that would make one honest, and a percentage is
+where a blind spot disappears into a rounding error. The cell worth looking at first is an event
+kind with rules and no sensor reporting it — those rules are loaded, and they cannot fire. Viewers
+can read the page; the forwarding section is admin-only, because destination addresses are part of
+your infrastructure map.
+
 ### Dropped events
 
 The agent's event buffer drops rather than blocking. That is deliberate: if it applied

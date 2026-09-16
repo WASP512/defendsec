@@ -57,6 +57,10 @@ func (s *Server) treeFor(deviceID string) *events.Tree {
 
 // eventGap records what a device has lost, so the console can say so.
 type eventGap struct {
+	// Hostname is carried alongside the device id because a coverage page
+	// listing opaque ids tells an operator that something lost events but
+	// not which machine to go and look at.
+	Hostname     string    `json:"hostname,omitempty"`
 	DroppedTotal uint64    `json:"droppedTotal"`
 	LastGap      uint64    `json:"lastGap,omitempty"`
 	LastGapAt    time.Time `json:"lastGapAt,omitempty"`
@@ -85,7 +89,7 @@ func (s *Server) HandleEventBatch(deviceID, hostname string, batch *defendsecEve
 			"detail": "The agent's event buffer overflowed. Detections covering this window may be incomplete.",
 		})
 	}
-	s.recordGap(deviceID, batch)
+	s.recordGap(deviceID, hostname, batch)
 
 	tree := s.treeFor(deviceID)
 	recent := s.recentFor(deviceID)
@@ -117,7 +121,7 @@ type defendsecEventBatch struct {
 	Sensor           string
 }
 
-func (s *Server) recordGap(deviceID string, batch *defendsecEventBatch) {
+func (s *Server) recordGap(deviceID, hostname string, batch *defendsecEventBatch) {
 	s.treeMu.Lock()
 	defer s.treeMu.Unlock()
 	if s.gaps == nil {
@@ -127,6 +131,9 @@ func (s *Server) recordGap(deviceID string, batch *defendsecEventBatch) {
 	if !ok {
 		gap = &eventGap{}
 		s.gaps[deviceID] = gap
+	}
+	if hostname != "" {
+		gap.Hostname = hostname
 	}
 	gap.Received += uint64(len(batch.Events))
 	gap.DroppedTotal = batch.DroppedTotal

@@ -16,6 +16,7 @@ import {
   ScrollText,
   ShieldAlert,
   ShieldCheck,
+  Radar,
   Siren,
   Terminal,
   Users,
@@ -45,6 +46,7 @@ const nav = [
   { href: "/", label: "Fleet", icon: LayoutDashboard },
   { href: "/devices", label: "Hosts", icon: Monitor },
   { href: "/alerts", label: "Alerts", icon: Siren },
+  { href: "/detection", label: "Detection", icon: Radar },
   { href: "/advisories", label: "Advisories", icon: ShieldAlert },
   { href: "/patches", label: "Patches", icon: Package },
   { href: "/versions", label: "Versions", icon: History },
@@ -60,9 +62,9 @@ const nav = [
 ];
 
 const navGroups = [
-  { label: "Monitor", items: nav.slice(0, 4) },
-  { label: "Inventory", items: nav.slice(4, 8) },
-  { label: "Operations", items: nav.slice(8) },
+  { label: "Monitor", items: nav.slice(0, 5) },
+  { label: "Inventory", items: nav.slice(5, 9) },
+  { label: "Operations", items: nav.slice(9) },
 ];
 
 export function AppShell({

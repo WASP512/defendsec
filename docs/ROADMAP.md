@@ -831,14 +831,22 @@ philosophy the product already has. This is where ATT&CK belongs: it describes a
 behaviour, so it maps to *detections*. The advisory-side tie-in is the separate CVE-to-ATT&CK
 enrichment in §0.3 Tier 3, which answers what an attacker gains by exploiting a given CVE.
 
-*Delivered as the API and the data; the console page is still to come.* Rules carry ATT&CK tags,
-matches carry the techniques, and alerts carry them into the ledger.
-`GET /v1/detection/coverage` reports the matrix with its blind spots first: the event kinds no
-agent has actually reported — a rule for a kind nothing produces can never fire, whatever the
+*Delivered.* Rules carry ATT&CK tags, matches carry the techniques, and alerts carry them into the
+ledger. `GET /v1/detection/coverage` reports the matrix with its blind spots first: the event kinds
+no agent has actually reported — a rule for a kind nothing produces can never fire, whatever the
 technique list says — the rules that failed to load with their reasons, and the hosts that have
-dropped events. It states plainly that a technique having a rule does not mean every way of
-performing that technique is detected, because ATT&CK techniques are broad and a rule covers a
-behaviour.
+dropped events, named by hostname rather than device id. It states plainly that a technique having
+a rule does not mean every way of performing that technique is detected, because ATT&CK techniques
+are broad and a rule covers a behaviour.
+
+The console page at **Detection** renders that matrix in the same order, so the first thing on the
+screen is what the fleet cannot see: the caveats, then the event kinds that have rules but no
+sensor reporting them, then the rules that failed to load, then the hosts losing events, and only
+then the techniques that are covered. There is no coverage percentage anywhere on the page, for the
+same reason the compliance page carries no score — ATT&CK has no denominator that would make one
+honest, and a percentage is where a blind spot disappears into a rounding error. Viewers can read
+it; the forwarding section is admin-only, because destination addresses are part of the operator's
+infrastructure map.
 
 **3.5 — Process-tree context on alerts.** When an alert fires, attach the process ancestry,
 command line, user, and network activity. This is the single thing analysts need most and the
