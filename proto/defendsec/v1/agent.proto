@@ -94,12 +94,56 @@ message CommandAck {
   bytes signature = 6;
 }
 
+// A behavioural event: a process execution, network connection, file write,
+// privilege transition or module load (roadmap 3.1-3.2).
+message BehaviourEvent {
+  string id = 1;
+  // kind is process, network, file, privilege or module.
+  string kind = 2;
+  int64 at_unix_nano = 3;
+  int32 pid = 4;
+  int32 ppid = 5;
+  // fields carries Sigma-compatible attributes. A map of strings rather than
+  // a message per kind: rules match on field names, and a schema change per
+  // new sensor field would mean a protocol change for every rule that wants
+  // one.
+  map<string, string> fields = 6;
+  // repeated_fields carries attributes with several values, such as an argv
+  // list or a set of capabilities, which a single string would flatten.
+  map<string, RepeatedValue> repeated_fields = 7;
+}
+
+message RepeatedValue {
+  repeated string values = 1;
+}
+
+// A batch of events. Batched rather than streamed one at a time: the volume
+// profile is thousands per second against one inventory report per minute, and
+// per-message overhead at that rate is the cost that matters.
+message EventBatch {
+  repeated BehaviourEvent events = 1;
+  // dropped_since_last is how many events the agent discarded since the last
+  // batch because its buffer was full.
+  //
+  // Counted and reported rather than silent. A detection pipeline that drops
+  // events without saying so produces a clean console during exactly the
+  // incident that overwhelmed it, which is the worst possible time to be
+  // quietly blind.
+  uint64 dropped_since_last = 2;
+  // dropped_total is the lifetime count, so a gap is still visible to someone
+  // reading a single batch long afterwards.
+  uint64 dropped_total = 3;
+  // sensor identifies what produced these, for the coverage view.
+  string sensor = 4;
+}
+
 message AgentToServer {
   string request_id = 1;
   oneof body {
     HeartbeatRequest heartbeat = 2;
     CommandAck ack = 3;
     Hello hello = 4;
+    EventBatch events = 5;
   }
 }
 

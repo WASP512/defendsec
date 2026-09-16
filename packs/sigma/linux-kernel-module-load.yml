@@ -1,0 +1,29 @@
+title: Kernel module loaded from an unusual location
+id: 2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d05
+status: experimental
+description: >-
+  A module loaded from somewhere other than the distribution's module tree.
+  Loading a module is the most complete form of persistence on Linux — it runs
+  in the kernel, and it can hide the very things that would detect it.
+references:
+  - https://attack.mitre.org/techniques/T1547/006/
+author: DefendSec
+date: 2026/09/16
+tags:
+  - attack.persistence
+  - attack.t1547.006
+  - attack.defense_evasion
+logsource:
+  category: kernel_module
+  product: linux
+detection:
+  selection:
+    ModuleName|contains: "*"
+  filter_distribution_tree:
+    ModuleName|startswith:
+      - /lib/modules/
+      - /usr/lib/modules/
+  condition: selection and not filter_distribution_tree
+falsepositives:
+  - Out-of-tree drivers installed deliberately, such as DKMS builds
+level: medium

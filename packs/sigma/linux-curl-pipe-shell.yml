@@ -1,0 +1,31 @@
+title: Remote script downloaded and piped to a shell
+id: 3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c02
+status: experimental
+description: >-
+  A download tool whose output is piped straight into an interpreter. Nothing
+  touches disk for a file-integrity check to notice, which is exactly why it is
+  the most common first stage of a Linux intrusion.
+references:
+  - https://attack.mitre.org/techniques/T1059/004/
+author: DefendSec
+date: 2026/09/16
+tags:
+  - attack.execution
+  - attack.t1059.004
+  - attack.command_and_control
+  - attack.t1105
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  downloader:
+    CommandLine|contains:
+      - curl
+      - wget
+  piped_to_shell:
+    CommandLine|re: "\\|\\s*(sudo\\s+)?(ba|da|z|k)?sh\\b"
+  condition: downloader and piped_to_shell
+falsepositives:
+  - Documented installation instructions run deliberately by an administrator
+  - Configuration management that bootstraps tooling this way
+level: high

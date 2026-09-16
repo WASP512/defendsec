@@ -1,0 +1,35 @@
+title: Process gained root outside the expected paths
+id: 5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b04
+status: experimental
+description: >-
+  A privilege transition to uid 0 from a binary that is not one of the usual
+  escalation paths. Legitimate escalation goes through sudo, su, pkexec or a
+  login process; anything else is worth a look.
+references:
+  - https://attack.mitre.org/techniques/T1548/001/
+author: DefendSec
+date: 2026/09/16
+tags:
+  - attack.privilege_escalation
+  - attack.t1548.001
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  became_root:
+    TargetUid: 0
+  filter_expected:
+    Image|endswith:
+      - /sudo
+      - /su
+      - /pkexec
+      - /login
+      - /sshd
+      - /systemd
+      - /cron
+      - /crond
+  condition: became_root and not filter_expected
+falsepositives:
+  - Setuid helpers shipped by the distribution
+  - Container runtimes and init systems not listed above
+level: high

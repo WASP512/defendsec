@@ -1,0 +1,39 @@
+title: Reverse shell launched via netcat or similar
+id: 9c9f1d3a-6b6d-4d1a-9f4a-3c2f0b7d5a01
+status: experimental
+description: >-
+  A shell interpreter passed to a network tool as the program to execute. This
+  is the canonical reverse shell: the operator gets an interactive shell on a
+  host they are not otherwise able to reach.
+references:
+  - https://attack.mitre.org/techniques/T1059/004/
+author: DefendSec
+date: 2026/09/16
+tags:
+  - attack.execution
+  - attack.t1059.004
+  - attack.command_and_control
+  - attack.t1571
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  netcat_exec:
+    Image|endswith:
+      - /nc
+      - /ncat
+      - /netcat
+    CommandLine|contains|all:
+      - " -e "
+      - /bin/
+  shell_redirect:
+    CommandLine|contains|all:
+      - "/dev/tcp/"
+      - ">&"
+  perl_socket:
+    Image|endswith: /perl
+    CommandLine|contains: "socket("
+  condition: 1 of them
+falsepositives:
+  - Deliberate administrative tooling that shells out over a socket
+level: critical

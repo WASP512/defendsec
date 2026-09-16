@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -367,6 +368,26 @@ func attachStream(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 	if keyErr != nil {
 		log.Warn("acknowledgements will be unsigned", "err", keyErr)
 	}
+
+	// gRPC permits one concurrent sender per stream. The command loop below
+	// already sends acknowledgements, so the event shipper cannot simply call
+	// Send from its own goroutine — concurrent Send is undefined behaviour,
+	// and the failure mode is a corrupted stream rather than an error.
+	var sendMu sync.Mutex
+	send := func(msg *defendsecv1.AgentToServer) error {
+		sendMu.Lock()
+		defer sendMu.Unlock()
+		return stream.Send(msg)
+	}
+
+	// Behavioural telemetry (roadmap 3.1-3.2), on its own cadence. It shares
+	// the stream but never blocks the command channel: the buffer drops
+	// rather than waiting, and a send failure here ends the shipper without
+	// touching command handling.
+	streamCtx, stopShipper := context.WithCancel(ctx)
+	defer stopShipper()
+	startEventShipper(streamCtx, log, deviceID, host, send)
+
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
@@ -376,7 +397,7 @@ func attachStream(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 		case *defendsecv1.ServerToAgent_Ping:
 			ack := &defendsecv1.CommandAck{CommandId: msg.GetRequestId(), Accepted: true, Message: "pong"}
 			signAck(log, ackKey, deviceID, ack)
-			if err := stream.Send(&defendsecv1.AgentToServer{
+			if err := send(&defendsecv1.AgentToServer{
 				RequestId: msg.GetRequestId(),
 				Body:      &defendsecv1.AgentToServer_Ack{Ack: ack},
 			}); err != nil {
@@ -386,7 +407,7 @@ func attachStream(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 		case *defendsecv1.ServerToAgent_Command:
 			ack, restart := executeCommand(log, pub, deviceID, stateDir, replay, body.Command)
 			signAck(log, ackKey, deviceID, ack)
-			if err := stream.Send(&defendsecv1.AgentToServer{
+			if err := send(&defendsecv1.AgentToServer{
 				RequestId: msg.GetRequestId(),
 				Body:      &defendsecv1.AgentToServer_Ack{Ack: ack},
 			}); err != nil {
