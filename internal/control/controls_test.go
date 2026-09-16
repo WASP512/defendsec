@@ -122,3 +122,68 @@ func TestControlsCatalogRejectsWrongMethod(t *testing.T) {
 		t.Fatalf("status=%d, want 405", rec.Code)
 	}
 }
+
+// Coverage must be published as a fraction with its denominator, never as a
+// percentage or a claim of completeness (§3.1, §3.7).
+func TestCheckCoverageStatesItsLimits(t *testing.T) {
+	s := testServer()
+	req := httptest.NewRequest(http.MethodGet, "/v1/controls/check-coverage", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec := httptest.NewRecorder()
+	s.HandleCheckCoverage(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Packs []struct {
+			ID     string         `json:"id"`
+			Checks int            `json:"checks"`
+			ByType map[string]int `json:"byType"`
+		} `json:"packs"`
+		TotalChecks         int            `json:"totalChecks"`
+		ByType              map[string]int `json:"byType"`
+		SupportedCheckTypes []string       `json:"supportedCheckTypes"`
+		Detail              string         `json:"detail"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+
+	if body.TotalChecks == 0 || len(body.Packs) == 0 {
+		t.Fatalf("no coverage reported: %+v", body)
+	}
+	// The denominator has to be in the response, not left to the reader.
+	if !strings.Contains(body.Detail, "150-400") {
+		t.Errorf("the response does not state the benchmark denominator: %q", body.Detail)
+	}
+	if !strings.Contains(body.Detail, "does not claim benchmark") {
+		t.Errorf("the response does not disclaim benchmark coverage: %q", body.Detail)
+	}
+	// No percentage anywhere: that is where a control nobody checked
+	// disappears into a rounding error.
+	if strings.Contains(rec.Body.String(), "percent") || strings.Contains(rec.Body.String(), "%") {
+		t.Errorf("the coverage response contains a percentage: %s", rec.Body.String())
+	}
+
+	if len(body.SupportedCheckTypes) < 7 {
+		t.Errorf("supported types = %v, want the full engine", body.SupportedCheckTypes)
+	}
+}
+
+func TestCheckCoverageAuthorisation(t *testing.T) {
+	s := testServer()
+	for token, want := range map[string]int{
+		"admin-token":  http.StatusOK,
+		"viewer-token": http.StatusOK,
+		"bogus":        http.StatusUnauthorized,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/controls/check-coverage", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		s.HandleCheckCoverage(rec, req)
+		if rec.Code != want {
+			t.Errorf("token %q: status=%d, want %d", token, rec.Code, want)
+		}
+	}
+}

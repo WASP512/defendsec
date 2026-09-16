@@ -146,6 +146,9 @@ func TestPackControlsRejectBadIdentifiers(t *testing.T) {
 id: bad-pack
 checks:
   - id: c1
+    type: file_regex
+    path: /etc/x
+    must_match: "y"
     controls: ["not-a-framework:1"]
     title: t
 `)
@@ -158,6 +161,9 @@ id: bad-pack-2
 controls: ["AU-9"]
 checks:
   - id: c1
+    type: file_regex
+    path: /etc/x
+    must_match: "y"
     title: t
 `)
 	if _, err := LoadPack(badPackLevel); err == nil {
@@ -174,8 +180,14 @@ id: inherit-pack
 controls: ["nist-800-53:CM-6"]
 checks:
   - id: silent
+    type: file_regex
+    path: /etc/x
+    must_match: "y"
     title: inherits the default
   - id: specific
+    type: file_regex
+    path: /etc/y
+    must_match: "z"
     title: names its own
     controls: ["cis-v8:5.4"]
 `
@@ -203,4 +215,73 @@ checks:
 	if len(res.Controls) != 1 || res.Controls[0] != "cis-v8:5.4" {
 		t.Errorf("result controls = %v", res.Controls)
 	}
+}
+
+// Every shipped pack, not just the two the agent used to load by name. A pack
+// that only loads when somebody remembers to name it is a pack that silently
+// stops running.
+func TestEveryShippedPackLoads(t *testing.T) {
+	dir := DefaultLinuxSSHPath()
+	if dir == "" {
+		t.Skip("pack directory not found")
+	}
+	packs, err := LoadDir(filepath.Dir(dir))
+	if err != nil {
+		t.Fatalf("shipped packs do not load: %v", err)
+	}
+	if len(packs) < 3 {
+		t.Fatalf("loaded %d packs, want the shipped set", len(packs))
+	}
+
+	for _, pack := range packs {
+		if pack.Name == "" {
+			t.Errorf("%s has no name", pack.ID)
+		}
+		for _, c := range pack.Checks {
+			if len(c.Controls) == 0 {
+				t.Errorf("%s/%s names no controls", pack.ID, c.ID)
+			}
+			if c.Title == "" {
+				t.Errorf("%s/%s has no title", pack.ID, c.ID)
+			}
+			// Every tag must exist in the catalog, or the finding carries an
+			// identifier the compliance view can never render.
+			for _, raw := range c.Controls {
+				id, err := controls.ParseID(raw)
+				if err != nil {
+					t.Errorf("%s/%s: %v", pack.ID, c.ID, err)
+					continue
+				}
+				if _, ok := controls.Lookup(id); !ok {
+					t.Errorf("%s/%s tags %s, which is not in the catalog", pack.ID, c.ID, id)
+				}
+			}
+		}
+	}
+}
+
+// The engine work is the point of Phase 3.7: the shipped content has to
+// actually exercise the new check types, or the engine is untested in practice.
+func TestShippedPacksExerciseTheNewCheckTypes(t *testing.T) {
+	dir := DefaultLinuxSSHPath()
+	if dir == "" {
+		t.Skip("pack directory not found")
+	}
+	packs, err := LoadDir(filepath.Dir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	used := map[string]int{}
+	for _, pack := range packs {
+		for _, c := range pack.Checks {
+			used[c.Type]++
+		}
+	}
+	for _, want := range []string{"file_mode", "mount_option", "sysctl", "package", "systemd_unit", "command"} {
+		if used[want] == 0 {
+			t.Errorf("no shipped check uses type %q", want)
+		}
+	}
+	t.Logf("shipped check types: %v", used)
 }

@@ -553,6 +553,83 @@ openssl ts -verify -in token.tsr -data hash.bin -CAfile tsa-roots.pem
 
 ---
 
+## Configuration checks
+
+Agents evaluate the packs in `packs/sca/` on every inventory cycle. Seven check types:
+
+| Type | Checks | Runs a process? |
+| --- | --- | --- |
+| `file_regex` | A pattern in a config file, with drop-in support | No |
+| `file_mode` | Permission bits and ownership | No |
+| `mount_option` | Mount options on a filesystem | No |
+| `sysctl` | A kernel parameter, read from `/proc/sys` | No |
+| `package` | A package installed or absent | Fixed argv |
+| `systemd_unit` | A unit enabled and/or active | Fixed argv |
+| `command` | Output or exit status of an allowlisted command | Yes |
+| `inventory_field` | A field in the host snapshot (evaluated server-side) | No |
+
+`file_mode` compares as a **maximum**, not an equality: benchmarks say "no more permissive than
+0644", and an exact match would fail a correctly-hardened host and teach operators to ignore the
+result.
+
+### A pack is code
+
+`command` makes a data file executable, so it is deliberately narrow:
+
+- **argv, never a shell string.** There is no `sh -c`, so nothing in an argument can become
+  syntax — no globbing, no pipelines, no substitution, no quoting bug that turns a filename into a
+  second command.
+- **An allowlist of executables**, defaulting to read-only introspection tools. No shell, no
+  interpreter, nothing that writes. A pack naming anything else **fails to load**.
+- **Resolved from fixed directories**, so a writable directory earlier in `PATH` cannot substitute
+  the binary.
+- **A 10-second timeout and a 256 KiB output cap.**
+
+This is a reduction in blast radius, not a sandbox. Adding a shell to the allowlist removes most
+of it. The other six types need no arbitrary execution at all, which is why they were implemented
+natively rather than as `command` wrappers.
+
+### Writing a pack
+
+A pack that will not load is refused outright rather than partially applied — a half-loaded pack
+reports a clean result for checks that never ran, which reads as compliance. Refused at load:
+
+- an unknown or missing check type
+- a duplicate check id
+- a check missing the fields its type needs
+- a malformed regular expression or a non-octal `max_mode`
+- a `command` naming an executable outside the allowlist
+- **a control identifier not in the catalog** — a well-formed tag for a control that does not
+  exist is the failure hardest to notice: the pack looks tagged and the compliance view never
+  shows it
+
+```yaml
+- id: cis-5.1-shadow-permissions
+  controls: [cis-v8:5.1, nist-800-53:AC-3, nist-800-53:IA-5]
+  title: /etc/shadow is not readable by group or other
+  severity: high
+  type: file_mode
+  path: /etc/shadow
+  max_mode: "0640"
+  owner: root
+```
+
+### Coverage, with its denominator
+
+```bash
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  http://127.0.0.1:47264/v1/controls/check-coverage
+```
+
+It reports what ships, per pack and per type, and says plainly that this is **not** a benchmark. A
+CIS Linux Benchmark is 150–400 checks per platform and DefendSec ships a few dozen; it is not a
+certified benchmark scanner and does not claim to be. No percentage is reported — a percentage is
+where a control nobody checked disappears into a rounding error.
+
+Read it alongside `/v1/controls`, which states per control what DefendSec can and cannot evidence.
+
+---
+
 ## Compliance and audit evidence
 
 The **Compliance** page shows per-control status for a framework over a window: CIS Controls v8,
