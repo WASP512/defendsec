@@ -111,25 +111,80 @@ cat /var/lib/defendsec/update-status.json
 
 ---
 
-## Reverse proxy (HTTPS)
+## HTTPS
 
-Port `47261` is HTTP. If users reach the console through HTTPS:
+The console is served over HTTPS by default (roadmap 5.3). `defendsec-web` terminates TLS on port
+`47261` and forwards to the Next.js console, which binds to loopback only — Next.js does not serve
+HTTPS in production, and the documented answer is a reverse proxy, so DefendSec ships one rather
+than asking every operator to install and configure their own.
 
-1. Terminate TLS on the proxy.
-2. Forward to `http://127.0.0.1:47261`.
-3. Send `X-Forwarded-Host` and `X-Forwarded-Proto`.
-4. In `/etc/defendsec/console.env`:
+The admin token is a bearer credential. On plain HTTP it is readable by anything on the path, and a
+product that signs every host action while handing its own admin token around in clear text is not
+making a coherent argument.
 
-   ```bash
-   DEFENDSEC_COOKIE_SECURE=true
-   DEFENDSEC_PUBLIC_CONSOLE_URL=https://defendsec.example.com
-   ```
+| Mode | `DEFENDSEC_TLS` | When |
+| --- | --- | --- |
+| Self-signed | `on` (default) | A LAN with no DNS and no internet. The browser warns, honestly |
+| Let's Encrypt | `acme` | A public DNS name and inbound port 80 |
+| Your own certificate | `file` | An internal CA — the way to stop the warning without exposing the box |
+| Plain HTTP | `off` | An isolated lab, explicitly, and logged at every start |
 
-5. `sudo systemctl restart defendsec-console`
+Configure in `/etc/defendsec/web.env`, then `systemctl restart defendsec-web`. An unrecognised
+value refuses to start rather than falling back — silently serving plain HTTP because somebody
+typed `tls` instead of `on` would undo the point.
+
+### The self-signed certificate
+
+Generated on first start, kept in `/var/lib/defendsec/tls`, and reused across restarts — a new
+fingerprint every restart would train operators to click through the warning. It covers the names
+in `DEFENDSEC_TLS_HOSTS` plus loopback always, so you can reach the console from the box even when
+DNS is wrong, which is exactly when you need to. It is regenerated when it nears expiry or when you
+add a hostname.
+
+Verify it rather than clicking through blind. The server logs the fingerprint at startup:
+
+```bash
+journalctl -u defendsec-web --no-pager | grep "console certificate"
+```
+
+Compare that against what your browser shows. With a self-signed certificate this comparison is
+the only verification available.
+
+### Let's Encrypt
+
+```bash
+DEFENDSEC_TLS=acme
+DEFENDSEC_TLS_HOSTS=defendsec.example.com
+DEFENDSEC_WEB_HTTP_ADDR=:80
+DEFENDSEC_ACME_ACCEPT_TOS=1
+DEFENDSEC_ACME_EMAIL=security@example.com
+```
+
+Only the names you list are requested — without that allowlist, anyone pointing a DNS record at
+the box could have a certificate minted and exhaust your rate limit. An IP address or a `.local`
+name cannot be issued a public certificate, and DefendSec says so at startup rather than failing
+opaquely at renewal.
+
+### Turning it off
+
+```bash
+# /etc/defendsec/web.env
+DEFENDSEC_TLS=off
+# /etc/defendsec/console.env — a Secure cookie is not sent over plain HTTP,
+# so leaving this true would make login fail with no useful error.
+DEFENDSEC_COOKIE_SECURE=false
+```
+
+### Your own reverse proxy
+
+If you already run one, point it at the console directly on `127.0.0.1:47265`, set
+`DEFENDSEC_TLS=off` for the front-end (or do not run `defendsec-web` at all), and forward
+`X-Forwarded-Host` and `X-Forwarded-Proto` — the console builds absolute URLs and decides cookie
+flags from them.
 
 `DEFENDSEC_PUBLIC_CONSOLE_URL` is what the **Enroll** page prints for download URLs.
 
-Keep `47262`/`47263` reachable by agents (or proxy them separately). Do not expose Postgres or port `47264`.
+Keep `47262`/`47263` reachable by agents. Do not expose Postgres, port `47264`, or `47265`.
 
 ---
 

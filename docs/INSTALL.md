@@ -121,7 +121,21 @@ bash install-server.sh --help
 
 ## First login
 
-1. Open **`http://<server-ip>:47261`**. Type **http**. Port `47261` is not HTTPS. Using `https://…:47261` produces `SSL_ERROR_RX_RECORD_TOO_LONG`.
+1. Open **`https://<server-ip>:47261`**.
+
+   Your browser will warn that the certificate is not trusted. It is telling the truth: the
+   certificate is self-signed, generated on this box at first start, and no public authority
+   vouches for it. That is still strictly better than plain HTTP, where the admin token you are
+   about to paste is readable by anything on the path.
+
+   Confirm you are talking to the right machine before accepting it — compare the fingerprint your
+   browser shows against the one the server logged:
+
+   ```bash
+   pct exec 200 -- journalctl -u defendsec-web --no-pager | grep "console certificate"
+   ```
+
+   For a certificate that does not warn, see **HTTPS** below.
 2. There is **no username**. Paste the admin token.
 3. Get the token from the Proxmox host (replace `200` with your CTID):
 
@@ -147,13 +161,51 @@ You usually do **not** need the container root password. `pct enter 200` gives y
 pct exec 200 -- passwd root
 ```
 
-### Keep the console on a trusted network
+### HTTPS
 
-The admin token travels over plain HTTP on port `47261`. Use a trusted LAN, or put an HTTPS reverse proxy in front. If you terminate TLS at a proxy, set both of these in `/etc/defendsec/console.env` and restart `defendsec-console`:
+The console is served over HTTPS by default. `defendsec-web` terminates TLS on port `47261` and
+forwards to the console, which binds to loopback only — so nothing plain is reachable off the box.
+
+Three ways to get a certificate, in `/etc/defendsec/web.env`:
 
 ```bash
-DEFENDSEC_COOKIE_SECURE=true
-DEFENDSEC_PUBLIC_CONSOLE_URL=https://defendsec.example.com
+# Self-signed, generated locally. The default. Works on a LAN with no DNS and
+# no internet; the browser warns, because the certificate really is unverified.
+DEFENDSEC_TLS=on
+DEFENDSEC_TLS_HOSTS=defendsec.example.com,192.168.1.50
+
+# Let's Encrypt. Needs a public DNS name and inbound port 80.
+DEFENDSEC_TLS=acme
+DEFENDSEC_TLS_HOSTS=defendsec.example.com
+DEFENDSEC_WEB_HTTP_ADDR=:80
+DEFENDSEC_ACME_ACCEPT_TOS=1
+DEFENDSEC_ACME_EMAIL=security@example.com
+
+# A certificate from your own CA, which is the way to stop the browser warning
+# without exposing the box to the internet.
+DEFENDSEC_TLS=file
+DEFENDSEC_TLS_CERT=/etc/defendsec/tls/console.crt
+DEFENDSEC_TLS_KEY=/etc/defendsec/tls/console.key
+```
+
+Then `sudo systemctl restart defendsec-web`.
+
+Also set the public URL, so the **Enroll** page prints download URLs agents can actually reach:
+
+```bash
+# /etc/defendsec/console.env
+DEFENDSEC_PUBLIC_CONSOLE_URL=https://defendsec.example.com:47261
+```
+
+**Turning it off.** Plain HTTP is still available for an isolated lab, but only as an explicit
+choice, and it is logged at every start:
+
+```bash
+# /etc/defendsec/web.env
+DEFENDSEC_TLS=off
+# /etc/defendsec/console.env — a Secure cookie is not sent over plain HTTP,
+# so leaving this true would make login silently fail.
+DEFENDSEC_COOKIE_SECURE=false
 ```
 
 ---
@@ -224,7 +276,7 @@ sudo bash install-agent.sh \
 
 | Check | How |
 | --- | --- |
-| Console loads | `http://<ip>:47261/login` in a browser |
+| Console loads | `https://<ip>:47261/login` in a browser |
 | Services up (inside the CT/VM) | `systemctl status defendsec-apid defendsec-console` |
 | Host enrolled | Console → **Hosts**; status online within ~2 minutes |
 | Logs | `journalctl -u defendsec-apid -u defendsec-console -u defendsec-agentd -f` |
@@ -290,10 +342,11 @@ curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/ag
 
 | Port | What | Who needs it |
 | --- | --- | --- |
-| `47261` | Console + agent downloads (HTTP) | Your browser, agent installer |
+| `47261` | Console + agent downloads (**HTTPS**) | Your browser, agent installer |
 | `47262` | Enroll / CA (HTTPS) | Agents |
 | `47263` | mTLS gRPC | Agents |
 | `47264` | Admin API | Localhost only |
+| `47265` | Console (plain HTTP, behind the TLS front-end) | Localhost only |
 | `5432` | Postgres | Localhost only |
 
 Open `47261–47263` from your admin network and from agents. Leave `47264` and Postgres bound to localhost.

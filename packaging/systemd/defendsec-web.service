@@ -1,0 +1,29 @@
+[Unit]
+Description=DefendSec console HTTPS front-end
+# Terminates TLS in front of the Next.js console, which does not serve HTTPS
+# itself (roadmap 5.3). The console binds to loopback, so this is the only
+# thing reachable off the box.
+After=network-online.target defendsec-console.service
+Wants=network-online.target
+Requires=defendsec-console.service
+
+[Service]
+Type=simple
+User=defendsec
+Group=defendsec
+EnvironmentFile=-/etc/defendsec/web.env
+ExecStart=/usr/local/bin/defendsec-web
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/defendsec
+# Binding 443 without running as root. Needed only if DEFENDSEC_WEB_ADDR is
+# set to a privileged port; harmless otherwise.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

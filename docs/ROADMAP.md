@@ -880,6 +880,26 @@ a security product, and the paper has to caveat it in four separate places. Gene
 certificate at install, support ACME/Let's Encrypt, and make plain HTTP an explicit opt-out for
 isolated labs. Then delete the caveats.
 
+*Delivered.* Next.js does not serve HTTPS in production and the documented answer is a reverse
+proxy, so DefendSec ships one — `defendsec-web` — rather than asking every operator to install and
+configure their own, which most single-container deployments will not do. It takes port 47261, the
+port operators and the agent installer already use, and the console moves behind it on a
+loopback-only port: the plain-HTTP surface is not reachable off the box at all. Three certificate
+modes: self-signed generated on first start (works on a LAN with no DNS and no internet; the
+browser warns, which is honest, and it is still strictly better than plain HTTP where the admin
+token is readable by anything on the path), ACME with an allowlist of names the operator actually
+configured, and a file from an internal CA. Plain HTTP remains available as `DEFENDSEC_TLS=off`,
+logged loudly at every start; an *unrecognised* value refuses to start rather than falling back,
+since silently serving plain HTTP because somebody typed `tls` instead of `on` would undo the
+point. The generated certificate is reused across restarts — a new fingerprint every restart
+trains operators to click through the warning — always covers loopback so the console is reachable
+when DNS is wrong, and is regenerated on approaching expiry or when a hostname is added. The
+startup log prints its SHA-256 so the browser's warning can be verified rather than dismissed.
+Cookies now default to Secure. Writing the proxy caught a real bug: `SetXForwarded` derives the
+proto from the inbound connection and overwrites whatever was set before it, so setting the
+headers first silently lost them — and the console would have dropped the Secure cookie flag
+exactly when TLS was on. The caveats in README.md and INSTALL.md are gone.
+
 **5.4 — Enterprise identity (SSO/OIDC).** Completes Phase 1.0. Group-to-role mapping, session
 management, and per-user attribution throughout the ledger.
 
