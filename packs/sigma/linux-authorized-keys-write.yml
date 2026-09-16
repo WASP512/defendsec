@@ -1,0 +1,29 @@
+title: SSH authorized_keys modified
+id: 7a8b9c0d-1e2f-4a3b-8c7d-6e5f4a3b2c03
+status: experimental
+description: >-
+  A write to an authorized_keys file. Adding a key is the simplest durable
+  backdoor on a Linux host: it survives reboots, needs no malware on disk, and
+  looks exactly like normal administration.
+references:
+  - https://attack.mitre.org/techniques/T1098/004/
+author: DefendSec
+date: 2026/09/16
+tags:
+  - attack.persistence
+  - attack.t1098.004
+logsource:
+  category: file_event
+  product: linux
+detection:
+  selection:
+    TargetFilename|contains: /.ssh/authorized_keys
+  filter_expected_tooling:
+    Image|endswith:
+      - /ssh-copy-id
+      - /cloud-init
+  condition: selection and not filter_expected_tooling
+falsepositives:
+  - Key rotation performed by configuration management
+  - An administrator adding their own key during provisioning
+level: high
