@@ -892,6 +892,17 @@ defaults. Move to Postgres-primary with JSON as an export
 format, add pagination and server-side filtering across the console, and load-test to 10k hosts.
 Until this is done, fleet size is bounded by a Go slice.
 
+*Partly delivered — the retention half.* The ring buffer is gone: privileged-action history is now
+kept by age, defaulting to one year, and the remaining count cap is a size safety valve that logs
+at error level when crossed rather than discarding silently. Alert retention was raised from 90
+days to the same one-year minimum. This was not cosmetic — Phase 1.9's compliance view claims to
+evidence CJIS Policy Area 4, and a 500-record cap could push a month of signed actions out of the
+file in an afternoon while the console reported the control as satisfied. `GET /v1/retention`
+reports the windows in force *and how much history is actually held*, because retention
+configuration does not create history that was never recorded: a one-year policy on a system
+installed last month evidences one month, and an assessor will ask. The Postgres-primary move,
+pagination and the 10k-host load test remain.
+
 **5.6 — Integrations.** Prometheus metrics, OTel traces, syslog/CEF export, webhook and Slack/Teams
 alerting, and Terraform/Ansible modules for provisioning. Be the best-behaved citizen in someone
 else's stack.

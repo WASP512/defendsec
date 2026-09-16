@@ -115,6 +115,24 @@ func run(log *slog.Logger) error {
 
 	store := presence.New(filepath.Join(*dataDir, "defendsec-agents.json"))
 	commands := cmdlog.New(filepath.Join(*dataDir, "commands.json"))
+	// Privileged-action history is kept by age rather than by count
+	// (roadmap 5.5). The default is the CJIS minimum of one year.
+	if v := strings.TrimSpace(os.Getenv("DEFENDSEC_COMMAND_RETENTION_DAYS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			commands.SetRetentionDays(n)
+		} else {
+			log.Warn("ignoring DEFENDSEC_COMMAND_RETENTION_DAYS", "value", v,
+				"reason", "must be a whole number of days; negative keeps everything")
+		}
+	}
+	commands.SetOverflowHandler(func(dropped int) {
+		// Reaching the size cap means the age window is not doing its job.
+		// Silently discarding signed actions is what this replaced.
+		log.Error("command log size cap reached — privileged-action history was discarded",
+			"dropped", dropped,
+			"fix", "configure Postgres, which retains command history without a cap, or lower DEFENDSEC_COMMAND_RETENTION_DAYS")
+	})
+
 	svc := control.New(bundle, secretValue, adminToken, *dataDir, store, commands, signer, log)
 	if viewer := strings.TrimSpace(os.Getenv("DEFENDSEC_VIEWER_TOKEN")); viewer != "" {
 		svc.SetViewerToken(viewer)
@@ -136,12 +154,21 @@ func run(log *slog.Logger) error {
 		pg = storepg.New(pool)
 		svc.SetPostgres(pg)
 		log.Info("postgres enabled")
-		alertDays := 90
+		// One year, the CJIS Policy Area 4 minimum, rather than the 90 days
+		// this used to default to (roadmap 5.5). DefendSec's compliance view
+		// claims to evidence audit retention; a default below the minimum of
+		// the framework it names would make that claim false out of the box,
+		// and the deployments that most need the history are the least likely
+		// to have configured it.
+		alertDays := 365
 		if v := strings.TrimSpace(os.Getenv("DEFENDSEC_ALERT_RETENTION_DAYS")); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				alertDays = n
 			}
 		}
+		// Live query results are operational output rather than an audit
+		// record, so a shorter window is right — they are large, and the
+		// signed command and its acknowledgement are what the ledger keeps.
 		liveDays := 30
 		if v := strings.TrimSpace(os.Getenv("DEFENDSEC_LIVE_QUERY_RETENTION_DAYS")); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -217,6 +244,7 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/users/update", svc.HandleUserUpdate)
 	adminMux.HandleFunc("/v1/totp", svc.HandleTOTP)
 	adminMux.HandleFunc("/v1/crypto-posture", svc.HandleCryptoPosture)
+	adminMux.HandleFunc("/v1/retention", svc.HandleRetention)
 
 	// Compliance (roadmap 1.7).
 	adminMux.HandleFunc("/v1/controls", svc.HandleControls)

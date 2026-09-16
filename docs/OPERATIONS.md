@@ -206,12 +206,35 @@ The packaged server ships a local advisory catalog. To refresh from OSV on a tim
 
 ## Data retention
 
-When Postgres is enabled, apid prunes on startup:
+| Data | Environment variable | Default | Pruned? |
+| --- | --- | --- | --- |
+| Audit ledger | — | forever | **Never.** Removing entries would break the hash chain, which is the point of it |
+| Command history (Postgres) | — | forever | Never |
+| Command history (JSON file) | `DEFENDSEC_COMMAND_RETENTION_DAYS` | 365 days | By age |
+| Resolved alerts | `DEFENDSEC_ALERT_RETENTION_DAYS` | 365 days | By age, **resolved only** — an open finding is never deleted |
+| Live query results | `DEFENDSEC_LIVE_QUERY_RETENTION_DAYS` | 30 days | By age |
 
-| Data | Environment variable | Default |
-| --- | --- | --- |
-| Resolved alerts | `DEFENDSEC_ALERT_RETENTION_DAYS` | 90 days |
-| Live query results | `DEFENDSEC_LIVE_QUERY_RETENTION_DAYS` | 30 days |
+Defaults are one year, the CJIS Policy Area 4 minimum. DefendSec's compliance view claims to
+evidence audit retention, so a default below the minimum of a framework it names would make that
+claim false out of the box. A negative value keeps everything; zero restores the default rather
+than meaning "keep nothing".
+
+**The JSON command log used to be a 500-record ring buffer**, discarding the oldest privileged
+action regardless of age. On a busy fleet that could push a month of signed actions out of the
+file in an afternoon. It is now retained by age; the remaining size cap is a safety valve, and
+crossing it is logged at error level rather than happening silently. Configure Postgres — it holds
+the authoritative history with no cap at all.
+
+### Check what is actually retained
+
+```bash
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  http://127.0.0.1:47264/v1/retention
+```
+
+It reports the configured windows **and how much history is really held**. That second number is
+the one an assessor wants: retention configuration does not create history that was never
+recorded, so a one-year policy on a system installed last month evidences one month.
 
 ---
 
