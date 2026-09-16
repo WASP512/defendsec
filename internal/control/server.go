@@ -28,6 +28,8 @@ import (
 	"defendsec/internal/cmdlog"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
+	"defendsec/internal/playbook"
+	"defendsec/internal/policy"
 	"defendsec/internal/presence"
 	"defendsec/internal/sca"
 	"defendsec/internal/sign"
@@ -54,6 +56,13 @@ type Server struct {
 	// refuses to hold anchors for anyone else.
 	anchors         *anchor.Publisher
 	peerAnchorToken string
+
+	// Policy sits between the API and the signer (roadmap 2.1). Nil means no
+	// policy is loaded, which denies everything rather than allowing it.
+	policy *policy.Engine
+	// Playbooks are named sequences (roadmap 2.5). Every step still goes
+	// through the policy engine individually.
+	playbooks *playbook.Set
 }
 
 // SetAnchoring configures checkpoint anchoring. Called at startup rather than

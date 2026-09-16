@@ -20,7 +20,10 @@ Most people run the server as a Proxmox LXC. That path is two commands plus a br
      bash /tmp/defendsec.sh
    ```
 
-2. **Open the console** at `http://<container-ip>:47261` (use **http**, not https). There is no username. Get the admin token from the Proxmox host:
+2. **Open the console** at `https://<container-ip>:47261`. The certificate is self-signed on first
+   start, so your browser will warn; [INSTALL.md](docs/INSTALL.md) covers verifying the
+   fingerprint and getting a certificate that does not warn. There is no username. Get the admin
+   token from the Proxmox host:
 
    ```bash
    pct exec <CTID> -- cat /var/lib/defendsec/admin-token.txt
@@ -68,7 +71,8 @@ npm install
 npm run dev
 ```
 
-Open [http://127.0.0.1:47261](http://127.0.0.1:47261). When `DEFENDSEC_ADMIN_TOKEN` is unset, the token is `defendsec-local-admin` (also written to `data/admin-token.txt`). Production installs create a random token instead.
+Open [http://127.0.0.1:47261](http://127.0.0.1:47261) — the development server runs plain HTTP;
+production is HTTPS by default. When `DEFENDSEC_ADMIN_TOKEN` is unset, the token is `defendsec-local-admin` (also written to `data/admin-token.txt`). Production installs create a random token instead.
 
 The Python HTTP agent still works for inventory-only labs:
 

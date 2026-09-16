@@ -113,7 +113,7 @@ var native = []Control{
 		Title:    "Audit record retention",
 		Coverage: CoveragePartial,
 		Signals:  []Signal{SignalAuditRetention, SignalBackup},
-		Note:     "Retention windows are configurable and backups are scripted. Whether the configured window meets the organisation's obligation is a decision DefendSec cannot make.",
+		Note:     "The audit ledger is never pruned, and command history defaults to one year — the CJIS Policy Area 4 minimum. GET /v1/retention reports the windows actually in force and how much history is really held, because a one-year policy on a system installed last month evidences one month.",
 	},
 
 	// --- Access Control (AC) ---------------------------------------------
@@ -405,7 +405,7 @@ var native = []Control{
 		Title:    "Ensure adequate audit log storage",
 		Coverage: CoveragePartial,
 		Signals:  []Signal{SignalAuditRetention, SignalBackup},
-		Note:     "Retention is configurable and backups are scripted; capacity planning is the operator's.",
+		Note:     "Retention is configurable, defaults to a year, and is reported by GET /v1/retention. Capacity planning is still the operator's.",
 	},
 	{
 		ID: MustParseID("cis-v8:8.5"), Family: "8",

@@ -1,0 +1,47 @@
+# Response to unexpected change under /etc/ssh.
+#
+# The example from the roadmap: collect context, quarantine the file, isolate.
+# Every step is signed and policy-checked individually at the moment it runs,
+# so this file grants nothing — it names a sequence somebody agreed to in
+# advance rather than one assembled during an incident.
+#
+# Deliberately NOT automatic. Isolating a host on a configuration change is the
+# right call often enough to write down and wrong often enough that a person
+# should look first. Set `automatic: true` once you trust the trigger on your
+# estate, and remember that policy still decides every step.
+
+version: 1
+id: ssh-drift-response
+name: SSH configuration drift
+description: >-
+  An unexpected change under /etc/ssh is either an administrator who skipped
+  change control or an attacker establishing access. Collect what is running,
+  quarantine the changed file, then isolate the host pending a look.
+
+trigger:
+  alert_kinds: [fim]
+  severities: [high, critical]
+  path_prefix: /etc/ssh
+
+automatic: false
+
+steps:
+  - id: collect-context
+    command: live_query
+    description: What is running and who is connected, before anything changes.
+    payload:
+      query: sshd-sessions
+
+  - id: quarantine-changed-file
+    command: quarantine_path
+    description: Move the changed file aside so it stops being used, keeping a copy.
+    payload:
+      path: "{{alert.path}}"
+
+  - id: isolate-host
+    command: isolate
+    description: >-
+      Drop the host's network while this is investigated. Reversible, and the
+      policy allows releasing on one approval.
+    payload:
+      reason: "SSH configuration drift: {{alert.title}}"

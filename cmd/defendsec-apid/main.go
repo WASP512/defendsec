@@ -27,6 +27,8 @@ import (
 	"defendsec/internal/db"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
+	"defendsec/internal/playbook"
+	"defendsec/internal/policy"
 	"defendsec/internal/presence"
 	"defendsec/internal/secret"
 	"defendsec/internal/sign"
@@ -113,6 +115,24 @@ func run(log *slog.Logger) error {
 
 	store := presence.New(filepath.Join(*dataDir, "defendsec-agents.json"))
 	commands := cmdlog.New(filepath.Join(*dataDir, "commands.json"))
+	// Privileged-action history is kept by age rather than by count
+	// (roadmap 5.5). The default is the CJIS minimum of one year.
+	if v := strings.TrimSpace(os.Getenv("DEFENDSEC_COMMAND_RETENTION_DAYS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			commands.SetRetentionDays(n)
+		} else {
+			log.Warn("ignoring DEFENDSEC_COMMAND_RETENTION_DAYS", "value", v,
+				"reason", "must be a whole number of days; negative keeps everything")
+		}
+	}
+	commands.SetOverflowHandler(func(dropped int) {
+		// Reaching the size cap means the age window is not doing its job.
+		// Silently discarding signed actions is what this replaced.
+		log.Error("command log size cap reached — privileged-action history was discarded",
+			"dropped", dropped,
+			"fix", "configure Postgres, which retains command history without a cap, or lower DEFENDSEC_COMMAND_RETENTION_DAYS")
+	})
+
 	svc := control.New(bundle, secretValue, adminToken, *dataDir, store, commands, signer, log)
 	if viewer := strings.TrimSpace(os.Getenv("DEFENDSEC_VIEWER_TOKEN")); viewer != "" {
 		svc.SetViewerToken(viewer)
@@ -134,12 +154,21 @@ func run(log *slog.Logger) error {
 		pg = storepg.New(pool)
 		svc.SetPostgres(pg)
 		log.Info("postgres enabled")
-		alertDays := 90
+		// One year, the CJIS Policy Area 4 minimum, rather than the 90 days
+		// this used to default to (roadmap 5.5). DefendSec's compliance view
+		// claims to evidence audit retention; a default below the minimum of
+		// the framework it names would make that claim false out of the box,
+		// and the deployments that most need the history are the least likely
+		// to have configured it.
+		alertDays := 365
 		if v := strings.TrimSpace(os.Getenv("DEFENDSEC_ALERT_RETENTION_DAYS")); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				alertDays = n
 			}
 		}
+		// Live query results are operational output rather than an audit
+		// record, so a shorter window is right — they are large, and the
+		// signed command and its acknowledgement are what the ledger keeps.
 		liveDays := 30
 		if v := strings.TrimSpace(os.Getenv("DEFENDSEC_LIVE_QUERY_RETENTION_DAYS")); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -215,6 +244,7 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/users/update", svc.HandleUserUpdate)
 	adminMux.HandleFunc("/v1/totp", svc.HandleTOTP)
 	adminMux.HandleFunc("/v1/crypto-posture", svc.HandleCryptoPosture)
+	adminMux.HandleFunc("/v1/retention", svc.HandleRetention)
 
 	// Compliance (roadmap 1.7).
 	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
@@ -226,6 +256,51 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/audit/assessment", svc.HandleAuditAssessment)
 	adminMux.HandleFunc("/v1/audit/evidence", svc.HandleEvidenceExport)
 
+	// Policy sits between the API and the signer (roadmap 2.1). A deployment
+	// with no policy file denies every command, which is the correct posture
+	// for an unconfigured response tool — but it would be a surprise, so it
+	// is stated loudly at startup rather than discovered at an incident.
+	if path := strings.TrimSpace(os.Getenv("DEFENDSEC_POLICY_FILE")); path != "" {
+		doc, err := policy.Load(path)
+		if err != nil {
+			// Refused rather than started without it. Coming up with no
+			// policy because the file had a typo would silently disable every
+			// host action, and the operator would find out during an incident.
+			return fmt.Errorf("policy: %w", err)
+		}
+		svc.SetPolicy(policy.NewEngine(doc))
+		log.Info("policy loaded", "name", doc.Name, "rules", len(doc.Rules),
+			"limits", len(doc.Limits), "hash", doc.Hash[:16], "source", doc.Source)
+	} else {
+		log.Warn("no policy file configured; every host command will be denied",
+			"fix", "set DEFENDSEC_POLICY_FILE to a policy document, for example packaging/policy/default.yaml")
+	}
+
+	// Playbooks (roadmap 2.5-2.6). Every step is still policy-checked and
+	// signed individually, so loading a playbook grants nothing on its own.
+	if dir := strings.TrimSpace(os.Getenv("DEFENDSEC_PLAYBOOK_DIR")); dir != "" {
+		set, err := playbook.LoadDir(dir)
+		if err != nil {
+			// One bad file fails the load. A partial set means the operator
+			// believes a playbook exists when it does not, and finds out
+			// during the incident it was written for.
+			return fmt.Errorf("playbooks: %w", err)
+		}
+		svc.SetPlaybooks(set)
+		var automatic int
+		for _, pb := range set.All() {
+			if pb.Automatic {
+				automatic++
+			}
+		}
+		log.Info("playbooks loaded", "count", set.Len(), "automatic", automatic, "dir", dir)
+		if automatic > 0 {
+			log.Warn("automatic response is enabled for some playbooks",
+				"automatic", automatic,
+				"note", "these run without human confirmation when policy permits every step")
+		}
+	}
+
 	// Transparency anchoring (roadmap 1.6).
 	adminMux.HandleFunc("/v1/audit/anchors", svc.HandleAnchors)
 	// The peer receive endpoint is on the admin listener because that is the
@@ -233,6 +308,14 @@ func run(log *slog.Logger) error {
 	// shared token rather than the admin one, so a peer never holds admin
 	// access to the instance it anchors for.
 	adminMux.HandleFunc("/v1/anchors/receive", svc.HandleAnchorReceive)
+
+	// Policy-governed response (roadmap 2.1-2.4).
+	adminMux.HandleFunc("/v1/policy", svc.HandlePolicy)
+	adminMux.HandleFunc("/v1/policy/decisions", svc.HandlePolicyDecisions)
+	adminMux.HandleFunc("/v1/policy/approvals", svc.HandleApprovals)
+	adminMux.HandleFunc("/v1/policy/break-glass", svc.HandleBreakGlass)
+	adminMux.HandleFunc("/v1/policy/host-classes", svc.HandleHostClasses)
+	adminMux.HandleFunc("/v1/playbooks", svc.HandlePlaybooks)
 
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
@@ -243,6 +326,31 @@ func run(log *slog.Logger) error {
 		Addr:              *httpAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Playbooks (roadmap 2.5-2.6). Every step is still policy-checked and
+	// signed individually, so loading a playbook grants nothing on its own.
+	if dir := strings.TrimSpace(os.Getenv("DEFENDSEC_PLAYBOOK_DIR")); dir != "" {
+		set, err := playbook.LoadDir(dir)
+		if err != nil {
+			// One bad file fails the load. A partial set means the operator
+			// believes a playbook exists when it does not, and finds out
+			// during the incident it was written for.
+			return fmt.Errorf("playbooks: %w", err)
+		}
+		svc.SetPlaybooks(set)
+		var automatic int
+		for _, pb := range set.All() {
+			if pb.Automatic {
+				automatic++
+			}
+		}
+		log.Info("playbooks loaded", "count", set.Len(), "automatic", automatic, "dir", dir)
+		if automatic > 0 {
+			log.Warn("automatic response is enabled for some playbooks",
+				"automatic", automatic,
+				"note", "these run without human confirmation when policy permits every step")
+		}
 	}
 
 	// Transparency anchoring (roadmap 1.6). Unset means no anchoring, which is

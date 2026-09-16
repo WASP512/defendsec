@@ -33,6 +33,9 @@ build linux arm64 ./cmd/defendsec-agentd "defendsec-agentd-linux-arm64"
 # on, not just the server's. It needs no server, database, network or
 # credential, so shipping it widely is what makes independent verification a
 # real option rather than a claim.
+build linux amd64 ./cmd/defendsec-web "defendsec-web-linux-amd64"
+build linux arm64 ./cmd/defendsec-web "defendsec-web-linux-arm64"
+
 build linux   amd64 ./cmd/defendsec-verify "defendsec-verify-linux-amd64"
 build linux   arm64 ./cmd/defendsec-verify "defendsec-verify-linux-arm64"
 build darwin  amd64 ./cmd/defendsec-verify "defendsec-verify-darwin-amd64"

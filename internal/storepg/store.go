@@ -756,3 +756,19 @@ func (s *Store) RecordAckProof(ctx context.Context, commandID, signature, result
 	`, commandID, signature, resultHash, executedUnix, verified)
 	return err
 }
+
+// OldestChainedEntry returns the timestamp of the earliest entry still in the
+// chain, so a retention claim can be checked against what is actually held
+// rather than against configuration (roadmap 5.5).
+func (s *Store) OldestChainedEntry(ctx context.Context) (time.Time, bool, error) {
+	var at time.Time
+	err := s.pool.QueryRow(ctx,
+		`SELECT at FROM audit_log WHERE seq IS NOT NULL ORDER BY seq LIMIT 1`).Scan(&at)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return at.UTC(), true, nil
+}

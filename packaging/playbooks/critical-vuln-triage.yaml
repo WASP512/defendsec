@@ -1,0 +1,27 @@
+# Gather context when a critical vulnerability is found.
+#
+# Every step here only reads. That is what makes it safe to run automatically:
+# the worst outcome of a false positive is a query nobody needed, and the
+# blast-radius limits in policy still cap how often it can happen.
+#
+# A playbook that changed state would not get this treatment.
+
+version: 1
+id: critical-vuln-triage
+name: Critical vulnerability triage
+description: >-
+  Collect the context a responder needs before deciding anything, so the
+  information is already there when a person looks at the finding.
+
+trigger:
+  alert_kinds: [vuln]
+  severities: [critical]
+
+automatic: true
+
+steps:
+  - id: collect-inventory
+    command: live_query
+    description: Current package state, to confirm the finding against the live host.
+    payload:
+      query: installed-packages

@@ -29,6 +29,7 @@ func TestEmbeddedMigrationsContainRequiredSchema(t *testing.T) {
 		"009_control_mapping.sql",
 		"010_audit_layer.sql",
 		"011_audit_anchors.sql",
+		"012_policy.sql",
 	}
 	if len(names) != len(want) {
 		t.Fatalf("embedded migrations = %v, want %v", names, want)

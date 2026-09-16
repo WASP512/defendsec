@@ -111,25 +111,80 @@ cat /var/lib/defendsec/update-status.json
 
 ---
 
-## Reverse proxy (HTTPS)
+## HTTPS
 
-Port `47261` is HTTP. If users reach the console through HTTPS:
+The console is served over HTTPS by default (roadmap 5.3). `defendsec-web` terminates TLS on port
+`47261` and forwards to the Next.js console, which binds to loopback only — Next.js does not serve
+HTTPS in production, and the documented answer is a reverse proxy, so DefendSec ships one rather
+than asking every operator to install and configure their own.
 
-1. Terminate TLS on the proxy.
-2. Forward to `http://127.0.0.1:47261`.
-3. Send `X-Forwarded-Host` and `X-Forwarded-Proto`.
-4. In `/etc/defendsec/console.env`:
+The admin token is a bearer credential. On plain HTTP it is readable by anything on the path, and a
+product that signs every host action while handing its own admin token around in clear text is not
+making a coherent argument.
 
-   ```bash
-   DEFENDSEC_COOKIE_SECURE=true
-   DEFENDSEC_PUBLIC_CONSOLE_URL=https://defendsec.example.com
-   ```
+| Mode | `DEFENDSEC_TLS` | When |
+| --- | --- | --- |
+| Self-signed | `on` (default) | A LAN with no DNS and no internet. The browser warns, honestly |
+| Let's Encrypt | `acme` | A public DNS name and inbound port 80 |
+| Your own certificate | `file` | An internal CA — the way to stop the warning without exposing the box |
+| Plain HTTP | `off` | An isolated lab, explicitly, and logged at every start |
 
-5. `sudo systemctl restart defendsec-console`
+Configure in `/etc/defendsec/web.env`, then `systemctl restart defendsec-web`. An unrecognised
+value refuses to start rather than falling back — silently serving plain HTTP because somebody
+typed `tls` instead of `on` would undo the point.
+
+### The self-signed certificate
+
+Generated on first start, kept in `/var/lib/defendsec/tls`, and reused across restarts — a new
+fingerprint every restart would train operators to click through the warning. It covers the names
+in `DEFENDSEC_TLS_HOSTS` plus loopback always, so you can reach the console from the box even when
+DNS is wrong, which is exactly when you need to. It is regenerated when it nears expiry or when you
+add a hostname.
+
+Verify it rather than clicking through blind. The server logs the fingerprint at startup:
+
+```bash
+journalctl -u defendsec-web --no-pager | grep "console certificate"
+```
+
+Compare that against what your browser shows. With a self-signed certificate this comparison is
+the only verification available.
+
+### Let's Encrypt
+
+```bash
+DEFENDSEC_TLS=acme
+DEFENDSEC_TLS_HOSTS=defendsec.example.com
+DEFENDSEC_WEB_HTTP_ADDR=:80
+DEFENDSEC_ACME_ACCEPT_TOS=1
+DEFENDSEC_ACME_EMAIL=security@example.com
+```
+
+Only the names you list are requested — without that allowlist, anyone pointing a DNS record at
+the box could have a certificate minted and exhaust your rate limit. An IP address or a `.local`
+name cannot be issued a public certificate, and DefendSec says so at startup rather than failing
+opaquely at renewal.
+
+### Turning it off
+
+```bash
+# /etc/defendsec/web.env
+DEFENDSEC_TLS=off
+# /etc/defendsec/console.env — a Secure cookie is not sent over plain HTTP,
+# so leaving this true would make login fail with no useful error.
+DEFENDSEC_COOKIE_SECURE=false
+```
+
+### Your own reverse proxy
+
+If you already run one, point it at the console directly on `127.0.0.1:47265`, set
+`DEFENDSEC_TLS=off` for the front-end (or do not run `defendsec-web` at all), and forward
+`X-Forwarded-Host` and `X-Forwarded-Proto` — the console builds absolute URLs and decides cookie
+flags from them.
 
 `DEFENDSEC_PUBLIC_CONSOLE_URL` is what the **Enroll** page prints for download URLs.
 
-Keep `47262`/`47263` reachable by agents (or proxy them separately). Do not expose Postgres or port `47264`.
+Keep `47262`/`47263` reachable by agents. Do not expose Postgres, port `47264`, or `47265`.
 
 ---
 
@@ -206,12 +261,201 @@ The packaged server ships a local advisory catalog. To refresh from OSV on a tim
 
 ## Data retention
 
-When Postgres is enabled, apid prunes on startup:
+| Data | Environment variable | Default | Pruned? |
+| --- | --- | --- | --- |
+| Audit ledger | — | forever | **Never.** Removing entries would break the hash chain, which is the point of it |
+| Command history (Postgres) | — | forever | Never |
+| Command history (JSON file) | `DEFENDSEC_COMMAND_RETENTION_DAYS` | 365 days | By age |
+| Resolved alerts | `DEFENDSEC_ALERT_RETENTION_DAYS` | 365 days | By age, **resolved only** — an open finding is never deleted |
+| Live query results | `DEFENDSEC_LIVE_QUERY_RETENTION_DAYS` | 30 days | By age |
 
-| Data | Environment variable | Default |
-| --- | --- | --- |
-| Resolved alerts | `DEFENDSEC_ALERT_RETENTION_DAYS` | 90 days |
-| Live query results | `DEFENDSEC_LIVE_QUERY_RETENTION_DAYS` | 30 days |
+Defaults are one year, the CJIS Policy Area 4 minimum. DefendSec's compliance view claims to
+evidence audit retention, so a default below the minimum of a framework it names would make that
+claim false out of the box. A negative value keeps everything; zero restores the default rather
+than meaning "keep nothing".
+
+**The JSON command log used to be a 500-record ring buffer**, discarding the oldest privileged
+action regardless of age. On a busy fleet that could push a month of signed actions out of the
+file in an afternoon. It is now retained by age; the remaining size cap is a safety valve, and
+crossing it is logged at error level rather than happening silently. Configure Postgres — it holds
+the authoritative history with no cap at all.
+
+### Check what is actually retained
+
+```bash
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  http://127.0.0.1:47264/v1/retention
+```
+
+It reports the configured windows **and how much history is really held**. That second number is
+the one an assessor wants: retention configuration does not create history that was never
+recorded, so a one-year policy on a system installed last month evidences one month.
+
+---
+
+## Response policy
+
+Before Phase 2, an admin token could issue any command to any host. Now a **deny-by-default policy
+engine sits between the API and the signer**: a command no rule permits is never signed, so it
+cannot run even if the console is bypassed entirely — the agent checks a signature that was never
+produced. A UI that hides a button enforces nothing; an unsigned command is inert.
+
+```bash
+DEFENDSEC_POLICY_FILE=/etc/defendsec/policy.yaml
+```
+
+**Without this set, every host command is refused.** That is the correct posture for an
+unconfigured response tool, and apid says so loudly at startup. Start from the shipped example:
+
+```bash
+sudo cp /opt/defendsec/packaging/policy/default.yaml /etc/defendsec/policy.yaml
+```
+
+Keep it in version control. "Who changed this rule, and when" is the first question asked after a
+command that should not have been permitted, and a policy editable only through a web form has no
+answer. A file that fails to parse **refuses to start** rather than half-loading — the rules that
+failed to parse are exactly the ones nobody notices are missing — and a misspelled key is an error,
+because silently dropping `host_clases` turns a narrow rule into a fleet-wide one.
+
+### How rules are evaluated
+
+1. Any matching **deny** wins, regardless of where it sits in the file. Order-dependent policy is
+   policy nobody can reason about.
+2. Otherwise the **strictest matching permit** applies, so adding a permissive rule never silently
+   removes an approval requirement.
+3. If nothing matches, the command is **denied**.
+
+```yaml
+rules:
+  - id: isolate-production-needs-two
+    effect: permit
+    commands: [isolate]
+    roles: [admin]
+    host_classes: [production]
+    require_approvals: 2
+
+  - id: never-disrupt-domain-controllers
+    effect: deny
+    commands: [kill_process, quarantine_path, run_script]
+    host_classes: [domain-controller]
+    reason: >-
+      A domain controller losing a process takes estate-wide authentication
+      down. Isolate it instead.
+
+limits:
+  - id: isolate-fleet-hourly
+    commands: [isolate]
+    scope: fleet      # fleet is the default; a per-host cap would let a
+    max: 5            # runaway isolate the estate one host at a time
+    per: 1h
+```
+
+A `reason` is **required** on every deny rule and is returned to whoever the rule stops. A refusal
+that says only "forbidden" produces a support ticket and then a request for a bypass; one that
+names the rule produces a conversation about the rule.
+
+### Host classes
+
+Rules match on classes carried by the host, so they stay correct as the estate changes:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"deviceId":"<id>","classes":["production","critical"]}' \
+  http://127.0.0.1:47264/v1/policy/host-classes
+```
+
+Reclassifying a host changes what policy permits against it, so it is an authorisation change and
+is recorded in the ledger.
+
+### Two-person integrity
+
+A command whose rule sets `require_approvals: 2` comes back `202 Accepted` and is stored
+**unsigned** — deliberately not a signed command with a pending flag, so flipping a status column
+in the database yields nothing an agent will execute. Approvals are keyed on (request, actor), so
+the same administrator clicking twice is one approval.
+
+```bash
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  http://127.0.0.1:47264/v1/policy/approvals
+
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' -d '{"pendingId":"<id>"}' \
+  http://127.0.0.1:47264/v1/policy/approvals
+```
+
+On the final approval the command is **re-evaluated against policy** before signing. Minutes have
+passed: a limit may now be exhausted, a window may have closed, the host may have been
+reclassified. Requests expire after 30 minutes, because one that never expires is a way to get a
+command signed weeks later under conditions nobody re-examined.
+
+### Break-glass
+
+A time-boxed bypass for an emergency policy did not anticipate:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"justification":"active ransomware on the finance segment","minutes":30}' \
+  http://127.0.0.1:47264/v1/policy/break-glass
+```
+
+A written justification of at least 20 characters is required and is shown to every administrator
+as an undismissable banner until it expires. Maximum four hours — an emergency lasting longer is a
+situation, and a situation should have a rule.
+
+**Two things it does not override**, by design:
+
+- **An explicit deny.** A bypass is for reaching what policy never anticipated, not for doing the
+  one thing it went out of its way to forbid.
+- **A two-person requirement.** The whole point of that control is that one person cannot act
+  alone; a bypass one person can open would remove it.
+
+### Playbooks
+
+Named, reviewable sequences in `DEFENDSEC_PLAYBOOK_DIR`:
+
+```bash
+DEFENDSEC_PLAYBOOK_DIR=/etc/defendsec/playbooks
+```
+
+A playbook is **not an authority**. Every step is signed and policy-checked individually, at the
+moment it runs, against the host it targets — a sequence that executed three commands on one
+policy decision would be a way to smuggle past the engine. A step that is refused or needs a
+second approver **halts the run** rather than being skipped: skipping quietly turns a four-step
+response into a three-step one, and the missing step is usually the dangerous one.
+
+Steps can reference the triggering finding (`{{alert.path}}`, `{{alert.deviceId}}`, and so on).
+A placeholder must be the **whole value**, never embedded in a longer string — these paths come
+from files on a possibly-compromised host, and interpolating one into a payload would let a
+crafted filename rewrite the rest of the command.
+
+### Automatic response
+
+Setting `automatic: true` on a playbook lets it run without anyone pressing a button. Three gates
+must all agree: the playbook opts in, its trigger matches, and **policy permits every step**. The
+human confirmation is replaced by policy, not removed. A second brake suppresses repeat automatic
+runs of the same playbook on the same host for an hour, which stops the loop where a playbook
+triggers on a finding it caused.
+
+The shipped example that runs automatically only performs a `live_query`. Nothing that changes
+state ships as automatic, and you should hold anything you add to the same bar until you trust the
+trigger on your own estate.
+
+### Reviewing decisions
+
+Every evaluation, permit and deny alike, goes to the tamper-evident ledger with the SHA-256 of the
+policy document that made it — so "what did the policy say at the time" is answerable from the
+ledger rather than from what is on disk today. The **Response** page shows the rules, the pending
+approvals and the recent decisions.
+
+```bash
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  'http://127.0.0.1:47264/v1/policy/decisions?effect=deny'
+```
+
+Denials are the half that matters after an incident. "Did anyone try" is a question only a
+deny-by-default engine can answer.
 
 ---
 

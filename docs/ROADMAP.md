@@ -679,18 +679,60 @@ blast radius)`. Declarative and version-controlled — reuse the existing YAML c
 `packs/sca/`. Evaluation is logged to the Phase 1 ledger whether it permits or denies, so denials
 are themselves evidence.
 
+*Delivered.* The engine sits immediately before `signer.Sign`, so a refused command never becomes
+a signed envelope and is inert even if everything above that line is bypassed — the agent checks
+a signature that was never produced. Nothing is permitted unless a rule permits it, and an
+explicit deny wins regardless of file order, because order-dependent policy is policy nobody can
+reason about. Where two rules both permit, the stricter wins: adding a permissive rule must never
+silently remove an approval requirement. A deployment with no policy file denies everything and
+says so loudly at startup, and a policy file that fails to parse refuses to start rather than
+half-loading — the rules that failed to parse are exactly the ones nobody notices are missing.
+A misspelled key is an error, since silently dropping `host_clases` turns a narrow rule into a
+fleet-wide one. Every decision carries the SHA-256 of the document that made it, so "what did the
+policy say at the time" is answerable from the ledger rather than from what is on disk today, and
+refusals return the rule id and reason to the caller — a refusal that says only "forbidden"
+produces a ticket and then a request for a bypass.
+
 **2.2 — Host classes and blast-radius limits.** Tag hosts (`production`, `critical`,
 `domain-controller`). Express limits like *"at most 3 isolates fleet-wide per hour"* and *"never
 `kill_process` on a host tagged `critical` without a second approver."* Rate limits and blast
 radius are what separate a response tool from an outage generator.
 
+*Delivered.* Classes live on the device rather than in the policy file, so a rule reads "hosts
+classed production" and stays correct as the estate changes; reclassifying a host is an
+authorisation change and is recorded in the ledger. Limits default to fleet scope, because a
+per-host default would happily isolate the whole estate one host at a time. A limit that cannot be
+evaluated — an unreadable usage count — denies rather than passing, since reporting "under the
+limit" would disable the control exactly when the database is struggling. Limits count commands
+actually issued, not evaluations, so a caller cannot exhaust one with requests that were all
+denied anyway.
+
 **2.3 — Two-person integrity.** Destructive commands require a second administrator's signature.
 Both signatures are stored in the ledger and both are checked by `defendsec verify`. This is a
 standing request in regulated environments and nothing free offers it.
 
+*Delivered.* A command awaiting approval is stored **unsigned** — deliberately not a signed
+command with a pending flag, so an attacker who flips a status column still has nothing an agent
+will execute. Approvals are rows keyed on (request, actor), so one administrator clicking twice is
+one approval. On the final approval the command is re-evaluated against policy before signing
+rather than trusting the earlier decision: minutes have passed, a limit may now be exhausted, a
+window may have closed, the host may have been reclassified. The request is claimed before signing
+and the status moves only from pending, so two approvers racing cannot both issue. Requests expire
+after thirty minutes — one that never expires is a way to get a command signed weeks later under
+conditions nobody re-examined.
+
 **2.4 — Break-glass.** A time-boxed bypass requiring written justification, which fires a
 high-severity alert, notifies every admin, and is recorded with maximum prominence. Emergencies
 are real; unlogged emergencies are how audits fail.
+
+*Delivered.* A bypass requires a written justification of at least twenty characters and is capped
+at four hours — an emergency lasting longer is a situation, and a situation should have a rule.
+Two things it deliberately does **not** override: an explicit deny, because a bypass is for
+reaching what policy never anticipated rather than doing the one thing it went out of its way to
+forbid; and a two-person requirement, because the whole point of that control is that one person
+cannot act alone, and a bypass one person can open would remove it. It is surfaced as a
+console-wide banner rather than an alert row: alerts are per-host by construction, so a fleet-wide
+bypass would have to be attached to an arbitrary host and would read as a finding about that host.
 
 **2.5 — Response playbooks.** Named, versioned, signed sequences of bounded commands — e.g. *on
 confirmed FIM drift under `/etc/ssh`: collect journal tail → quarantine the file → isolate*. Every
@@ -698,9 +740,30 @@ step is still individually signed and individually policy-checked. This turns th
 `run_script` / `quarantine_path` primitives (which the paper notes have no UI at all today) into
 an operator-visible capability.
 
+*Delivered.* A playbook is not an authority: each step is signed and policy-checked individually
+at the moment it runs, against the host it targets, because a sequence executing three commands on
+one decision would be a way to smuggle past the engine. A step that is refused or needs a second
+approver halts the run rather than being skipped — skipping quietly turns a four-step response
+into a three-step one, and the missing step is usually the dangerous one. Binding the triggering
+finding into a payload is done on decoded values, never on serialised text: these paths come from
+files on a possibly-compromised host, so a crafted filename interpolated into JSON would rewrite
+the rest of the command, and that command would then be correctly signed. A placeholder must be
+the whole value; embedded ones are refused rather than interpolated.
+
 **2.6 — Opt-in automatic response.** Only now is this safe: playbooks may fire without human
 confirmation *when policy allows it*, bounded by blast radius, fully attributed in the ledger.
 Preserves the paper's "default is human-approved" principle while removing the ceiling on it.
+
+*Delivered.* Three independent gates must agree: the playbook opts in, its trigger matches, and
+policy permits every step. Any one refusing stops it, which is what makes the feature safe to
+offer — the human confirmation is replaced by policy rather than removed. A second brake,
+independent of policy's limits, suppresses repeat automatic runs of the same playbook on the same
+host for an hour: it stops the loop where a playbook triggers on a finding it caused (FIM detects
+a change, the playbook quarantines the file, quarantining changes the filesystem, FIM detects
+that). Policy limits would eventually stop that too, but only after spending the fleet-wide budget
+a real incident needs. Suppression is recorded rather than silent. The one shipped automatic
+playbook only reads, and a test enforces that nothing shipped with `automatic: true` changes
+state.
 
 **Acceptance:** a policy denial is impossible to bypass through the API; a two-person command
 cannot be signed with one approval; blast-radius limits demonstrably stop a runaway playbook;
@@ -817,6 +880,26 @@ a security product, and the paper has to caveat it in four separate places. Gene
 certificate at install, support ACME/Let's Encrypt, and make plain HTTP an explicit opt-out for
 isolated labs. Then delete the caveats.
 
+*Delivered.* Next.js does not serve HTTPS in production and the documented answer is a reverse
+proxy, so DefendSec ships one — `defendsec-web` — rather than asking every operator to install and
+configure their own, which most single-container deployments will not do. It takes port 47261, the
+port operators and the agent installer already use, and the console moves behind it on a
+loopback-only port: the plain-HTTP surface is not reachable off the box at all. Three certificate
+modes: self-signed generated on first start (works on a LAN with no DNS and no internet; the
+browser warns, which is honest, and it is still strictly better than plain HTTP where the admin
+token is readable by anything on the path), ACME with an allowlist of names the operator actually
+configured, and a file from an internal CA. Plain HTTP remains available as `DEFENDSEC_TLS=off`,
+logged loudly at every start; an *unrecognised* value refuses to start rather than falling back,
+since silently serving plain HTTP because somebody typed `tls` instead of `on` would undo the
+point. The generated certificate is reused across restarts — a new fingerprint every restart
+trains operators to click through the warning — always covers loopback so the console is reachable
+when DNS is wrong, and is regenerated on approaching expiry or when a hostname is added. The
+startup log prints its SHA-256 so the browser's warning can be verified rather than dismissed.
+Cookies now default to Secure. Writing the proxy caught a real bug: `SetXForwarded` derives the
+proto from the inbound connection and overwrites whatever was set before it, so setting the
+headers first silently lost them — and the console would have dropped the Secure cookie flag
+exactly when TLS was on. The caveats in README.md and INSTALL.md are gone.
+
 **5.4 — Enterprise identity (SSO/OIDC).** Completes Phase 1.0. Group-to-role mapping, session
 management, and per-user attribution throughout the ledger.
 
@@ -828,6 +911,17 @@ minimum of one year (§3.11). Replace the ring buffer with age-based retention a
 defaults. Move to Postgres-primary with JSON as an export
 format, add pagination and server-side filtering across the console, and load-test to 10k hosts.
 Until this is done, fleet size is bounded by a Go slice.
+
+*Partly delivered — the retention half.* The ring buffer is gone: privileged-action history is now
+kept by age, defaulting to one year, and the remaining count cap is a size safety valve that logs
+at error level when crossed rather than discarding silently. Alert retention was raised from 90
+days to the same one-year minimum. This was not cosmetic — Phase 1.9's compliance view claims to
+evidence CJIS Policy Area 4, and a 500-record cap could push a month of signed actions out of the
+file in an afternoon while the console reported the control as satisfied. `GET /v1/retention`
+reports the windows in force *and how much history is actually held*, because retention
+configuration does not create history that was never recorded: a one-year policy on a system
+installed last month evidences one month, and an assessor will ask. The Postgres-primary move,
+pagination and the 10k-host load test remain.
 
 **5.6 — Integrations.** Prometheus metrics, OTel traces, syslog/CEF export, webhook and Slack/Teams
 alerting, and Terraform/Ansible modules for provisioning. Be the best-behaved citizen in someone
