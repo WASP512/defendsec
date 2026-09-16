@@ -10,6 +10,7 @@ import (
 	"defendsec/internal/alertmeta"
 	"defendsec/internal/controls"
 	"defendsec/internal/events"
+	"defendsec/internal/forward"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/presence"
 	"defendsec/internal/sigma"
@@ -87,10 +88,15 @@ func (s *Server) HandleEventBatch(deviceID, hostname string, batch *defendsecEve
 	s.recordGap(deviceID, batch)
 
 	tree := s.treeFor(deviceID)
+	recent := s.recentFor(deviceID)
 	for _, ev := range batch.Events {
 		if ev == nil {
 			continue
 		}
+		// Kept for pre-alert context and forwarded onward. DefendSec holds a
+		// short window; the operator's own platform holds the history.
+		recent.Add(ev)
+		s.forwardEvent(ev)
 		// Lineage is recorded for every event, not only matching ones: the
 		// parent of a process that alerts later is usually itself unremarkable.
 		if ev.Kind == events.KindProcess && ev.PID > 0 {
@@ -98,7 +104,7 @@ func (s *Server) HandleEventBatch(deviceID, hostname string, batch *defendsecEve
 				ev.String(events.FieldImage), ev.String(events.FieldCommandLine),
 				ev.String(events.FieldUser), ev.At)
 		}
-		s.evaluateEvent(ev, tree)
+		s.evaluateEvent(ev, tree, recent)
 	}
 }
 
@@ -146,17 +152,82 @@ func (s *Server) EventGaps() map[string]eventGap {
 }
 
 // evaluateEvent matches one event and raises alerts for what fires.
-func (s *Server) evaluateEvent(ev *events.Event, tree *events.Tree) {
+func (s *Server) evaluateEvent(ev *events.Event, tree *events.Tree, recent *events.Recent) {
 	if s.detection == nil {
 		return
 	}
 	for _, match := range s.detection.Match(ev) {
-		s.raiseDetectionAlert(match, tree)
+		s.raiseDetectionAlert(match, tree, recent)
 	}
 }
 
+// recentFor returns the per-device context ring.
+func (s *Server) recentFor(deviceID string) *events.Recent {
+	s.treeMu.Lock()
+	defer s.treeMu.Unlock()
+	if s.recent == nil {
+		s.recent = map[string]*events.Recent{}
+	}
+	r, ok := s.recent[deviceID]
+	if !ok {
+		r = events.NewRecent(0)
+		s.recent[deviceID] = r
+	}
+	return r
+}
+
+// SetForwarder installs the log forwarder (roadmap 3.6).
+func (s *Server) SetForwarder(f *forward.Forwarder) { s.forwarder = f }
+
+// Forwarder returns the configured forwarder, which may be nil.
+func (s *Server) Forwarder() *forward.Forwarder { return s.forwarder }
+
+// forwardEvent ships one event to the operator's platform.
+//
+// Never on the critical path: the forwarder queues and drops rather than
+// blocking, so a stalled collector cannot slow rule matching.
+func (s *Server) forwardEvent(ev *events.Event) {
+	if s.forwarder == nil || !s.forwarder.Enabled() {
+		return
+	}
+	body := make(map[string]any, len(ev.Fields)+4)
+	for name, value := range ev.Fields {
+		body[name] = value
+	}
+	body["eventId"] = ev.ID
+	body["eventKind"] = string(ev.Kind)
+	body["pid"] = ev.PID
+	body["ppid"] = ev.PPID
+
+	s.forwarder.Send(forward.Record{
+		Kind: "event", At: ev.At, DeviceID: ev.DeviceID, Hostname: ev.Hostname,
+		Summary: ev.Describe(), Body: body,
+	})
+}
+
+// forwardAlert ships an alert, which is the record that matters most: an
+// operator whose collector is their system of record needs the finding there,
+// not only in DefendSec.
+func (s *Server) forwardAlert(alert presence.Alert) {
+	if s.forwarder == nil || !s.forwarder.Enabled() {
+		return
+	}
+	body := map[string]any{
+		"alertId": alert.ID, "title": alert.Title, "kind": alert.Kind,
+		"sourceType": alert.SourceType, "sourceId": alert.SourceID,
+	}
+	for name, value := range alert.Detail {
+		body[name] = value
+	}
+	s.forwarder.Send(forward.Record{
+		Kind: "alert", At: time.Now().UTC(), Severity: alert.Severity,
+		DeviceID: alert.DeviceID, Hostname: alert.Hostname,
+		Summary: alert.Title + ": " + alert.Summary, Body: body,
+	})
+}
+
 // raiseDetectionAlert turns a rule match into an alert with its context.
-func (s *Server) raiseDetectionAlert(match sigma.Match, tree *events.Tree) {
+func (s *Server) raiseDetectionAlert(match sigma.Match, tree *events.Tree, recent *events.Recent) {
 	ev := match.Event
 	id, err := newDeviceID()
 	if err != nil {
@@ -190,6 +261,23 @@ func (s *Server) raiseDetectionAlert(match sigma.Match, tree *events.Tree) {
 	if len(ancestry) > 0 {
 		detail["process.ancestry"] = ancestry
 		detail["process.ancestryText"] = renderAncestry(ancestry)
+	}
+
+	// What else the host was doing just before. The first question an analyst
+	// asks, and the one a state-based tool cannot answer at all.
+	if recent != nil {
+		if before := recent.Before(ev.At, 15); len(before) > 0 {
+			context := make([]map[string]any, 0, len(before))
+			for _, prior := range before {
+				context = append(context, map[string]any{
+					"at":      prior.At.Format(time.RFC3339Nano),
+					"kind":    string(prior.Kind),
+					"pid":     prior.PID,
+					"summary": prior.Describe(),
+				})
+			}
+			detail["event.context"] = context
+		}
 	}
 
 	alert := presence.Alert{
@@ -388,4 +476,21 @@ func (s *Server) HandleDetectionCoverage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.DetectionCoverageReport())
+}
+
+// HandleForwarding reports where events and alerts are being sent
+// (roadmap 3.6).
+//
+// Admin-only: destination addresses are part of the operator's infrastructure
+// map, and a read-only console role does not need them.
+func (s *Server) HandleForwarding(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.requireAdminActor(w, r) {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.forwarder.Status())
 }

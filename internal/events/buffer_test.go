@@ -247,3 +247,49 @@ func TestFromProtoHandlesNil(t *testing.T) {
 		t.Errorf("FromProto(nil) = %+v", got)
 	}
 }
+
+// Pre-alert context: the first question an analyst asks is what else this host
+// was doing just before.
+func TestRecentReturnsContextBeforeAMoment(t *testing.T) {
+	r := NewRecent(10)
+	base := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 6; i++ {
+		e := ev("e" + string(rune('0'+i)))
+		e.At = base.Add(time.Duration(i) * time.Second)
+		r.Add(e)
+	}
+
+	// Everything before the fourth event, most recent three.
+	got := r.Before(base.Add(3*time.Second), 3)
+	if len(got) != 3 {
+		t.Fatalf("got %d events, want 3", len(got))
+	}
+	// Chronological, which is how a sequence reads.
+	if got[0].ID != "e1" || got[2].ID != "e3" {
+		t.Errorf("order = %v, want e1..e3", ids(got))
+	}
+
+	// Events after the moment are excluded: context means what came before.
+	for _, e := range r.Before(base, 10) {
+		if e.At.After(base) {
+			t.Errorf("event at %v is after the alert", e.At)
+		}
+	}
+}
+
+func TestRecentIsBounded(t *testing.T) {
+	r := NewRecent(3)
+	for i := 0; i < 10; i++ {
+		r.Add(ev("e"))
+	}
+	if r.Len() != 3 {
+		t.Errorf("held %d events, want the bound of 3", r.Len())
+	}
+	r.Add(nil)
+	if r.Len() != 3 {
+		t.Error("a nil event was stored")
+	}
+	if NewRecent(0).size != DefaultRecentSize {
+		t.Error("a non-positive size did not use the default")
+	}
+}

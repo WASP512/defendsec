@@ -143,6 +143,12 @@ func (s *Server) recordAlert(alert presence.Alert) {
 		}
 	}
 
+	// Every alert goes to the operator's log platform, not only behavioural
+	// ones: for many operators the collector is the system of record, and a
+	// finding that exists only in DefendSec is a finding their process will
+	// not see (roadmap 3.6).
+	s.forwardAlert(alert)
+
 	// Automatic response (roadmap 2.6). Runs after the finding is stored, so
 	// the record of what happened exists before anything acts on it, and in
 	// the background so a slow response path cannot stall ingest.
