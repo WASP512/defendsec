@@ -170,6 +170,27 @@ func TestEventGapsAreRecordedAndSurfaced(t *testing.T) {
 	}
 }
 
+// A coverage page listing opaque device ids tells an operator that something
+// lost events but not which machine to go and look at, so the hostname has to
+// travel with the gap.
+func TestGapsNameTheHostNotJustTheDeviceID(t *testing.T) {
+	s := detectionServer(t, reverseShellRule)
+
+	s.HandleEventBatch("dev-1", "web-01.corp", &defendsecEventBatch{
+		Sensor: "proc-poll", DroppedSinceLast: 8, DroppedTotal: 8,
+	})
+	if got := s.EventGaps()["dev-1"].Hostname; got != "web-01.corp" {
+		t.Errorf("hostname = %q", got)
+	}
+
+	// A later batch from an agent that has not yet reported a hostname must
+	// not blank out the one already known.
+	s.HandleEventBatch("dev-1", "", &defendsecEventBatch{DroppedTotal: 8})
+	if got := s.EventGaps()["dev-1"].Hostname; got != "web-01.corp" {
+		t.Errorf("an empty hostname overwrote the known one: %q", got)
+	}
+}
+
 // The rare and valuable half of a coverage map is what it says you cannot see.
 func TestCoverageReportsBlindSpots(t *testing.T) {
 	s := detectionServer(t, reverseShellRule)
