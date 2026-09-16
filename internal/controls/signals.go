@@ -77,6 +77,10 @@ const (
 	SignalAlertLifecycle Signal = "alert.lifecycle"
 	// SignalIsolation — a host can be isolated in response to an incident.
 	SignalIsolation Signal = "response.isolation"
+	// SignalDetection — behavioural detection: process execution, network
+	// and file activity matched against rules, rather than state compared
+	// between snapshots (roadmap 3.3).
+	SignalDetection Signal = "detection.behaviour"
 
 	// SignalFIPSCrypto — the cryptographic posture is reported and can be
 	// constrained to approved algorithms (roadmap 1.8).
@@ -116,6 +120,7 @@ var signalTitles = map[Signal]string{
 	SignalCertRevocation:    "Host certificate revocation",
 	SignalAlertLifecycle:    "Finding triage and resolution",
 	SignalIsolation:         "Host isolation",
+	SignalDetection:         "Behavioural detection",
 	SignalFIPSCrypto:        "Approved cryptographic algorithms",
 	SignalEvidenceExport:    "Signed evidence export",
 	SignalBackup:            "Evidence store backup",

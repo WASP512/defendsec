@@ -239,8 +239,8 @@ var native = []Control{
 		ID: MustParseID("nist-800-53:SI-4"), Family: "SI",
 		Title:    "System monitoring",
 		Coverage: CoveragePartial,
-		Signals:  []Signal{SignalFIM, SignalSCA, SignalAlertLifecycle, SignalIsolation},
-		Note:     "Host-level integrity and configuration monitoring with a response path. Network monitoring and intrusion detection are not part of DefendSec.",
+		Signals:  []Signal{SignalFIM, SignalSCA, SignalAlertLifecycle, SignalIsolation, SignalDetection},
+		Note:     "Host-level integrity and configuration monitoring, plus behavioural detection over process execution matched against Sigma rules, with a response path. What is detected depends on which sensor is running and which rules are loaded — see the detection coverage view, which states the blind spots. Network traffic inspection is not part of DefendSec.",
 	},
 	{
 		ID: MustParseID("nist-800-53:SI-16"), Family: "SI",
@@ -262,7 +262,7 @@ var native = []Control{
 		ID: MustParseID("nist-800-53:IR-4"), Family: "IR",
 		Title:    "Incident handling",
 		Coverage: CoveragePartial,
-		Signals:  []Signal{SignalAlertLifecycle, SignalIsolation, SignalEvidenceExport},
+		Signals:  []Signal{SignalAlertLifecycle, SignalIsolation, SignalEvidenceExport, SignalDetection},
 		Note:     "Detection, containment and an exportable evidence record. The incident response plan, roles and exercises are organisational and are not held here.",
 	},
 	{

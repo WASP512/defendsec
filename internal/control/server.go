@@ -26,12 +26,14 @@ import (
 
 	"defendsec/internal/anchor"
 	"defendsec/internal/cmdlog"
+	"defendsec/internal/events"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
 	"defendsec/internal/playbook"
 	"defendsec/internal/policy"
 	"defendsec/internal/presence"
 	"defendsec/internal/sca"
+	"defendsec/internal/sigma"
 	"defendsec/internal/sign"
 	"defendsec/internal/storepg"
 )
@@ -63,6 +65,16 @@ type Server struct {
 	// Playbooks are named sequences (roadmap 2.5). Every step still goes
 	// through the policy engine individually.
 	playbooks *playbook.Set
+
+	// Behavioural detection (roadmap 3.2-3.5). trees holds per-device process
+	// lineage so an alert can carry the ancestry that led to it; gaps records
+	// what each agent has dropped, so the console can say where detection is
+	// incomplete rather than showing a clean result.
+	detection     *sigma.Engine
+	treeMu        sync.Mutex
+	trees         map[string]*events.Tree
+	gaps          map[string]*eventGap
+	observedKinds map[events.Kind]bool
 }
 
 // SetAnchoring configures checkpoint anchoring. Called at startup rather than
@@ -420,6 +432,8 @@ func (s *Server) Connect(stream defendsecv1.AgentControl_ConnectServer) error {
 					errCh <- err
 					return
 				}
+			case *defendsecv1.AgentToServer_Events:
+				s.receiveEvents(id, body.Events)
 			case *defendsecv1.AgentToServer_Ack:
 				s.log.Info("ack", "device", id, "command", body.Ack.GetCommandId(), "ok", body.Ack.GetAccepted(), "msg", body.Ack.GetMessage())
 				s.noteAck(id, body.Ack.GetAccepted(), body.Ack.GetCommandId(), body.Ack.GetMessage(), body.Ack)

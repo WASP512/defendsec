@@ -31,6 +31,7 @@ import (
 	"defendsec/internal/policy"
 	"defendsec/internal/presence"
 	"defendsec/internal/secret"
+	"defendsec/internal/sigma"
 	"defendsec/internal/sign"
 	"defendsec/internal/storepg"
 )
@@ -249,6 +250,7 @@ func run(log *slog.Logger) error {
 	// Compliance (roadmap 1.7).
 	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
 	adminMux.HandleFunc("/v1/controls/check-coverage", svc.HandleCheckCoverage)
+	adminMux.HandleFunc("/v1/detection/coverage", svc.HandleDetectionCoverage)
 
 	// The audit layer (roadmap 1.9).
 	adminMux.HandleFunc("/v1/audit/periods", svc.HandleAuditPeriods)
@@ -275,6 +277,31 @@ func run(log *slog.Logger) error {
 	} else {
 		log.Warn("no policy file configured; every host command will be denied",
 			"fix", "set DEFENDSEC_POLICY_FILE to a policy document, for example packaging/policy/default.yaml")
+	}
+
+	// Behavioural detection rules (roadmap 3.3). Unlike policy and packs, a
+	// rule directory is routinely a synced copy of a community repository, so
+	// rules that will not compile are counted and surfaced rather than
+	// failing the start.
+	sigmaDir := strings.TrimSpace(os.Getenv("DEFENDSEC_SIGMA_DIR"))
+	if sigmaDir == "" {
+		sigmaDir = firstExistingDir("packs/sigma", "/opt/defendsec/packs/sigma")
+	}
+	if sigmaDir != "" {
+		set, err := sigma.LoadDir(sigmaDir)
+		if err != nil {
+			return fmt.Errorf("sigma rules: %w", err)
+		}
+		svc.SetDetection(sigma.NewEngine(set))
+		log.Info("detection rules loaded", "rules", set.Len(), "skipped", len(set.Skipped()), "dir", sigmaDir)
+		for _, skipped := range set.Skipped() {
+			// Named individually: an operator needs to know which detection
+			// is not running, not just how many.
+			log.Warn("detection rule not loaded", "rule", skipped.Source, "reason", skipped.Reason)
+		}
+	} else {
+		log.Warn("no detection rules found; behavioural detection is not running",
+			"fix", "set DEFENDSEC_SIGMA_DIR to a directory of Sigma rules")
 	}
 
 	// Playbooks (roadmap 2.5-2.6). Every step is still policy-checked and
@@ -504,4 +531,15 @@ func runCheckpointLoop(
 		}
 		cancel()
 	}
+}
+
+// firstExistingDir returns the first path that is a directory, so a packaged
+// install and a source checkout both find their rules without configuration.
+func firstExistingDir(paths ...string) string {
+	for _, p := range paths {
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			return p
+		}
+	}
+	return ""
 }

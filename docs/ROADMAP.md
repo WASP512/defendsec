@@ -789,10 +789,35 @@ open/write on watched paths, privilege transitions (setuid/setgid/capability cha
 loads. Ring buffer with explicit backpressure and sampling — a sensor that destabilizes the host
 under load will be uninstalled.
 
+*Partly delivered — the interface and a portable sensor; the eBPF program itself is not written.*
+The sensor is an interface with an honest capability declaration, and the shipped implementation
+is a `/proc` poller producing process events. That is deliberate sequencing rather than a
+substitute: eBPF is cgo, a kernel-version matrix and a build that cannot run without kernel
+headers, and shipping only that would mean no behavioural detection at all wherever the build did
+not work, and no way to test the pipeline above it. The poller runs anywhere, needs no privilege
+beyond reading `/proc`, and lets the buffer, batching, rules and process tree be exercised for
+real. What it cannot do is stated in code, logged at agent start and surfaced in the coverage
+view: it samples, so a process that starts and exits between samples is never seen — and
+`curl … | sh` is short-lived. It observes execution only; network, file, privilege and module
+events have no sensor yet and the coverage matrix lists them as unobserved rather than implying
+the rules covering them can fire.
+
 **3.2 — Event stream in the protocol.** Add a batched, backpressured event stream to
 `AgentToServer`, separate from the 60-second inventory report. Different volume profile
 (thousands/sec vs one/minute) and it must degrade by dropping events with an explicit counted gap,
 never by blocking inventory or the command channel.
+
+*Delivered.* `EventBatch` on the existing stream, with the buffer dropping rather than blocking:
+if it applied backpressure a slow server would become a slow host, and a sensor that destabilises
+the host gets uninstalled — at which point coverage is zero rather than degraded. The oldest event
+goes first, because an intrusion is a sequence and the recent events are the ones closest to what
+is happening now. Gaps are counted per batch and for the lifetime of the agent, logged, written to
+the ledger and shown in the coverage view. A pipeline that drops silently produces a clean console
+during exactly the incident that overwhelmed it. One detail worth recording: gRPC allows a single
+concurrent sender per stream and the command loop already sends acknowledgements, so the shipper
+serialises through a mutex — concurrent `Send` corrupts the stream rather than returning an error.
+The device id is taken from the mTLS identity, never from the message, or an agent could attribute
+its events to another host.
 
 **3.3 — Sigma rule engine.** Adopt **Sigma** rather than inventing a DSL. Thousands of
 community-maintained rules exist, operators already know the format, and it gives instant
@@ -806,9 +831,27 @@ philosophy the product already has. This is where ATT&CK belongs: it describes a
 behaviour, so it maps to *detections*. The advisory-side tie-in is the separate CVE-to-ATT&CK
 enrichment in §0.3 Tier 3, which answers what an attacker gains by exploiting a given CVE.
 
+*Delivered as the API and the data; the console page is still to come.* Rules carry ATT&CK tags,
+matches carry the techniques, and alerts carry them into the ledger.
+`GET /v1/detection/coverage` reports the matrix with its blind spots first: the event kinds no
+agent has actually reported — a rule for a kind nothing produces can never fire, whatever the
+technique list says — the rules that failed to load with their reasons, and the hosts that have
+dropped events. It states plainly that a technique having a rule does not mean every way of
+performing that technique is detected, because ATT&CK techniques are broad and a rule covers a
+behaviour.
+
 **3.5 — Process-tree context on alerts.** When an alert fires, attach the process ancestry,
 command line, user, and network activity. This is the single thing analysts need most and the
 thing state-based tools cannot provide.
+
+*Delivered for process ancestry.* Lineage is recorded for every process event, not only matching
+ones, because the parent of a process that alerts later is usually itself unremarkable. Exited
+processes are kept for ten minutes: the parent of a suspicious process has very often already
+gone, and a lineage that stops at "no longer exists" is the one that matters least. A pid whose
+start time changed is treated as a different process, or a reused number would attribute one
+process's children to another. The walk is bounded and cycle-safe — a real process table cannot
+contain a cycle, but a pid-reuse race in a remembered snapshot can, and an unbounded walk would
+hang the alerting path. Network activity on the alert waits on a network sensor.
 
 **3.6 — Retention and forwarding, not a SIEM.** Short server-side window plus a host-side ring
 buffer for pre-alert context. Forward everything to the customer's real log platform over
