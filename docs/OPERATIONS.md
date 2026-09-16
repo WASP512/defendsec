@@ -553,6 +553,106 @@ openssl ts -verify -in token.tsr -data hash.bin -CAfile tsa-roots.pem
 
 ---
 
+## Behavioural detection
+
+DefendSec watches what hosts *do*, not only what state they are in. Process events are matched
+against Sigma rules, and a match becomes an alert carrying the process lineage that led to it —
+which a state-based check cannot provide, because by the time a file hash changes the process that
+changed it has usually exited.
+
+```bash
+# /etc/defendsec/apid.env
+DEFENDSEC_SIGMA_DIR=/opt/defendsec/packs/sigma
+```
+
+Rules are [Sigma](https://sigmahq.io/), so rules from community repositories work as they are.
+Unlike policy and configuration packs, a rule that will not compile is **skipped rather than
+fatal** — a rule directory is routinely a synced copy of thousands of community rules, a fraction
+of which use features no single engine implements, and refusing to start because of an unrelated
+one would leave you with no detection at all. Skipped rules are logged individually and listed in
+the coverage view.
+
+Not implemented, and refused at load rather than silently mis-evaluated: aggregation conditions
+(`| count() > 5`), unknown field modifiers, and references to selections that do not exist. Each
+would otherwise compile into something that means a different thing.
+
+### What the sensor can and cannot see
+
+**The shipped sensor polls `/proc`.** The eBPF sensor the roadmap specifies is not written yet, so
+read this before relying on coverage:
+
+- It **samples**, every 250ms. A process that starts and exits between samples is never seen —
+  and `curl … | sh` is short-lived.
+- It reads the command line after the process started, so a process that rewrites its own argv is
+  recorded as it rewrote itself.
+- It observes **process execution only**. Network connections, file writes, privilege transitions
+  and module loads have no sensor, so rules depending on them cannot fire.
+
+These are stated in the agent log at startup and listed in the coverage view, rather than left to
+be discovered.
+
+### Coverage, blind spots first
+
+```bash
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  http://127.0.0.1:47264/v1/detection/coverage
+```
+
+It reports the event kinds no agent has actually reported, the rules that failed to load with
+their reasons, and the hosts that have dropped events — before it reports what is covered. A
+technique having a rule does not mean every way of performing that technique is detected; ATT&CK
+techniques are broad and a rule covers a behaviour.
+
+### Dropped events
+
+The agent's event buffer drops rather than blocking. That is deliberate: if it applied
+backpressure, a slow server would become a slow host, and a sensor that destabilises the host gets
+uninstalled — at which point coverage is zero rather than degraded.
+
+Drops are **counted**, logged, written to the ledger and shown per host in the coverage view. A
+pipeline that drops silently produces a clean console during exactly the incident that overwhelmed
+it. If you see drops, the fix is usually fewer, more specific rules rather than a bigger buffer.
+
+---
+
+## Forwarding — DefendSec is not a SIEM
+
+A behavioural sensor produces thousands of events a second. Storing them all would make DefendSec
+a log lake: a different product, with a storage bill you are already paying somewhere else.
+
+So DefendSec keeps a **short window** — a few hundred events per host, enough to answer "what else
+was this host doing just before" on an alert — and forwards everything to the platform you already
+run.
+
+```bash
+# /etc/defendsec/apid.env
+DEFENDSEC_FORWARD='syslog=tcp://collector:514,webhook=https://siem.example/ingest#TOKEN'
+```
+
+| Kind | Form | Notes |
+| --- | --- | --- |
+| `syslog` | `tcp://host:514`, `tls://host:6514`, `udp://host:514` | RFC 5424, `local0`, JSON payload, RFC 6587 octet framing. TCP by default — UDP discards silently under load, which is the wrong property for a security record |
+| `webhook` | `https://host/path#token` | Batched JSON POST; the token is sent as a bearer credential |
+| `file` | `/var/log/defendsec-events.jsonl` | JSON lines. Useful for proving the pipeline before pointing it at a collector, and for air-gapped hosts |
+
+OpenTelemetry is **not implemented**, and configuring `otlp=` is an error rather than a silent
+no-op. An almost-OTLP exporter a collector rejects is worse than none; syslog and webhook both
+reach an OTel collector today.
+
+**Forwarding is lossy on purpose.** A collector that stops accepting connections must not stop
+DefendSec matching rules or raising alerts — a tool that stops defending because its log shipper
+is unhappy has its priorities backwards. Drops and delivery failures are counted:
+
+```bash
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  http://127.0.0.1:47264/v1/detection/forwarding
+```
+
+Every alert is forwarded, not only behavioural ones: for many operators the collector is the
+system of record, and a finding that exists only in DefendSec is one their process will not see.
+
+---
+
 ## Configuration checks
 
 Agents evaluate the packs in `packs/sca/` on every inventory cycle. Seven check types:

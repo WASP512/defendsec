@@ -27,6 +27,7 @@ import (
 	"defendsec/internal/anchor"
 	"defendsec/internal/cmdlog"
 	"defendsec/internal/events"
+	"defendsec/internal/forward"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
 	"defendsec/internal/playbook"
@@ -75,6 +76,13 @@ type Server struct {
 	trees         map[string]*events.Tree
 	gaps          map[string]*eventGap
 	observedKinds map[events.Kind]bool
+	// recent holds a short per-device window for pre-alert context. DefendSec
+	// keeps this and nothing more; history belongs in the operator's own log
+	// platform (roadmap 3.6).
+	recent map[string]*events.Recent
+	// forwarder ships events and alerts onward. Lossy and asynchronous, so a
+	// stalled collector cannot affect detection.
+	forwarder *forward.Forwarder
 }
 
 // SetAnchoring configures checkpoint anchoring. Called at startup rather than

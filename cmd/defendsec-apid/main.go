@@ -25,6 +25,7 @@ import (
 	"defendsec/internal/cmdlog"
 	"defendsec/internal/control"
 	"defendsec/internal/db"
+	"defendsec/internal/forward"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
 	"defendsec/internal/playbook"
@@ -251,6 +252,7 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
 	adminMux.HandleFunc("/v1/controls/check-coverage", svc.HandleCheckCoverage)
 	adminMux.HandleFunc("/v1/detection/coverage", svc.HandleDetectionCoverage)
+	adminMux.HandleFunc("/v1/detection/forwarding", svc.HandleForwarding)
 
 	// The audit layer (roadmap 1.9).
 	adminMux.HandleFunc("/v1/audit/periods", svc.HandleAuditPeriods)
@@ -302,6 +304,29 @@ func run(log *slog.Logger) error {
 	} else {
 		log.Warn("no detection rules found; behavioural detection is not running",
 			"fix", "set DEFENDSEC_SIGMA_DIR to a directory of Sigma rules")
+	}
+
+	// Forwarding to the operator's own log platform (roadmap 3.6). DefendSec
+	// keeps a short window for alert context and is deliberately not a log
+	// store; everything goes to the platform they already run.
+	if raw := strings.TrimSpace(os.Getenv("DEFENDSEC_FORWARD")); raw != "" {
+		destinations, err := forward.ParseDestinations(raw, "defendsec")
+		if err != nil {
+			// Refused rather than skipped, as with anchors: an operator who
+			// believes their events are being forwarded and is wrong stops
+			// looking at the reason they are not.
+			return fmt.Errorf("DEFENDSEC_FORWARD: %w", err)
+		}
+		fwd := forward.New(0, destinations...)
+		svc.SetForwarder(fwd)
+		defer fwd.Close()
+		for _, d := range destinations {
+			log.Info("forwarding configured", "destination", d.Name())
+		}
+	} else {
+		log.Info("no event forwarding configured",
+			"note", "DefendSec keeps a short event window for alert context and is not a log store",
+			"fix", "set DEFENDSEC_FORWARD to send events to your own platform")
 	}
 
 	// Playbooks (roadmap 2.5-2.6). Every step is still policy-checked and

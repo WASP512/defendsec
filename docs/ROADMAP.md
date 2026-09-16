@@ -857,6 +857,21 @@ hang the alerting path. Network activity on the alert waits on a network sensor.
 buffer for pre-alert context. Forward everything to the customer's real log platform over
 syslog / OTel / webhook. Stay explicitly out of the log-lake business, consistent with §2.
 
+*Delivered, except OTLP.* A few hundred events per host are kept — enough to answer "what else was
+this host doing just before" on an alert, which is the first question an analyst asks and the one
+a state-based tool cannot answer at all — and everything is forwarded onward. Syslog is RFC 5424
+over TCP, TLS or UDP with a JSON payload and RFC 6587 octet framing, because newline framing
+breaks on any message containing a newline and JSON payloads routinely do; TCP is the default
+because UDP discards silently under load, which is the wrong property for the record of a security
+event. Webhook posts batches with a bearer token, and a file destination writes JSON lines for
+proving the pipeline or for an air-gapped host. Forwarding is asynchronous and lossy for the same
+reason the agent buffer is: a collector that stops accepting connections must not stop DefendSec
+matching rules, because a tool that stops defending when its log shipper is unhappy has its
+priorities backwards. Drops and delivery failures are counted and reported. OTLP is deliberately
+absent and configuring it is an error rather than a silent no-op — a real exporter needs a
+substantial dependency and a semantic-convention mapping worth doing properly, and an almost-OTLP
+exporter a collector rejects is worse than none.
+
 **3.7 — Grow the SCA engine, then its content.** `internal/sca/sca.go` implements only two check
 types — `file_regex` and `inventory_field` — which can express roughly a quarter to a third of a
 real benchmark. Add file mode and ownership, mount options, sysctl values, package presence and

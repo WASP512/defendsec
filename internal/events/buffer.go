@@ -3,6 +3,7 @@ package events
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // The agent-side event buffer (roadmap 3.2).
@@ -152,4 +153,76 @@ func (b *Buffer) Stats() Stats {
 		Buffered:     b.Len(),
 		Capacity:     b.capacity,
 	}
+}
+
+// Recent is a per-device ring of the most recent events, kept for pre-alert
+// context (roadmap 3.6).
+//
+// Why a short ring rather than a store: the question an analyst asks first is
+// "what else was this process doing just before". That needs seconds of
+// history, not months. Keeping months would make DefendSec a log lake, which
+// §2 declines — the operator's own platform holds the history, and this holds
+// just enough to explain an alert without a round trip to it.
+type Recent struct {
+	mu    sync.Mutex
+	items []*Event
+	size  int
+}
+
+// DefaultRecentSize is how many events per device are kept for context.
+const DefaultRecentSize = 256
+
+// NewRecent creates a ring.
+func NewRecent(size int) *Recent {
+	if size <= 0 {
+		size = DefaultRecentSize
+	}
+	return &Recent{size: size, items: make([]*Event, 0, size)}
+}
+
+// Add remembers an event, discarding the oldest when full.
+func (r *Recent) Add(e *Event) {
+	if e == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.items) >= r.size {
+		copy(r.items, r.items[1:])
+		r.items = r.items[:len(r.items)-1]
+	}
+	r.items = append(r.items, e)
+}
+
+// Before returns up to n events that happened before a moment, oldest first.
+//
+// Bounded by count rather than by time: an analyst wants "the last few things
+// this host did", and on a quiet host a time window returns nothing while on a
+// busy one it returns thousands.
+func (r *Recent) Before(at time.Time, n int) []*Event {
+	if n <= 0 {
+		n = 20
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var out []*Event
+	for i := len(r.items) - 1; i >= 0 && len(out) < n; i-- {
+		if r.items[i].At.After(at) {
+			continue
+		}
+		out = append(out, r.items[i])
+	}
+	// Reverse into chronological order, which is how a sequence reads.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+// Len is how many events are held.
+func (r *Recent) Len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.items)
 }
