@@ -1072,6 +1072,21 @@ Three properties worth knowing because they are load-bearing:
 - **Break-glass does not widen it.** An emergency bypass is a human declaring an emergency. It does
   not extend what an agent may propose.
 
+### Reviewing a proposal
+
+The console's **Proposals** page lists every unsigned proposal with the model's reasoning, the
+evidence it cited, the prompt it says it was given, the policy rule that permitted it, and the exact
+command and payload. The approve and reject controls sit *after* the case, not before it.
+
+Proposals deliberately do **not** appear in the Response page's generic approvals queue. They are
+the same kind of object as a human request awaiting a second approver — neither is signed — but a
+proposal shown as a bare pending command invites approving it without reading the argument, which is
+the one failure this page exists to prevent. The Response page links across instead.
+
+Approving re-evaluates policy at the moment of signing, so an approval is not a guarantee the
+command will issue: if the policy narrowed, a blast-radius limit filled, or the host was
+reclassified in between, it is refused and the refusal is recorded.
+
 ### What the ledger records
 
 Every proposal, permitted or denied, lands in the hash-chained audit log with the proposing agent,

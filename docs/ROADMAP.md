@@ -1027,9 +1027,26 @@ which made "a revoked agent cannot propose" depend on every caller having refres
 — an obligation that holds until somebody writes a new caller. It now re-reads the principal, so a
 revocation that lands mid-conversation bites on the next call.
 
-Still to come: the console page showing proposals awaiting review with the model's case beside
-them. The API and ledger records exist; operators currently approve proposals through the existing
-Response page, which shows them as pending commands without the reasoning.
+*The console surface is now delivered too.* A **Proposals** page shows each unsigned proposal with
+the model's reasoning, the evidence it cited, the prompt it says it was given, the declared model
+marked self-reported, the policy rule that let it through, and the exact command and payload — with
+approve and reject controls placed *after* the case rather than before it, so an operator who has
+reached the button has at least been shown the argument.
+
+The Response page no longer lists proposals in its generic approvals queue. They are the same
+object in storage, which is deliberate, but they are not the same thing to review: a proposal shown
+as a bare pending command invites approving it without the reasoning that is the only thing making
+it reviewable. The two are partitioned, and the Response page links across.
+
+Approval itself was API-only before this and is now wired through the console. The route forwards
+the operator's own token and relays the control plane's answer verbatim, including a refusal —
+rewriting it locally would give the operator a friendlier second account of something the ledger
+records differently. The page states that policy is re-evaluated at signing time, so an approval is
+not a guarantee the command will issue.
+
+The partition predicate lives in a module with no server-only imports, both so it can be tested and
+because a client component reaching it through the server-side policy client pulled `next/headers`
+into the browser bundle — a constraint neither `tsc` nor the linter catches, only `next build`.
 
 **4.3 — Triage assistance.** Alert summarization; FIM drift explanation (diff the file, identify
 its owning package, correlate against the pending-update list — *"this changed because
