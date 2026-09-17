@@ -958,10 +958,78 @@ record. That is a claim no EDR with a remote shell can make, at any price.
 queries as read operations, plus the ability to *propose* actions. Proposals enter the same policy
 engine as human requests. The AI never holds signing authority.
 
+*Delivered.* `internal/mcp` implements MCP revision `2026-07-28` — the stateless one: no
+`initialize` handshake, no session id, no server-initiated requests, with version, client identity
+and capabilities carried per request. That statelessness is the property worth having here, because
+it means an agent's authority comes from the credential on each request and from nothing it
+established earlier. The server is dual-era and also answers the handshake most clients in the
+field still speak; a spec-pure server nobody can connect to has shipped nothing.
+
+The protocol layer knows nothing about DefendSec. It has no access to the signer and no ability to
+issue a command, so a protocol bug cannot become an authority bug. Origin is validated before the
+credential is read, header/body agreement is enforced (an intermediary may route on the header
+while the server acts on the body, and a disagreement means one of them is being lied to), and a
+missing authorization hook denies everything rather than allowing it.
+
+**An agent is a principal, not a user, and that is the whole design.** The alternative was a third
+role on the users table, which would have been less code and a worse guarantee: a role is a string
+compared at every call site, and "an agent cannot sign its own authority" would then rest on every
+one of those comparisons being written correctly, forever. Agent principals live in their own
+table, and the admin API resolves callers only against users and sessions. An agent token presented
+to the command endpoint is not an under-privileged caller — it is not a caller the admin API can
+see at all, and there is a test that asserts exactly that.
+
+**DefendSec does not call a model.** This is a server; an agent runs wherever its operator runs it
+and connects inward. There is no API key, no outbound dependency on any AI service, and no path by
+which fleet data leaves the box to a model provider. For self-hosted security software that is not
+a limitation but the only defensible design.
+
+The endpoint is off unless `DEFENDSEC_MCP_ADDR` is set, on its own listener rather than a path on
+the admin mux, so it can be bound and firewalled separately.
+
 **4.2 — Propose-and-sign workflow.** Console surface for AI-proposed actions showing the model's
 reasoning, the evidence cited, and the exact bounded command proposed. A human reviews and signs.
 Model identity and prompt provenance are recorded in the ledger alongside the human approver, so
 an auditor can reconstruct not just what was done but what recommended it.
+
+*Delivered, except the console surface.* A proposal is written to `pending_commands` — the same
+table a human request awaiting approval goes into, which is the point: an AI proposal and an
+unsigned human request are structurally the same object, and neither carries a signature. The
+columns added are the part an auditor needs that a human request does not have: the proposing
+agent, its declared model, the reasoning verbatim, the DefendSec record ids it cited, and the
+prompt it says it was given.
+
+Four things are enforced rather than intended, each with a test:
+
+- **The agent's own approval does not count.** A human requester self-approves, because they asked
+  for it. An agent does not — if it did, a one-approval rule would let an AI act unsupervised. The
+  asymmetry lives on the write path in `CreatePendingCommand`, not in whoever assembles the
+  request.
+- **A permit-outright policy still needs a human.** Where policy would have let a human act with no
+  approval at all, an agent proposal still lands unsigned with one approval required. Collapsing
+  those two cases is how a product ends up with an AI that acts on its own.
+- **A human approval cannot launder a proposal past an agent rule.** An approved proposal is
+  re-evaluated as role `agent`, not promoted to `admin`. Otherwise an operator clicking approve
+  would walk the proposal past the very rule written to bound agents, and the bound would hold only
+  until somebody was busy. The rule binds at signing time or it does not bind at all.
+- **Deny-by-default extends to the AI.** A policy that permits humans and says nothing about agents
+  permits an agent nothing.
+
+The proposable command set is narrower than the human one. `run_script` and `agent_update` are
+absent: the first is arbitrary code and the second replaces the agent enforcing everything else. A
+bounded command set that includes "run this script" is not bounded, whatever policy would say
+afterwards. Break-glass is deliberately not consulted on the proposal path either — an emergency is
+a human declaring an emergency, and letting it widen what an AI may propose would turn the worst
+moment to be careful into the moment the bounds came off.
+
+Writing this caught one real defect. `Propose` originally checked the principal it was handed,
+which made "a revoked agent cannot propose" depend on every caller having refreshed its copy first
+— an obligation that holds until somebody writes a new caller. It now re-reads the principal, so a
+revocation that lands mid-conversation bites on the next call.
+
+Still to come: the console page showing proposals awaiting review with the model's case beside
+them. The API and ledger records exist; operators currently approve proposals through the existing
+Response page, which shows them as pending commands without the reasoning.
 
 **4.3 — Triage assistance.** Alert summarization; FIM drift explanation (diff the file, identify
 its owning package, correlate against the pending-update list — *"this changed because

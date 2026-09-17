@@ -156,7 +156,21 @@ type PendingCommand struct {
 	Status            string    `json:"status"`
 	CommandID         string    `json:"commandId,omitempty"`
 	Approvals         []string  `json:"approvals"`
+
+	// Proposal provenance (roadmap 4.2). Empty on a human request.
+	//
+	// ProposedByAgent being set changes one behaviour that matters: the
+	// requester's own approval is not counted, so an agent proposal cannot
+	// satisfy its own approval requirement. See CreatePendingCommand.
+	ProposedByAgent   string   `json:"proposedByAgent,omitempty"`
+	ProposalModel     string   `json:"proposalModel,omitempty"`
+	ProposalReasoning string   `json:"proposalReasoning,omitempty"`
+	ProposalEvidence  []string `json:"proposalEvidence,omitempty"`
+	ProposalPrompt    string   `json:"proposalPrompt,omitempty"`
 }
+
+// FromAgent reports whether this request was proposed by an AI agent.
+func (p PendingCommand) FromAgent() bool { return p.ProposedByAgent != "" }
 
 // Approved reports whether the pending command has the approvals it needs.
 func (p PendingCommand) Approved() bool {
@@ -185,18 +199,30 @@ func (s *Store) CreatePendingCommand(ctx context.Context, p PendingCommand) (Pen
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO pending_commands
 			(id, created_at, expires_at, device_id, hostname, command_type, payload,
-			 requested_by, required_approvals, rule_id, policy_hash, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending')
+			 requested_by, required_approvals, rule_id, policy_hash, status,
+			 proposed_by_agent, proposal_model, proposal_reasoning,
+			 proposal_evidence, proposal_prompt)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12,$13,$14,$15,$16)
 	`, p.ID, p.CreatedAt, p.ExpiresAt, p.DeviceID, p.Hostname, p.CommandType,
-		p.Payload, p.RequestedBy, p.RequiredApprovals, p.RuleID, p.PolicyHash); err != nil {
+		p.Payload, p.RequestedBy, p.RequiredApprovals, p.RuleID, p.PolicyHash,
+		p.ProposedByAgent, p.ProposalModel, p.ProposalReasoning,
+		nonNilStrings(p.ProposalEvidence), p.ProposalPrompt); err != nil {
 		return PendingCommand{}, err
 	}
-	// The requester's own approval counts as one. They asked for it; making
-	// them click approve afterwards adds a step and no safety.
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO pending_command_approvals (pending_id, actor) VALUES ($1,$2)`,
-		p.ID, p.RequestedBy); err != nil {
-		return PendingCommand{}, err
+	// A human requester's own approval counts as one: they asked for it, and
+	// making them click approve afterwards adds a step and no safety.
+	//
+	// An agent's does not. If a proposal could satisfy its own approval
+	// requirement, a one-approval rule would let an AI issue commands
+	// unsupervised, and the guarantee this phase exists to provide — that a
+	// proposal is unsignable without a human — would be false. This single
+	// branch is where that guarantee lives on the write path.
+	if !p.FromAgent() {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO pending_command_approvals (pending_id, actor) VALUES ($1,$2)`,
+			p.ID, p.RequestedBy); err != nil {
+			return PendingCommand{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return PendingCommand{}, err
@@ -205,13 +231,16 @@ func (s *Store) CreatePendingCommand(ctx context.Context, p PendingCommand) (Pen
 }
 
 const pendingColumns = `id, created_at, expires_at, device_id, hostname, command_type,
-	payload, requested_by, required_approvals, rule_id, policy_hash, status, command_id`
+	payload, requested_by, required_approvals, rule_id, policy_hash, status, command_id,
+	proposed_by_agent, proposal_model, proposal_reasoning, proposal_evidence, proposal_prompt`
 
 func scanPending(row pgx.Row) (PendingCommand, error) {
 	var p PendingCommand
 	if err := row.Scan(&p.ID, &p.CreatedAt, &p.ExpiresAt, &p.DeviceID, &p.Hostname,
 		&p.CommandType, &p.Payload, &p.RequestedBy, &p.RequiredApprovals,
-		&p.RuleID, &p.PolicyHash, &p.Status, &p.CommandID); err != nil {
+		&p.RuleID, &p.PolicyHash, &p.Status, &p.CommandID,
+		&p.ProposedByAgent, &p.ProposalModel, &p.ProposalReasoning,
+		&p.ProposalEvidence, &p.ProposalPrompt); err != nil {
 		return PendingCommand{}, err
 	}
 	p.CreatedAt, p.ExpiresAt = p.CreatedAt.UTC(), p.ExpiresAt.UTC()
@@ -410,4 +439,13 @@ func (s *Store) ListBreakGlass(ctx context.Context, limit int) ([]policy.BreakGl
 		out = append(out, b)
 	}
 	return out, rows.Err()
+}
+
+// nonNilStrings makes a nil slice an empty one, because a NOT NULL TEXT[]
+// column rejects NULL and a nil Go slice encodes as one.
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }

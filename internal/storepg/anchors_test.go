@@ -10,10 +10,29 @@ import (
 	"defendsec/internal/sign"
 )
 
+// resetAnchors clears the anchor tables and leaves checkpoints alone.
+//
+// Safe to call mid-test: a test that anchors a checkpoint, then wants to
+// re-test it as unanchored, needs the checkpoint to survive.
 func resetAnchors(t *testing.T, s *Store) {
 	t.Helper()
 	if _, err := s.pool.Exec(context.Background(), `TRUNCATE audit_anchors, peer_anchors`); err != nil {
 		t.Fatalf("reset anchors: %v", err)
+	}
+}
+
+// resetCheckpoints additionally clears the checkpoint table, for a test that
+// asserts something about "the newest checkpoint".
+//
+// That assertion only means anything if this test created it. Other packages
+// share this database and leave checkpoints of their own behind, so without
+// this these tests pass alone and fail in a full run — which is the worst way
+// for a test to be wrong, because it reads like a flake.
+func resetCheckpoints(t *testing.T, s *Store) {
+	t.Helper()
+	resetAnchors(t, s)
+	if _, err := s.pool.Exec(context.Background(), `TRUNCATE audit_checkpoints`); err != nil {
+		t.Fatalf("reset checkpoints: %v", err)
 	}
 }
 
@@ -146,7 +165,7 @@ func TestVerifyAnchorsAgainstTheRealChain(t *testing.T) {
 func TestLatestUnanchoredCheckpoint(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	resetAnchors(t, s)
+	resetCheckpoints(t, s)
 
 	key, err := sign.LoadOrCreate(t.TempDir())
 	if err != nil {

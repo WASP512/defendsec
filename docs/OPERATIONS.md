@@ -975,3 +975,108 @@ Sign in with `data/admin-token.txt`. Enroll:
 ```
 
 Fedora-specific lab notes: [FEDORA.md](./FEDORA.md).
+
+---
+
+## AI agents — read freely, propose, never act
+
+DefendSec can be driven by an AI agent over [MCP](https://modelcontextprotocol.io). The pitch is
+not "AI-powered security": it is that **DefendSec is the enforcement layer that makes AI-initiated
+response safe and provable.** An agent connected here cannot exceed the bounded command set, cannot
+bypass the policy engine, cannot sign its own authority, and cannot act without leaving a
+cryptographic record.
+
+**DefendSec does not call a model.** It is an MCP *server*. Your agent runs wherever you run it and
+connects inward. There is no API key to configure, no outbound dependency on any AI service, and no
+path by which fleet data leaves the box to a model provider.
+
+### Turning it on
+
+Off by default — an MCP endpoint is a control surface, and one listening by default is an attack
+surface you did not ask for.
+
+```bash
+# /etc/defendsec/apid.env
+DEFENDSEC_MCP_ADDR=127.0.0.1:47266
+# Only needed if a browser-based client will connect. Non-browser clients send
+# no Origin and need no entry here.
+DEFENDSEC_MCP_ORIGINS=https://console.example
+```
+
+It needs a configured database, because agent principals live there. It gets its own listener
+rather than a path on the admin API so you can bind, firewall and log it separately — an agent
+often runs somewhere the admin port deliberately is not reachable from.
+
+### Registering an agent
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"name":"triage","model":"some-model-v1","description":"alert triage"}' \
+  http://127.0.0.1:47264/v1/agents
+```
+
+The token comes back **once** and is not recoverable: only its hash is stored, so a database copy
+yields no working credential. The `model` field is required — the audit value of all this is being
+able to answer "what recommended this action", and an agent with no declared model makes that
+unanswerable from the start. It is self-reported, and the ledger says so rather than implying an
+attestation DefendSec cannot make.
+
+Revoke with `DELETE /v1/agents?name=triage`. The record is kept rather than deleted, so the ledger
+still shows the principal existed and when it was withdrawn.
+
+### An agent is not a user
+
+Agent principals are a separate table, not a role on accounts. This matters more than it sounds:
+
+- An agent token presented to the admin API resolves to **no caller at all**, not to an
+  under-privileged one. There is no code path by which an agent becomes an admin.
+- An agent cannot log into the console.
+- Policy rules can name agents — `roles: [agent]` — so what an agent may propose is yours to
+  configure, separately from what your operators may do.
+
+### What policy needs to say
+
+**Deny-by-default extends to the AI.** A policy permitting your admins and saying nothing about
+agents permits an agent nothing. To let one propose, say so:
+
+```yaml
+rules:
+  - id: agents-may-propose-containment
+    effect: permit
+    roles: [agent]
+    commands: [live_query, isolate, quarantine_path]
+```
+
+`run_script` and `agent_update` are not proposable at all, whatever your policy says. The first is
+arbitrary code; the second replaces the agent that enforces everything else.
+
+### The proposal path
+
+1. The agent calls `defendsec.propose_response` with a command type, a target, its reasoning, and
+   the record ids it relied on.
+2. Policy is evaluated **immediately**, as role `agent`. A refusal names the rule that decided and
+   nothing is recorded as pending.
+3. If permitted, the proposal is written **unsigned** to the approval queue with at least one human
+   approval required — even where the policy would have let a human act with no approval at all.
+4. An operator reviews it and approves. Only then is a command signed.
+
+Three properties worth knowing because they are load-bearing:
+
+- **The agent's own approval does not count.** A human requester self-approves; an agent does not.
+  Otherwise a one-approval rule would let an AI act unsupervised.
+- **Approval does not promote the request.** An approved proposal is re-evaluated as role `agent`,
+  not as the approving admin — so a rule written to bound agents still binds at signing time. If
+  approval promoted it, clicking approve would walk the proposal past the very rule meant to
+  constrain it.
+- **Break-glass does not widen it.** An emergency bypass is a human declaring an emergency. It does
+  not extend what an agent may propose.
+
+### What the ledger records
+
+Every proposal, permitted or denied, lands in the hash-chained audit log with the proposing agent,
+its declared model, its reasoning verbatim, the evidence it cited, and the prompt it says it was
+given — alongside the approving human once one approves. That is what lets an auditor reconstruct
+not just what was done, but what recommended it.
+
+`defendsec verify` validates the whole chain, proposals included.

@@ -328,6 +328,23 @@ func (f *File) Get(id string) (Device, bool) {
 	return Device{}, false
 }
 
+// List returns every known device.
+//
+// Added for the MCP read surface (roadmap 4.1): an agent asking "what is in
+// this fleet" needs the list, and having it go through the same store the
+// console uses means there is one answer to that question rather than two.
+func (f *File) List() []Device {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return nil
+	}
+	out := make([]Device, len(doc.Devices))
+	copy(out, doc.Devices)
+	return out
+}
+
 func (f *File) SetConnected(id string, connected bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
