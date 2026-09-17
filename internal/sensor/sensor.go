@@ -1,22 +1,24 @@
 // Package sensor collects behavioural telemetry from the host
 // (roadmap 3.1).
 //
-// # Two sensors, and why this one exists
+// # Two sensors, and which one runs
 //
-// The roadmap specifies an eBPF sensor: CO-RE and libbpf, hooking execve,
-// connect, accept, writes on watched paths, privilege transitions and module
-// loads. That is the right production sensor, and it is the only way to see
-// every event exactly once with the full argument vector.
+// BPFSensor (ebpf_linux.go) is the production sensor: it hooks the execve
+// tracepoints and sees every successful exec with the argument vector as the
+// caller passed it. It needs a BPF ring buffer (Linux 5.8), kernel BTF, and
+// the privilege to load a program.
 //
-// It is also cgo, a kernel-version matrix, and a build that cannot run on a
-// machine without kernel headers. Shipping only that would mean DefendSec has
-// no behavioural detection at all on any host where the build did not work,
-// and no way to test the pipeline above it.
+// ProcSensor, below, is the portable fallback: a /proc poller that runs on any
+// Linux kernel with no privileges beyond reading /proc. It exists because a
+// product with behavioural detection only where eBPF loads has no behavioural
+// detection on the hosts most likely to be neglected, and because the pipeline
+// above the sensor — buffer, batching, rules, process tree — needs something
+// that can be driven deterministically in a test.
 //
-// So the sensor is an interface, and this is the portable implementation: a
-// /proc poller that runs on any Linux kernel with no privileges beyond reading
-// /proc, and on which the whole event pipeline — buffer, batching, rules,
-// process tree — can be exercised and tested.
+// The agent prefers eBPF and falls back to polling with the reason logged at
+// warning level. The fallback is never silent: the two have genuinely
+// different coverage, and an operator who believes they have the first while
+// running the second has been misled about what their fleet can see.
 //
 // # What polling cannot see, stated plainly
 //

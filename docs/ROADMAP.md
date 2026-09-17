@@ -789,18 +789,47 @@ open/write on watched paths, privilege transitions (setuid/setgid/capability cha
 loads. Ring buffer with explicit backpressure and sampling — a sensor that destabilizes the host
 under load will be uninstalled.
 
-*Partly delivered — the interface and a portable sensor; the eBPF program itself is not written.*
-The sensor is an interface with an honest capability declaration, and the shipped implementation
-is a `/proc` poller producing process events. That is deliberate sequencing rather than a
-substitute: eBPF is cgo, a kernel-version matrix and a build that cannot run without kernel
-headers, and shipping only that would mean no behavioural detection at all wherever the build did
-not work, and no way to test the pipeline above it. The poller runs anywhere, needs no privilege
-beyond reading `/proc`, and lets the buffer, batching, rules and process tree be exercised for
-real. What it cannot do is stated in code, logged at agent start and surfaced in the coverage
-view: it samples, so a process that starts and exits between samples is never seen — and
-`curl … | sh` is short-lived. It observes execution only; network, file, privilege and module
-events have no sensor yet and the coverage matrix lists them as unobserved rather than implying
-the rules covering them can fire.
+*Delivered for process execution; network, file, privilege and module events still have no sensor.*
+
+The eBPF sensor is written and runs. It hooks two tracepoints — `syscalls/sys_enter_execve` for
+the argument vector and `sched/sched_process_exec` for the resolved path — and emits through a BPF
+ring buffer. Every successful exec is seen, with argv as the caller passed it rather than as the
+process later rewrote it, which is precisely what the poller could not do.
+
+Three decisions differ from the plan above, each for a reason worth recording.
+
+**cilium/ebpf, not libbpf.** The objection to eBPF was cgo, a kernel matrix, and a build needing
+kernel headers. A pure-Go loader that performs CO-RE relocations itself removes all three:
+`defendsec-agentd` still cross-compiles to a static binary with `CGO_ENABLED=0`. The compiled BPF
+object is committed and embedded, so building the agent needs no clang, no kernel headers and no
+libbpf — `make bpf` is the only thing that asks for them.
+
+**Tracepoints, not kprobes.** Tracepoints are a stable kernel ABI. A kprobe on a function whose
+signature shifts between releases yields silently wrong fields, and a sensor that is confidently
+wrong is worse than one that is absent. Only a single field needs CO-RE at all
+(`task->real_parent->tgid` for the parent pid), declared as a minimal relocatable struct rather
+than via a generated `vmlinux.h`, so one object works across kernel versions.
+
+**Two tracepoints, not one.** `sys_enter_execve` is the only place argv is reachable, but it also
+fires for execs that then fail — a mistyped command, a missing interpreter. Emitting those would
+put processes in the console that never ran, and a rule matching `CommandLine` would fire on
+something that never executed. So argv is stashed at entry in an LRU hash and claimed at the
+success tracepoint; a failed exec leaves its stash to be evicted rather than leaking. There is a
+test that runs a deliberately failing exec and requires that nothing is reported for it.
+
+The poller remains, and the agent falls back to it when the kernel lacks a ring buffer (pre-5.8)
+or BTF, or when the agent cannot load a program. The fallback is logged at warning level with the
+specific reason and the coverage view shows the poller's capability, not the eBPF one: the two have
+genuinely different coverage, and an operator who believes they have the first while running the
+second has been misled about what their fleet can see. Bounds truncate rather than drop — the
+first 16 arguments, 128 bytes each — and truncation is flagged in the event so nothing downstream
+presents a clipped command line as the whole thing. Ring-buffer overflow is counted on the kernel
+side and reported, because a pipeline that drops silently produces a clean console during exactly
+the burst that overwhelmed it.
+
+Still missing, and listed as unobserved in the coverage matrix rather than implied: network
+connect/accept, file writes on watched paths, privilege transitions, and module loads. Rules
+depending on those kinds cannot fire, and the matrix says so.
 
 **3.2 — Event stream in the protocol.** Add a batched, backpressured event stream to
 `AgentToServer`, separate from the 60-second inventory report. Different volume profile

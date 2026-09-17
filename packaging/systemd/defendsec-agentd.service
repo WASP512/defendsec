@@ -5,6 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Root is required for two things: reading every process's /proc entry, and
+# loading the eBPF exec sensor (CAP_BPF and CAP_PERFMON, plus CAP_SYS_RESOURCE
+# for the memlock accounting on kernels before 5.11). Without them the agent
+# still runs — it logs the reason at warning level and falls back to sampling
+# /proc, which misses short-lived processes.
 User=root
 # Copy packaging/systemd/agentd.env.example → /etc/defendsec/agentd.env
 EnvironmentFile=/etc/defendsec/agentd.env

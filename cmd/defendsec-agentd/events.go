@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -33,7 +34,7 @@ const (
 func startEventShipper(ctx context.Context, log *slog.Logger, deviceID, hostname string, send func(*defendsecv1.AgentToServer) error) {
 	buffer := events.NewBuffer(0)
 	tree := events.NewTree(0, 0)
-	s := sensor.NewProcSensor(deviceID, hostname, tree)
+	s := pickSensor(log, deviceID, hostname, tree)
 
 	capability := s.Describe()
 	log.Info("behavioural sensor started",
@@ -84,4 +85,30 @@ func startEventShipper(ctx context.Context, log *slog.Logger, deviceID, hostname
 			}
 		}
 	}()
+}
+
+// pickSensor prefers eBPF and falls back to the /proc poller.
+//
+// The fallback is loud. eBPF sees every exec; polling samples, so it misses
+// short-lived processes — and `curl … | sh` is short-lived. An agent that
+// quietly degraded from one to the other would leave the coverage view
+// claiming execution coverage the host does not have, so the reason is logged
+// at warning level and the capability the console shows is the poller's.
+func pickSensor(log *slog.Logger, deviceID, hostname string, tree *events.Tree) sensor.Sensor {
+	bpf, err := sensor.NewBPFSensor(deviceID, hostname, tree)
+	if err == nil {
+		return bpf
+	}
+	if errors.Is(err, sensor.ErrBPFUnsupported) {
+		log.Warn("eBPF sensor unavailable; falling back to sampling /proc, "+
+			"which misses short-lived processes",
+			"reason", err)
+	} else {
+		// Not the kernel's fault. Still a fallback rather than a fatal
+		// error — partial telemetry beats none — but it is a defect to fix,
+		// not a host limitation to accept.
+		log.Error("eBPF sensor failed to load; falling back to sampling /proc",
+			"err", err)
+	}
+	return sensor.NewProcSensor(deviceID, hostname, tree)
 }

@@ -578,18 +578,46 @@ would otherwise compile into something that means a different thing.
 
 ### What the sensor can and cannot see
 
-**The shipped sensor polls `/proc`.** The eBPF sensor the roadmap specifies is not written yet, so
-read this before relying on coverage:
+There are two sensors, and which one you get changes your coverage materially. The agent logs
+which it chose at startup, along with its limitations, and the coverage view shows the capability
+of the one actually running.
+
+**eBPF (`ebpf-exec`) — preferred.** Hooks the execve tracepoints and sees *every* successful exec,
+with the argument vector as the caller passed it. Requirements:
+
+- Linux **5.8 or later**, for BPF ring buffers.
+- Kernel **BTF** (`CONFIG_DEBUG_INFO_BTF`, i.e. `/sys/kernel/btf/vmlinux` exists).
+- Privilege to load a program — root, or `CAP_BPF` + `CAP_PERFMON`, plus `CAP_SYS_RESOURCE` on
+  kernels before 5.11.
+- **tracefs mounted** at `/sys/kernel/tracing`. systemd mounts it by default; minimal containers
+  often do not.
+
+What it still cannot see: execve only, so a `fork` with no following exec is not reported, and nor
+are `execveat` callers. The first 16 arguments are recorded, 128 bytes each — longer vectors are
+**flagged truncated in the event**, never silently clipped. Network connections, file writes,
+privilege transitions and module loads have no sensor at all.
+
+**`/proc` polling (`proc-poll`) — fallback.** Used when any requirement above is unmet. The agent
+logs the specific reason at **warning** level, because this is a real reduction in coverage:
 
 - It **samples**, every 250ms. A process that starts and exits between samples is never seen —
-  and `curl … | sh` is short-lived.
+  and `curl … | sh` is short-lived. This is not a tuning problem; it is what sampling means.
 - It reads the command line after the process started, so a process that rewrites its own argv is
   recorded as it rewrote itself.
-- It observes **process execution only**. Network connections, file writes, privilege transitions
-  and module loads have no sensor, so rules depending on them cannot fire.
+- Same missing kinds as above.
 
-These are stated in the agent log at startup and listed in the coverage view, rather than left to
-be discovered.
+If you see `eBPF sensor unavailable` in the agent log, the `reason` field names the specific
+requirement that was not met. Fixing it is usually worth doing: the gap between the two sensors is
+exactly the class of short-lived, scripted execution that matters most.
+
+To rebuild the BPF object after editing `internal/sensor/bpf/exec.bpf.c`:
+
+```bash
+apt install clang llvm libbpf-dev   # or: dnf install clang llvm libbpf-devel
+make bpf
+```
+
+The compiled object is committed, so building the agent itself needs none of that.
 
 ### Coverage, blind spots first
 
