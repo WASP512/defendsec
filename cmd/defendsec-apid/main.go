@@ -262,6 +262,9 @@ func run(log *slog.Logger) error {
 	// AI agent principals (roadmap 4.1). Admin-only: registering a principal
 	// hands out a credential that can read the fleet and propose responses.
 	adminMux.HandleFunc("/v1/agents", svc.HandleAgents)
+	// Bounded autonomy (roadmap 4.4). Off for every principal by default, and
+	// still gated by a policy rule marked autonomous.
+	adminMux.HandleFunc("/v1/agents/autonomy", svc.HandleAgentAutonomy)
 
 	// The audit layer (roadmap 1.9).
 	adminMux.HandleFunc("/v1/audit/periods", svc.HandleAuditPeriods)

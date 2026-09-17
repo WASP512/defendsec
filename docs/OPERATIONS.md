@@ -1165,3 +1165,83 @@ than N separate incidents, and the summary says so.
 Suggested only from **your own saved queries**, never generated. The live-query surface is an
 allowlist so arbitrary queries cannot be run; a suggested query DefendSec invented would route
 around that allowlist using your credentials.
+
+---
+
+## Bounded autonomy — letting an agent act
+
+By default an agent proposes and **never acts**. Autonomy is opt-in and needs **two** switches on at
+once. Both default to off.
+
+### Switch one: the policy rule
+
+```yaml
+rules:
+  - id: agents-may-query
+    effect: permit
+    roles: [agent]
+    commands: [live_query]
+    autonomous: true
+
+limits:
+  - id: query-fleet-hourly
+    commands: [live_query]
+    scope: fleet
+    max: 20
+    per: 1h
+```
+
+Three things are refused when the policy **loads**, so a policy that cannot be safe does not start:
+
+- autonomy on a `deny` rule;
+- autonomy together with `require_approvals` above one;
+- **autonomy over a command no limit covers.** A wildcard rule needs a wildcard limit, and
+  `max: 0` forbids rather than bounds, so it does not count as a ceiling.
+
+**Put autonomy on the only rule matching that command.** Where two permits match, the one
+*withholding* autonomy wins — so a broad non-autonomous rule silently shadows a narrower autonomous
+one. The shipped policy gives `live_query` its own rule for exactly this reason.
+
+### Switch two: the principal
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"name":"triage","enabled":true}' \
+  http://127.0.0.1:47264/v1/agents/autonomy
+```
+
+Withdraw it by sending `"enabled": false`. That is the fast revocation path: it stops one agent
+immediately, takes effect on its next call, and touches nothing that governs the others. Revoking
+the principal entirely (`DELETE /v1/agents?name=triage`) also stops autonomy.
+
+A revoked principal cannot be *granted* autonomy — the row would be inert but self-contradictory.
+Withdrawing from a revoked principal does work, because an operator pulling autonomy from something
+dormant should succeed.
+
+### What autonomy does not change
+
+- **Blast-radius limits still bite**, counted exactly as for a human-issued command. An autonomous
+  agent sweeping the fleet stops at its configured ceiling.
+- **Deny-by-default still applies.** A command no rule permits is refused.
+- **Break-glass does not widen it.** An emergency is a human declaring an emergency.
+- **The signing path is unchanged** — same key, same envelope, same ledger.
+
+Autonomy removes the human from the loop and removes nothing else.
+
+### What to automate first
+
+Read-only queries. The worst outcome of getting a `live_query` wrong is noise; the worst outcome of
+getting an `isolate` wrong is an outage you caused yourself. The shipped policy deliberately
+contains no autonomous rule for `isolate` — an agent that can take hosts off the network unattended
+is a denial-of-service tool with good intentions.
+
+### Finding autonomous actions in the ledger
+
+They are recorded as `agent_autonomous_action`, not the generic `command_issue`, so "what did the AI
+do by itself" is a filter rather than an inference. The entry carries the model, the rule, the
+reasoning, the evidence cited, and who granted the autonomy. The command's actor is the agent —
+never a human who did not authorise it.
+
+When a proposal waits instead of running, the ledger records **which switch was off**, so an
+operator who expected autonomy does not have to read two configuration sources to find out why.

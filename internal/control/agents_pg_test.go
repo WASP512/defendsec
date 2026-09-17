@@ -15,8 +15,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"defendsec/db/migrations"
+	"defendsec/internal/cmdlog"
 	"defendsec/internal/policy"
 	"defendsec/internal/presence"
+	"defendsec/internal/sign"
 	"defendsec/internal/storepg"
 )
 
@@ -52,16 +54,24 @@ func agentServer(t *testing.T, policySrc string) (*Server, *storepg.Store) {
 	// obvious once seen and invisible until then.
 	if _, err := pool.Exec(ctx,
 		`TRUNCATE agent_principals, pending_commands, pending_command_approvals,
-		 policy_decisions, audit_log, alerts, package_changes, devices,
-		 break_glass CASCADE`); err != nil {
+		 policy_decisions, audit_log, alerts, package_changes, commands,
+		 devices, break_glass CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 
 	store := storepg.New(pool)
+	// A real signing key and command log: the autonomy tests assert that a
+	// command is actually signed, which a stubbed signer would not establish.
+	signer, err := sign.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := &Server{
 		adminToken:  "admin-token",
 		viewerToken: "viewer-token",
 		log:         slog.New(slog.DiscardHandler),
+		signer:      signer,
+		commands:    cmdlog.New(filepath.Join(t.TempDir(), "commands.json")),
 	}
 	s.SetPostgres(store)
 	s.store = presence.New(filepath.Join(t.TempDir(), "defendsec.json"))

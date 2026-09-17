@@ -104,7 +104,60 @@ rules:
       hours: "09:00-17:00"
       days: [mon, tue, wed, thu, fri]
 
+  # AI agents (roadmap 4.1). Deny-by-default extends to them: without a rule
+  # naming the agent role, a registered agent can read the fleet and propose
+  # nothing successfully.
+  #
+  # This permits proposals only. Every one is recorded unsigned and needs a
+  # human approval, whatever this rule says, because an agent's own approval
+  # never counts.
+  - id: agents-may-propose-containment
+    effect: permit
+    roles: [agent]
+    commands: [isolate, quarantine_path]
+
+  # Read-only queries, in their own rule so bounded autonomy (roadmap 4.4) can
+  # be switched on here with a one-line change.
+  #
+  # Uncomment `autonomous: true` below to let an agent run live queries with
+  # no human in the loop. A read-only query is the right first thing to
+  # automate: the worst outcome of getting it wrong is noise, not an outage.
+  # It is capped at 20 an hour fleet-wide by query-fleet-hourly, and an
+  # autonomous rule with no covering limit is refused at load.
+  #
+  # It still needs the second switch. The principal must have autonomy
+  # enabled on it as well:
+  #
+  #   curl -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  #     -H 'content-type: application/json' \
+  #     -d '{"name":"triage","enabled":true}' \
+  #     http://127.0.0.1:47264/v1/agents/autonomy
+  #
+  # Put autonomy on the only rule matching a command, not alongside an
+  # existing permit: where two permits match, the one withholding autonomy
+  # wins, so a broad non-autonomous rule silently shadows a narrower
+  # autonomous one. That is why live_query has a rule of its own here rather
+  # than sharing the containment rule above.
+  #
+  # Consider adding `exclude_host_classes: [critical, domain-controller]` to
+  # this rule before enabling autonomy, so unattended queries stay off the
+  # hosts where surprises cost most.
+  #
+  # Note what is deliberately absent: no autonomous rule for isolate. An agent
+  # that can take hosts off the network unattended is a denial-of-service tool
+  # with good intentions, and that is not something to ship switched on or to
+  # suggest casually.
+  - id: agents-may-query
+    effect: permit
+    roles: [agent]
+    commands: [live_query]
+    # autonomous: true
+
 limits:
+  # Every command an autonomous rule names must be covered by a limit, or the
+  # policy is refused at load. The autonomy example above relies on
+  # query-fleet-hourly below.
+
   # Fleet-wide rather than per-host. A per-host limit would happily isolate the
   # whole estate one host at a time, which is exactly the runaway this exists
   # to stop.
@@ -127,4 +180,13 @@ limits:
     commands: [run_script, quarantine_path]
     scope: fleet
     max: 10
+    per: 1h
+
+  # Live queries are read-only, so the cap is generous — but it exists,
+  # because an autonomous rule with no ceiling is refused at load and because
+  # a loop hammering the fleet with queries is still a loop.
+  - id: query-fleet-hourly
+    commands: [live_query]
+    scope: fleet
+    max: 20
     per: 1h

@@ -107,8 +107,10 @@ type Proposal struct {
 
 // ProposalOutcome is what happened to a proposal.
 type ProposalOutcome struct {
-	Status    string           `json:"status"`
-	PendingID string           `json:"pendingId,omitempty"`
+	Status    string `json:"status"`
+	PendingID string `json:"pendingId,omitempty"`
+	// CommandID is set only when the proposal executed autonomously.
+	CommandID string           `json:"commandId,omitempty"`
 	Detail    string           `json:"detail"`
 	Decision  *policy.Decision `json:"decision,omitempty"`
 	// RequiredApprovals and Approvals report how far from signable it is.
@@ -237,6 +239,25 @@ func (s *Server) Propose(ctx context.Context, agent storepg.AgentPrincipal, p Pr
 		}, nil
 	}
 
+	// Bounded autonomy (roadmap 4.4). Both switches must be on: the rule
+	// marked autonomous, and this principal permitted to use it. Otherwise
+	// the proposal takes the ordinary path below and waits for a human,
+	// which is what every agent does by default.
+	autonomy := mayActAutonomously(agent, decision)
+	if autonomy.Permitted {
+		rec, err := s.issueAutonomous(ctx, agent, p, payload, polReq, decision, autonomy.Reason)
+		if err != nil {
+			return ProposalOutcome{}, err
+		}
+		d := decision
+		return ProposalOutcome{
+			Status:    "executed",
+			Detail:    fmt.Sprintf("Executed without a human approval as command %s. %s Blast-radius limits were evaluated and counted as for any other command, and the action is attributed to this agent in the signed ledger.", rec.ID, autonomy.Reason),
+			Decision:  &d,
+			CommandID: rec.ID,
+		}, nil
+	}
+
 	// Permitted, or permitted-with-approvals. Either way it is recorded
 	// unsigned and needs a human.
 	required := decision.RequiredApprovals
@@ -269,6 +290,10 @@ func (s *Server) Propose(ctx context.Context, agent storepg.AgentPrincipal, p Pr
 	}
 	s.recordDecision(ctx, polReq, decision, "")
 	s.audit(agent.Identity(), "agent_proposal_recorded", p.DeviceID, map[string]any{
+		// Why this waited rather than ran. Recorded even in the ordinary case
+		// so an operator who expected autonomy and did not get it can find
+		// out which of the two switches was off.
+		"autonomy":    autonomy.Reason,
 		"pendingId":   pending.ID,
 		"commandType": p.CommandType,
 		// The model is recorded as the agent's operator declared it.

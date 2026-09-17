@@ -1106,10 +1106,52 @@ DefendSec invented would route around that allowlist using the operator's creden
 radius, with every action attributed to the model in the signed ledger and trivially revocable.
 The operator sets the ceiling; the cryptography enforces it.
 
+*Delivered.* An agent acts without a human only when **both** switches are on: the permitting policy
+rule is marked `autonomous: true`, and the agent principal has autonomy enabled on it. Two rather
+than one, because they revoke differently — turning off the rule stops every agent and needs a
+policy reload, while turning off the principal stops one agent with a single call and touches
+nothing governing the others. "Trivially revocable" has to mean the second thing.
+
+Both default to off. A principal registered today proposes and never acts, and the shipped policy
+ships nothing autonomous.
+
+Three things are refused when the policy is **parsed**, not when a command is attempted, because a
+policy that cannot be safe should not start: autonomy on a deny rule; autonomy together with
+`require_approvals` above one, which asks for a human and for no human at once; and — the important
+one — **autonomy over any command no limit covers.** "The operator sets the ceiling" is the whole
+claim, and a rule with no ceiling is a runaway with paperwork. A wildcard rule needs a wildcard
+limit, and a limit of `max: 0` forbids rather than bounds so it does not count as a ceiling.
+
+Everything else is unchanged: the same policy engine, the same blast-radius limits counted the same
+way, the same signing key, the same hash-chained ledger. Autonomy removes the human from the loop
+and removes nothing else. There is a test that an autonomous agent sweeping the fleet stops at
+exactly its configured limit, and another that deny-by-default is not suspended by autonomy.
+
+Autonomous actions are recorded under their own audit action, `agent_autonomous_action`, rather than
+the generic `command_issue`. An auditor asking "what did the AI do by itself" answers it by
+filtering the ledger rather than by inferring from an actor string, and the command's actor is the
+agent — never a human who did not authorise it.
+
+Writing this surfaced a trap worth recording. Where two permit rules match one command, the engine
+took the strictest by approval count, and on a tie the first one found. That meant a broad
+non-autonomous permit and a narrow autonomous one could both match, with the winner decided by file
+order — so an operator adding an autonomous rule alongside an existing permit might get autonomy or
+might not. The tie-break is now explicit and conservative: **a rule withholding autonomy beats one
+granting it.** Where the document says two things about the same command, the reading that keeps a
+human in the loop holds. The shipped policy was reshaped accordingly — `live_query` has a rule of
+its own with `# autonomous: true` ready to uncomment, rather than sharing the containment rule where
+it would have been silently shadowed — and there is a test that uncommenting that line actually
+produces an autonomous decision, so the example cannot rot into one that does nothing.
+
+Two nil-dereference panics were fixed on the way. `issueAutonomous` dereferenced the signer and
+`Hub.Send`/`Hub.Connected` dereferenced a nil hub; both run on the request path, where a panic takes
+the control plane down. The one thing worse than an agent that cannot act is a server that stops
+defending because an agent tried to.
+
 **Acceptance:** an AI agent can triage an alert, gather evidence via allowlisted queries, and
 propose a bounded response; the proposal is unsignable without a human approver; the ledger
 records model identity, reasoning, and the approving human, and `defendsec verify` validates the
-whole chain.
+whole chain. *Met, with a test for each clause.*
 
 ---
 

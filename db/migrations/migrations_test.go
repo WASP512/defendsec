@@ -32,6 +32,7 @@ func TestEmbeddedMigrationsContainRequiredSchema(t *testing.T) {
 		"012_policy.sql",
 		"013_agents.sql",
 		"014_package_changes.sql",
+		"015_agent_autonomy.sql",
 	}
 	if len(names) != len(want) {
 		t.Fatalf("embedded migrations = %v, want %v", names, want)

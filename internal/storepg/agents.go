@@ -38,6 +38,20 @@ type AgentPrincipal struct {
 	LastSeenAt  time.Time `json:"lastSeenAt,omitempty"`
 	RevokedAt   time.Time `json:"revokedAt,omitempty"`
 	RevokedBy   string    `json:"revokedBy,omitempty"`
+
+	// AutonomyEnabled is the per-principal half of bounded autonomy
+	// (roadmap 4.4). The other half is a policy rule marked autonomous, and
+	// both must hold. False by default, so an agent registered today
+	// proposes and never acts.
+	AutonomyEnabled   bool      `json:"autonomyEnabled"`
+	AutonomyGrantedAt time.Time `json:"autonomyGrantedAt,omitempty"`
+	AutonomyGrantedBy string    `json:"autonomyGrantedBy,omitempty"`
+}
+
+// MayActAutonomously reports whether this principal is permitted to execute
+// without a human, which still requires a policy rule saying so as well.
+func (a AgentPrincipal) MayActAutonomously() bool {
+	return a.Active() && a.AutonomyEnabled
 }
 
 // Identity is how this principal appears in the ledger.
@@ -132,13 +146,15 @@ func (s *Store) CreateAgentPrincipal(ctx context.Context, name, model, descripti
 }
 
 const agentColumns = `id, name, model, description, created_at, created_by,
-	disabled, last_seen_at, revoked_at, revoked_by`
+	disabled, last_seen_at, revoked_at, revoked_by,
+	autonomy_enabled, autonomy_granted_at, autonomy_granted_by`
 
 func scanAgent(row pgx.Row) (AgentPrincipal, error) {
 	var a AgentPrincipal
-	var lastSeen, revokedAt *time.Time
+	var lastSeen, revokedAt, grantedAt *time.Time
 	if err := row.Scan(&a.ID, &a.Name, &a.Model, &a.Description, &a.CreatedAt,
-		&a.CreatedBy, &a.Disabled, &lastSeen, &revokedAt, &a.RevokedBy); err != nil {
+		&a.CreatedBy, &a.Disabled, &lastSeen, &revokedAt, &a.RevokedBy,
+		&a.AutonomyEnabled, &grantedAt, &a.AutonomyGrantedBy); err != nil {
 		return AgentPrincipal{}, err
 	}
 	a.CreatedAt = a.CreatedAt.UTC()
@@ -147,6 +163,9 @@ func scanAgent(row pgx.Row) (AgentPrincipal, error) {
 	}
 	if revokedAt != nil {
 		a.RevokedAt = revokedAt.UTC()
+	}
+	if grantedAt != nil {
+		a.AutonomyGrantedAt = grantedAt.UTC()
 	}
 	return a, nil
 }
@@ -242,4 +261,42 @@ func (s *Store) GetAgentPrincipal(ctx context.Context, name string) (AgentPrinci
 		return AgentPrincipal{}, ErrNotFound
 	}
 	return a, err
+}
+
+// SetAgentAutonomy grants or withdraws a principal's autonomy.
+//
+// Withdrawal is the important direction and is why this exists as its own
+// call: revoking autonomy from one misbehaving agent must not require editing
+// the policy document that governs every other one.
+//
+// A revoked principal cannot be granted autonomy. It would be inert — the
+// token no longer authenticates — but a row reading "revoked and autonomous"
+// is the kind of contradiction somebody later has to reason about.
+func (s *Store) SetAgentAutonomy(ctx context.Context, name string, enabled bool, by string) (AgentPrincipal, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var tag interface{ RowsAffected() int64 }
+	var err error
+	if enabled {
+		tag, err = s.pool.Exec(ctx, `
+			UPDATE agent_principals
+			SET autonomy_enabled=true, autonomy_granted_at=now(), autonomy_granted_by=$2
+			WHERE name=$1 AND revoked_at IS NULL AND disabled=false
+		`, name, by)
+	} else {
+		// Withdrawal does not require the principal to be active: an operator
+		// pulling autonomy from something already disabled should succeed
+		// rather than be told the state they wanted is unreachable.
+		tag, err = s.pool.Exec(ctx, `
+			UPDATE agent_principals
+			SET autonomy_enabled=false, autonomy_granted_at=NULL, autonomy_granted_by=''
+			WHERE name=$1
+		`, name)
+	}
+	if err != nil {
+		return AgentPrincipal{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return AgentPrincipal{}, ErrNotFound
+	}
+	return s.GetAgentPrincipal(ctx, name)
 }
