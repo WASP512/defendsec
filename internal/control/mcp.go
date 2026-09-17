@@ -117,6 +117,57 @@ func (s *Server) mcpToolSet() *mcp.ToolSet {
 	})
 
 	tools.MustAdd(mcp.Tool{
+		Name:        "defendsec.explain_alert",
+		Title:       "Explain an alert",
+		Description: "Explains a file-integrity alert by correlating the changed file against its owning package and this host's observed package history. Deterministic correlation over DefendSec's own records — no model is involved. A verdict of 'unexplained' is the security-relevant one: it means nothing on the host accounts for the change. A verdict of 'package-upgrade' explains the change but does NOT resolve it, because an upgrade of the owning package is also the most convenient cover for a hand edit in the same window.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"alertId": map[string]any{
+					"type":        "string",
+					"description": "The alert to explain, as returned by defendsec.list_alerts.",
+				},
+			},
+			"required":             []string{"alertId"},
+			"additionalProperties": false,
+		},
+		Handler: s.toolExplainAlert,
+	})
+
+	tools.MustAdd(mcp.Tool{
+		Name:        "defendsec.summarise_alerts",
+		Title:       "Summarise alerts",
+		Description: "Groups alerts that look like one underlying event, largest cluster first, and calls out the ones that group with nothing else. On a busy fleet the lone alert is usually the one worth reading and a queue sorted by time buries it. Read this before working through alerts one at a time.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"status":   map[string]any{"type": "string", "description": "open, acknowledged or resolved."},
+				"kind":     map[string]any{"type": "string", "description": "Alert kind."},
+				"deviceId": map[string]any{"type": "string", "description": "Restrict to one host."},
+				"limit":    map[string]any{"type": "integer", "description": "Maximum alerts to consider. Default 200."},
+			},
+			"additionalProperties": false,
+		},
+		Handler: s.toolSummariseAlerts,
+	})
+
+	tools.MustAdd(mcp.Tool{
+		Name:        "defendsec.package_history",
+		Title:       "Package history",
+		Description: "Observed package version transitions for a host. Timestamps are when DefendSec noticed, not when the upgrade ran — inventory arrives on a heartbeat interval, so the change is somewhere in the preceding window.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"deviceId": map[string]any{"type": "string", "description": "The host."},
+				"limit":    map[string]any{"type": "integer", "description": "Maximum transitions. Default 100."},
+			},
+			"required":             []string{"deviceId"},
+			"additionalProperties": false,
+		},
+		Handler: s.toolPackageHistory,
+	})
+
+	tools.MustAdd(mcp.Tool{
 		Name:        "defendsec.propose_response",
 		Title:       "Propose a response",
 		Description: "Records an unsigned proposal for a human to approve. This does NOT execute: the proposal has no signature and cannot acquire one without a human approval. Policy is evaluated immediately, so a proposal the policy forbids is refused here and now with the rule that decided.",
@@ -360,4 +411,78 @@ func (s *Server) toolProposeResponse(ctx context.Context, args json.RawMessage) 
 		res.IsError = true
 	}
 	return res, nil
+}
+
+func (s *Server) toolExplainAlert(ctx context.Context, args json.RawMessage) (mcp.Result, error) {
+	var in struct {
+		AlertID string `json:"alertId"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return mcp.ToolError("alertId is required and must be a string."), nil
+	}
+	exp, why, err := s.ExplainAlertDrift(ctx, in.AlertID)
+	if err != nil {
+		return mcp.Result{}, err
+	}
+	if exp == nil {
+		return mcp.ToolError("%s", why), nil
+	}
+	followUps, _, _ := s.FollowUpsForAlert(ctx, in.AlertID)
+	return mcp.Structured(exp.Summary, map[string]any{
+		"explanation": exp,
+		"followUps":   followUps,
+	}), nil
+}
+
+func (s *Server) toolSummariseAlerts(ctx context.Context, args json.RawMessage) (mcp.Result, error) {
+	var in struct {
+		Status   string `json:"status"`
+		Kind     string `json:"kind"`
+		DeviceID string `json:"deviceId"`
+		Limit    int    `json:"limit"`
+	}
+	if len(args) > 0 {
+		if err := json.Unmarshal(args, &in); err != nil {
+			return mcp.ToolError("arguments must be an object."), nil
+		}
+	}
+	if in.Limit <= 0 || in.Limit > 1000 {
+		in.Limit = 200
+	}
+	summary, err := s.SummariseAlerts(ctx, storepg.AlertFilters{
+		Status: in.Status, Kind: in.Kind, DeviceID: in.DeviceID, Limit: in.Limit,
+	})
+	if err != nil {
+		return mcp.Result{}, err
+	}
+	return mcp.Structured(
+		fmt.Sprintf("%d alert(s) in %d cluster(s), with %d that group with nothing else.",
+			summary.Total, len(summary.Clusters), len(summary.Singletons)),
+		summary), nil
+}
+
+func (s *Server) toolPackageHistory(ctx context.Context, args json.RawMessage) (mcp.Result, error) {
+	var in struct {
+		DeviceID string `json:"deviceId"`
+		Limit    int    `json:"limit"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return mcp.ToolError("deviceId is required and must be a string."), nil
+	}
+	if s.pg == nil {
+		return mcp.ToolError("No database is configured, so DefendSec holds no package history. The absence of transitions here is the absence of data, not the absence of upgrades."), nil
+	}
+	changes, err := s.pg.RecentPackageChanges(ctx, strings.TrimSpace(in.DeviceID), in.Limit)
+	if err != nil {
+		return mcp.Result{}, err
+	}
+	if changes == nil {
+		changes = []storepg.PackageChange{}
+	}
+	return mcp.Structured(
+		fmt.Sprintf("%d observed package transition(s).", len(changes)),
+		map[string]any{
+			"changes": changes,
+			"note":    "Timestamps are when DefendSec noticed, not when the upgrade ran.",
+		}), nil
 }

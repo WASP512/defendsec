@@ -254,6 +254,11 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/detection/coverage", svc.HandleDetectionCoverage)
 	adminMux.HandleFunc("/v1/detection/forwarding", svc.HandleForwarding)
 
+	// Triage assistance (roadmap 4.3). Deterministic correlation over
+	// DefendSec's own records; no model is involved and nothing leaves the box.
+	adminMux.HandleFunc("/v1/triage", svc.HandleTriage)
+	adminMux.HandleFunc("/v1/packages/changes", svc.HandlePackageChanges)
+
 	// AI agent principals (roadmap 4.1). Admin-only: registering a principal
 	// hands out a credential that can read the fleet and propose responses.
 	adminMux.HandleFunc("/v1/agents", svc.HandleAgents)

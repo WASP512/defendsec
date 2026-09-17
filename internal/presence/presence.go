@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -574,4 +575,61 @@ func (f *File) write(doc snapshot) error {
 		return err
 	}
 	return os.Rename(tmp, f.path)
+}
+
+// PackageChange is one observed version transition (roadmap 4.3).
+type PackageChange struct {
+	Package         string `json:"package"`
+	PreviousVersion string `json:"previousVersion,omitempty"`
+	NewVersion      string `json:"newVersion,omitempty"`
+}
+
+// Upgrade reports whether this was a version change rather than an install or
+// a removal. Triage cares about the distinction: only an upgrade explains a
+// configuration file being rewritten in place.
+func (c PackageChange) Upgrade() bool {
+	return c.PreviousVersion != "" && c.NewVersion != "" && c.PreviousVersion != c.NewVersion
+}
+
+// DiffSoftware reports what changed between two software inventories.
+//
+// Pure, so the correlation built on it can be tested without a database or a
+// host. An empty previous inventory returns nothing rather than reporting
+// every installed package as newly appeared: the first heartbeat from a host
+// is not a thousand installs, and treating it as one would bury the real
+// changes that follow under noise on day one.
+func DiffSoftware(previous, current []Software) []PackageChange {
+	if len(previous) == 0 {
+		return nil
+	}
+	was := make(map[string]string, len(previous))
+	for _, s := range previous {
+		was[s.Name] = s.Version
+	}
+	now := make(map[string]string, len(current))
+	for _, s := range current {
+		now[s.Name] = s.Version
+	}
+
+	var out []PackageChange
+	for name, version := range now {
+		old, existed := was[name]
+		switch {
+		case !existed:
+			out = append(out, PackageChange{Package: name, NewVersion: version})
+		case old != version:
+			out = append(out, PackageChange{
+				Package: name, PreviousVersion: old, NewVersion: version,
+			})
+		}
+	}
+	for name, version := range was {
+		if _, still := now[name]; !still {
+			out = append(out, PackageChange{Package: name, PreviousVersion: version})
+		}
+	}
+	// Sorted so a caller writing these to a store, or a test asserting on
+	// them, sees a stable order rather than Go's map iteration.
+	sort.Slice(out, func(i, j int) bool { return out[i].Package < out[j].Package })
+	return out
 }

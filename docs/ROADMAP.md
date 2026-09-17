@@ -1036,6 +1036,55 @@ its owning package, correlate against the pending-update list — *"this changed
 `openssh-server` was upgraded 4 minutes earlier"* is both an excellent auto-resolve signal and an
 excellent demo); suggested follow-up queries drawn only from the existing allowlist.
 
+*Delivered, and deliberately not as a prompt.* This is filed under the AI control plane and it
+would have been easy to make it a model call. It is deterministic correlation instead, for two
+reasons: "was this file rewritten by a package upgrade?" has a factual answer in stored data, and a
+self-hosted security product that needs an outbound API call to triage an alert is one that stops
+triaging when the network is the thing under attack. The same explanation is served to the console
+and to an agent over MCP, so the operator and the model read the same analysis rather than two that
+can disagree.
+
+**The example in the paragraph above was not answerable when it was written.** Software inventory
+was a JSONB snapshot overwritten on every heartbeat, so there was no record that a package had ever
+changed version — only what was installed now. Migration 014 adds `package_changes`, recording
+transitions as they are observed, which also answers a compliance question that was previously
+unanswerable: when was this host actually patched, as opposed to when did it last report updates
+available. The first inventory from a host records nothing rather than reporting every installed
+package as newly appeared.
+
+**It explains; it does not resolve.** The roadmap calls a package-upgrade correlation "an excellent
+auto-resolve signal" and this stops deliberately short of that. A package upgrade immediately
+before a security-relevant configuration file changes is both the most common innocent explanation
+and exactly the cover an attacker would choose — an upgrade of `openssh-server` does not stop a
+`PermitRootLogin` line from having been added by hand in the same window. So every explanation
+carries the timeline it rests on, a caveat saying what it does not establish, and the specific
+checks that would settle it. `AutoResolvable` exists as a field that is always false, so nothing
+downstream can mistake a confident verdict for permission to close the alert.
+
+Five verdicts, and the useful one is negative: `unexplained` means nothing on the host accounts for
+the change, which is what makes `package-upgrade` mean anything. `package-activity` is the case a
+naive implementation gets wrong — packages changed nearby but none of them owns the file, which is
+not an explanation and would have resolved an intrusion. `local-change` is stronger than
+unexplained: the path belongs to no package, so an upgrade *cannot* be the cause.
+`unknown-ownership` refuses to draw a conclusion at all, because the absence of a correlation means
+nothing when ownership was never resolved.
+
+Path ownership comes from a curated map covering the paths DefendSec watches by default, with
+drop-in files inheriting their directory's owner. The authoritative answer is the package manager's
+own (`dpkg -S`, `rpm -qf`), which would need a new agent capability and is worth doing later; until
+then anything outside the map returns no owner rather than a guess, because a wrong owner produces
+a confident explanation of the wrong thing.
+
+Summarisation is grouping and counting rather than prose: clustering is on (kind, title), which is
+crude on purpose — a cleverer similarity measure would group things that merely look alike, and an
+operator who trusts a cluster that silently swallowed an unrelated alert is worse off than one
+reading a longer list. Alerts that group with nothing else are called out separately, because on a
+busy fleet the lone alert is usually the one worth reading and a queue sorted by time buries it.
+
+Follow-up suggestions are drawn only from the operator's own saved queries and never generated. The
+live-query surface is an allowlist precisely so arbitrary queries cannot be run; suggesting one
+DefendSec invented would route around that allowlist using the operator's credentials.
+
 **4.4 — Bounded autonomy.** Optional per-policy autonomous execution, constrained by Phase 2 blast
 radius, with every action attributed to the model in the signed ledger and trivially revocable.
 The operator sets the ceiling; the cryptography enforces it.

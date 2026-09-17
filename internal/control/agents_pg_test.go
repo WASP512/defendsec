@@ -46,9 +46,14 @@ func agentServer(t *testing.T, policySrc string) (*Server, *storepg.Store) {
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
+	// Everything these tests read or write. A table left out leaks an
+	// earlier test's rows into a later one's correlation, which shows up as a
+	// confident explanation built on another test's history — the failure is
+	// obvious once seen and invisible until then.
 	if _, err := pool.Exec(ctx,
 		`TRUNCATE agent_principals, pending_commands, pending_command_approvals,
-		 policy_decisions, audit_log, devices, break_glass CASCADE`); err != nil {
+		 policy_decisions, audit_log, alerts, package_changes, devices,
+		 break_glass CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -69,13 +74,23 @@ func agentServer(t *testing.T, policySrc string) (*Server, *storepg.Store) {
 }
 
 // enrolHost registers a device the proposal can target.
+//
+// Written to both stores. The file store is what the server reads for host
+// lookups, and Postgres is what alerts reference by foreign key — a host in
+// only one of them fails in whichever place the test does not look.
 func enrolHost(t *testing.T, s *Server, id, hostname string) {
 	t.Helper()
-	if err := s.store.Upsert(presence.Device{
+	dev := presence.Device{
 		ID: id, Hostname: hostname, Platform: "linux",
 		LastSeen: time.Now().UTC().Format(time.RFC3339),
-	}); err != nil {
+	}
+	if err := s.store.Upsert(dev); err != nil {
 		t.Fatal(err)
+	}
+	if s.pg != nil {
+		if err := s.pg.UpsertDevice(context.Background(), dev); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

@@ -1080,3 +1080,73 @@ given — alongside the approving human once one approves. That is what lets an 
 not just what was done, but what recommended it.
 
 `defendsec verify` validates the whole chain, proposals included.
+
+---
+
+## Triage assistance — correlation, not a model
+
+DefendSec explains its own alerts by correlating its own records. No model is involved, nothing is
+sent anywhere, and it keeps working when the network is the thing under attack.
+
+```bash
+# Explain one alert
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  'http://127.0.0.1:47264/v1/triage?alertId=<id>'
+
+# Summarise the open queue
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  'http://127.0.0.1:47264/v1/triage?status=open'
+
+# A host's observed package history
+curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
+  'http://127.0.0.1:47264/v1/packages/changes?deviceId=<id>'
+```
+
+### File-integrity drift
+
+A file-integrity alert is correlated against the changed file's owning package and the host's
+observed package history. Five verdicts:
+
+| Verdict | Meaning |
+|---|---|
+| `package-upgrade` | A package that owns this path was upgraded inside the window. The ordinary explanation. |
+| `package-activity` | Packages changed nearby, but **none owns this file**. Not an explanation. |
+| `local-change` | The path belongs to no package, so an upgrade cannot be the cause. Somebody edited it. |
+| `unexplained` | Nothing on the host accounts for it. **This is the one to read.** |
+| `unknown-ownership` | The path is not in the ownership map, so nothing was ruled in or out. |
+
+**It explains; it does not resolve.** A package upgrade immediately before a security-relevant
+config file changes is both the most common innocent explanation and exactly the cover an attacker
+would choose. Every explanation carries a caveat and the checks that would actually settle it, and
+there is no auto-resolve — the `autoResolvable` field is always false so nothing downstream can
+treat a confident verdict as permission to close the alert.
+
+Package history needs a configured database. Without one the verdict reflects the absence of data,
+not the absence of an upgrade, and says so.
+
+### Path ownership
+
+Resolved from a curated map covering the paths DefendSec watches by default, with drop-in files
+inheriting their directory's owner (`/etc/ssh/sshd_config.d/99-hardening.conf` → `openssh-server`).
+Anything outside the map returns **no owner** rather than a guess: a wrong owner would produce a
+confident explanation of the wrong thing.
+
+If you watch extra paths via `DEFENDSEC_FIM_PATHS`, expect `unknown-ownership` on them. Asking the
+package manager directly (`dpkg -S`, `rpm -qf`) is the authoritative answer and is not yet wired
+into the agent.
+
+### Summarisation
+
+Groups alerts on (kind, title) — crude on purpose. A cleverer similarity measure would group things
+that merely look alike, and a cluster that silently swallowed an unrelated alert is worse than a
+longer list. Alerts that group with nothing else are listed separately: on a busy fleet those are
+usually the ones worth reading, and a queue sorted by time buries them.
+
+A finding that appears on many hosts at once is usually one change rolling across the fleet rather
+than N separate incidents, and the summary says so.
+
+### Follow-up queries
+
+Suggested only from **your own saved queries**, never generated. The live-query surface is an
+allowlist so arbitrary queries cannot be run; a suggested query DefendSec invented would route
+around that allowlist using your credentials.
