@@ -34,6 +34,13 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
+      # Reproducibility is checked on every pull request, not only at release.
+      # It breaks by someone dropping a build flag, and that is a code review
+      # away from shipping — catching it at tag time means catching it when a
+      # release is already half out.
+      - name: Reproducible builds
+        run: ./scripts/check-reproducible.sh
+
       - name: govulncheck
         # govulncheck's own go.mod can require a newer Go than this repo's
         # pinned toolchain (go.mod's `go`/`toolchain` directives). Scope
@@ -66,13 +73,21 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Test against Postgres (internal/storepg, db/migrations)
+      - name: Test against Postgres
         env:
           TEST_DATABASE_URL: postgres://defendsec:defendsec@localhost:5432/defendsec?sslmode=disable
+        # Every package whose tests skip without a database. internal/control
+        # was missing here, which meant the guarantees Phase 1 and Phase 4
+        # exist to make — per-user attribution, an agent being unable to sign,
+        # autonomy staying inside its bounds — had tests that ran locally and
+        # silently skipped in CI. A guarantee whose test never runs is not a
+        # guarantee, so this list is asserted rather than maintained by
+        # memory: see TestEveryIntegrationPackageRunsInCI.
+        #
         # -p 1 runs the packages one at a time. They share a database, and
         # migration DDL takes ACCESS EXCLUSIVE on audit_log while an audit
         # append holds it, so running them concurrently can deadlock.
-        run: go test -p 1 ./internal/storepg/... ./db/migrations/...
+        run: go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/...
 
   node:
     runs-on: ubuntu-latest

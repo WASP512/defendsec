@@ -28,6 +28,16 @@ import (
 	"defendsec/internal/webtls"
 )
 
+// buildCommit is the source commit this binary was built from, stamped by
+// scripts/build-release.sh (roadmap 5.7).
+//
+// Stamped explicitly rather than left to Go's automatic VCS stamping, which
+// is switched off in release builds: automatic stamping makes the binary
+// depend on a .git directory being present, so a verifier rebuilding from a
+// source tarball gets a different hash than the release. An explicit value is
+// a build input, and reproducing the release means passing the same one.
+var buildCommit = "unknown"
+
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(log); err != nil {
@@ -37,6 +47,12 @@ func main() {
 }
 
 func run(log *slog.Logger) error {
+	// No flags on this binary — it is configured entirely by environment, so
+	// the build commit is reported in the startup log instead. An operator
+	// checking which build is serving their TLS has to be able to find it
+	// somewhere.
+	log.Info("defendsec-web starting", "commit", buildCommit)
+
 	mode, err := webtls.ParseMode(os.Getenv("DEFENDSEC_TLS"))
 	if err != nil {
 		// An unrecognised value is refused rather than falling back. Falling

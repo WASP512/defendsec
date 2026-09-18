@@ -7,6 +7,12 @@ on:
 
 permissions:
   contents: write
+  # Sigstore keyless signing and GitHub's provenance attestation both need an
+  # OIDC token. Keyless is the point: there is no long-lived signing key for
+  # anybody to lose, steal or have to rotate, and nothing an operator must
+  # fetch from a second channel they would have to trust separately.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -22,10 +28,44 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+
+      - name: Install SBOM tooling
+        env:
+          GOTOOLCHAIN: auto
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+
       - name: Build verified release bundle
         env:
           VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
         run: ./scripts/build-release.sh
+
+      # Checked here as well as in CI, because this is the build whose hashes
+      # operators are told they can reproduce. A release that is not
+      # reproducible must not ship claiming to be.
+      - name: Verify the release builds reproducibly
+        env:
+          COMMIT: ${{ github.sha }}
+        run: ./scripts/check-reproducible.sh
+
+      - uses: sigstore/cosign-installer@v3
+
+      # One signature over the checksum manifest rather than one per
+      # artifact. The manifest already binds every file by hash, so signing it
+      # covers the whole release — and gives an operator one thing to verify
+      # instead of twenty.
+      - name: Sign SHA256SUMS
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/SHA256SUMS.sig \
+            --output-certificate dist/SHA256SUMS.pem \
+            dist/SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/SHA256SUMS
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -33,5 +73,19 @@ jobs:
         run: |
           gh release view "$TAG" >/dev/null 2>&1 \
             || gh release create "$TAG" --generate-notes --title "DefendSec $TAG"
-          gh release upload "$TAG" dist/* --clobber
+          # Files only. A glob over dist/ would include any directory in
+          # it, which gh rejects.
+          find dist -maxdepth 1 -type f -print0 \
+            | xargs -0 gh release upload "$TAG" --clobber
 
+      # Verified as an operator would, against the release just published, so
+      # the instructions in docs/OPERATIONS.md are known to work rather than
+      # believed to.
+      - name: Verify the published release the way an operator would
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p verify-download
+          gh release download "$TAG" --dir verify-download --pattern '*'
+          ./scripts/verify-release.sh --repo "${{ github.repository }}" verify-download

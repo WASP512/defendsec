@@ -1245,3 +1245,98 @@ never a human who did not authorise it.
 
 When a proposal waits instead of running, the ledger records **which switch was off**, so an
 operator who expected autonomy does not have to read two configuration sources to find out why.
+
+---
+
+## Verifying a DefendSec release
+
+DefendSec asks you to verify signatures and provenance across your fleet. It holds itself to the
+same standard, and you should check rather than take our word for it.
+
+```bash
+# Download a release
+gh release download v1.2.3 --repo WASP512/defendsec --dir defendsec-v1.2.3
+
+# Verify it
+./scripts/verify-release.sh --repo WASP512/defendsec defendsec-v1.2.3
+
+# Or the strongest check: rebuild from source and compare
+./scripts/verify-release.sh --repo WASP512/defendsec --tag v1.2.3 --reproduce defendsec-v1.2.3
+```
+
+Four checks, in increasing order of what they prove:
+
+| Check | What it proves | Needs |
+|---|---|---|
+| Checksums | The files match the manifest, and no file is *missing* from it | nothing |
+| Signature | The manifest was signed by our release workflow | `cosign` |
+| Provenance | GitHub attests which workflow and commit built these bytes | `gh` |
+| Rebuild | The bytes are what this source produces — **requires no trust in us** | `go`, `git` |
+
+Any check that cannot run is skipped and named in the summary. The script reports what it did *not*
+verify rather than implying a clean bill of health.
+
+### Checking a signature by hand
+
+```bash
+cosign verify-blob \
+  --certificate SHA256SUMS.pem \
+  --signature SHA256SUMS.sig \
+  --certificate-identity-regexp '^https://github.com/WASP512/defendsec/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS
+```
+
+Signing is **keyless**: the identity is the release workflow itself, so there is no long-lived key
+for us to lose or an attacker to steal, and nothing you have to fetch from a second channel you
+would then have to trust separately. One signature covers the whole release, because `SHA256SUMS`
+already binds every file by hash.
+
+### Reproducing a build yourself
+
+```bash
+git clone --depth 1 --branch v1.2.3 https://github.com/WASP512/defendsec.git src
+COMMIT=$(git -C src rev-parse HEAD)
+rm -rf src/.git          # deliberately: a build must not depend on VCS metadata
+cd src && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+  go build -trimpath -buildvcs=false -ldflags "-s -w -X main.buildCommit=$COMMIT" \
+    -o /tmp/defendsec-apid ./cmd/defendsec-apid
+sha256sum /tmp/defendsec-apid   # compare against SHA256SUMS
+```
+
+Three things make this work, and the third is the one usually missed:
+
+- `-trimpath` — the build directory is not embedded, so the hash does not depend on where you built.
+- `CGO_ENABLED=0` — no host toolchain or libc involved.
+- `-buildvcs=false` — Go otherwise stamps the git commit into a main package, which makes the binary
+  depend on `.git` existing. Without this flag, building from a source tarball gives a different
+  hash than our CI produced. The commit is stamped explicitly instead, so nothing is lost.
+
+`./scripts/check-reproducible.sh` runs this comparison against every release target and is part of
+CI, so a dropped flag fails a pull request rather than surfacing at release time.
+
+### SBOMs
+
+Every release ships a CycloneDX SBOM per binary plus one for the console, checksummed alongside
+everything else. They are generated **from the built binaries**, not from the source tree — an SBOM
+should describe what is inside the artifact you downloaded, including the exact module versions the
+linker chose, rather than what `go.mod` would resolve to on a different day. The two can disagree,
+and only one of them is what you are running.
+
+```bash
+# Which version of a dependency is actually in the binary you have
+jq -r '.components[] | "\(.name) \(.version)"' defendsec-apid-linux-amd64.cdx.json | sort
+
+# Go's own view, straight from the binary, with no SBOM needed
+go version -m defendsec-apid-linux-amd64
+```
+
+### Which build am I running?
+
+```bash
+defendsec-apid --version      # prints the source commit
+defendsec-agentd --version    # prints the agent version and commit
+defendsec-verify --version
+```
+
+`defendsec-web` reports it in its startup log, having no flags of its own.

@@ -42,6 +42,16 @@ import (
 // so exposing it beyond localhost turns a leaked/guessed admin token into
 // full remote control. Set DEFENDSEC_ALLOW_NONLOOPBACK_ADMIN=1 to override
 // when the operator has their own network isolation in front of it.
+// buildCommit is the source commit this binary was built from, stamped by
+// scripts/build-release.sh (roadmap 5.7).
+//
+// Stamped explicitly rather than left to Go's automatic VCS stamping, which
+// is switched off in release builds: automatic stamping makes the binary
+// depend on a .git directory being present, so a verifier rebuilding from a
+// source tarball gets a different hash than the release. An explicit value is
+// a build input, and reproducing the release means passing the same one.
+var buildCommit = "unknown"
+
 func requireLoopbackAdminAddr(addr string) error {
 	if strings.TrimSpace(os.Getenv("DEFENDSEC_ALLOW_NONLOOPBACK_ADMIN")) == "1" {
 		return nil
@@ -71,6 +81,7 @@ func main() {
 }
 
 func run(log *slog.Logger) error {
+	showVersion := flag.Bool("version", false, "print the build commit and exit")
 	dataDir := flag.String("data-dir", "data", "directory for PKI and presence files")
 	httpAddr := flag.String("http-addr", "0.0.0.0:47262", "HTTPS enroll/health listen address")
 	grpcAddr := flag.String("grpc-addr", "0.0.0.0:47263", "mTLS gRPC listen address")
@@ -80,6 +91,11 @@ func run(log *slog.Logger) error {
 	advertise := flag.String("tls-hostname", strings.TrimSpace(os.Getenv("DEFENDSEC_TLS_HOSTNAME")), "extra hostname/IP SAN for the server certificate (or DEFENDSEC_TLS_HOSTNAME)")
 	dbURL := flag.String("db-url", "", "Postgres URL (or DATABASE_URL / DEFENDSEC_DATABASE_URL)")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(buildCommit)
+		return nil
+	}
 
 	if err := requireLoopbackAdminAddr(*adminAddr); err != nil {
 		return err
