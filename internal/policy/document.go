@@ -56,6 +56,25 @@ type Rule struct {
 	// Reason is shown when a deny rule fires. Required on deny rules: a
 	// denial an operator cannot understand becomes a ticket, then a bypass.
 	Reason string `yaml:"reason"`
+	// Autonomous lets an AI agent execute what this rule permits without a
+	// human approval (roadmap 4.4).
+	//
+	// Per-rule and off by default. There is deliberately no global switch:
+	// autonomy is a property of a specific narrow capability — "this agent
+	// may run this read-only query on these hosts" — and a single flag
+	// enabling it everywhere is how an operator ends up granting more than
+	// they meant to in one keystroke.
+	//
+	// Three things are refused at load time rather than at run time, because
+	// a policy that cannot be safe should not start:
+	//
+	//   - autonomy on a deny rule, which cannot be meant;
+	//   - autonomy together with require_approvals above one, which asks for
+	//     a human and for no human at once;
+	//   - autonomy over commands no limit covers. "The operator sets the
+	//     ceiling" is the whole claim, and a rule with no ceiling is a
+	//     runaway with paperwork.
+	Autonomous bool `yaml:"autonomous"`
 }
 
 // TimeWindow restricts a rule to certain hours and days.
@@ -214,9 +233,56 @@ func Parse(raw []byte) (*Document, error) {
 		l.window = d
 	}
 
+	// Autonomy is validated last, because whether a rule has a ceiling
+	// depends on the limits, and the limits are only known once parsed.
+	for i := range doc.Rules {
+		r := &doc.Rules[i]
+		if !r.Autonomous {
+			continue
+		}
+		if r.Effect != EffectPermit {
+			return nil, fmt.Errorf(
+				"rule %q is marked autonomous but does not permit; autonomy on a deny rule cannot be meant", r.ID)
+		}
+		if r.RequireApprovals > 1 {
+			return nil, fmt.Errorf(
+				"rule %q is marked autonomous and also requires %d approvals, which asks for a human and for no human at once",
+				r.ID, r.RequireApprovals)
+		}
+		for _, cmd := range r.Commands {
+			if !commandHasLimit(cmd, doc.Limits) {
+				return nil, fmt.Errorf(
+					"rule %q lets an agent run %q autonomously but no limit covers that command; autonomy without a blast-radius ceiling is a runaway, so add a limit or remove the autonomous flag",
+					r.ID, cmd)
+			}
+		}
+	}
+
 	sum := sha256.Sum256(raw)
 	doc.Hash = hex.EncodeToString(sum[:])
 	return &doc, nil
+}
+
+// commandHasLimit reports whether any limit bounds a command.
+//
+// A wildcard rule is only covered by a wildcard limit: a rule permitting "*"
+// autonomously with a limit on isolate alone would leave every other command
+// unbounded, which is exactly the gap this check exists to close.
+func commandHasLimit(command string, limits []Limit) bool {
+	for _, l := range limits {
+		if l.Max <= 0 {
+			// A limit of zero forbids rather than bounds, and a rule
+			// permitting what a zero limit forbids is already dead. It does
+			// not count as a ceiling for autonomy.
+			continue
+		}
+		for _, c := range l.Commands {
+			if c == "*" || c == command {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (w *TimeWindow) compile(loc *time.Location) error {

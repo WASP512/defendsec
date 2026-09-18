@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 
 import { ADMIN_COOKIE } from "./auth-tokens.ts";
 import { APID_ADMIN_URL } from "./commands.ts";
+import { partitionApprovals, type PendingCommand } from "./proposals.ts";
 
 // Client for policy-governed response (roadmap 2.1-2.6).
 //
@@ -62,19 +63,13 @@ export type PolicyDecision = {
   commandId?: string;
 };
 
-export type PendingCommand = {
-  id: string;
-  createdAt: string;
-  expiresAt: string;
-  deviceId: string;
-  hostname?: string;
-  commandType: string;
-  payload: string;
-  requestedBy: string;
-  requiredApprovals: number;
-  ruleId?: string;
-  approvals: string[];
-};
+// PendingCommand and the proposal predicate live in proposals.ts, which
+// imports nothing server-only. They are re-exported here so existing callers
+// are unaffected — and so a client component can reach them without dragging
+// next/headers into the browser bundle, which is a constraint only `next
+// build` enforces.
+export type { PendingCommand };
+export { isProposal as fromAgent } from "./proposals.ts";
 
 export type BreakGlass = {
   id: string;
@@ -148,6 +143,18 @@ export async function loadPendingApprovals(): Promise<PendingCommand[]> {
     {},
   );
   return body.pending ?? [];
+}
+
+// loadProposals returns only the AI-proposed requests awaiting review.
+export async function loadProposals(): Promise<PendingCommand[]> {
+  return partitionApprovals(await loadPendingApprovals()).proposals;
+}
+
+// loadHumanApprovals returns only the human requests awaiting a second
+// approver, so the generic approvals list never silently includes a proposal
+// whose case is not being shown.
+export async function loadHumanApprovals(): Promise<PendingCommand[]> {
+  return partitionApprovals(await loadPendingApprovals()).human;
 }
 
 export async function loadBreakGlass(): Promise<BreakGlassStatus> {

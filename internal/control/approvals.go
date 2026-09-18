@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"defendsec/internal/cmdlog"
+	"defendsec/internal/identity"
 	"defendsec/internal/policy"
 	"defendsec/internal/sign"
 	"defendsec/internal/storepg"
@@ -158,8 +159,24 @@ func (s *Server) approvePending(w http.ResponseWriter, r *http.Request, pg *stor
 
 // issueApproved re-evaluates and, if still permitted, signs and sends.
 func (s *Server) issueApproved(ctx context.Context, pending storepg.PendingCommand, approver string, now time.Time) (*cmdlog.Record, policy.Decision, error) {
+	// The role an approved request is re-evaluated under.
+	//
+	// A human request is evaluated as admin: an approver with admin authority
+	// is standing behind it, which is what the approval means.
+	//
+	// An agent proposal is re-evaluated as "agent" even though a human is
+	// approving it, and that is the whole point. Policy rules can match on
+	// role, so an operator can write a rule constraining what agents may
+	// propose. If approval promoted the request to admin, a human clicking
+	// approve would launder a proposal past the very rule written to bound
+	// it, and the bound would hold only until somebody was busy. The rule
+	// binds at signing time or it does not bind at all.
+	role := identity.RoleAdmin
+	if pending.FromAgent() {
+		role = RoleAgent
+	}
 	polReq := policy.Request{
-		Actor: pending.RequestedBy, Role: "admin",
+		Actor: pending.RequestedBy, Role: role,
 		CommandType: pending.CommandType, DeviceID: pending.DeviceID,
 		Hostname: pending.Hostname, At: now,
 		Approvals: pending.Approvals,

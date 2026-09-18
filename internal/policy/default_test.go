@@ -3,6 +3,7 @@ package policy
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,4 +151,147 @@ func TestShippedPolicyBehaviour(t *testing.T) {
 			t.Errorf("limit = %q", d.LimitExceeded)
 		}
 	})
+}
+
+// The shipped policy lets an agent propose and never lets one act
+// (roadmap 4.1, 4.4).
+func TestShippedPolicyLetsAgentsProposeButNotAct(t *testing.T) {
+	e := loadShipped(t)
+	weekday := time.Date(2026, 9, 15, 14, 0, 0, 0, time.UTC)
+
+	agentReq := func(cmd string, classes ...string) Request {
+		return Request{
+			Actor: "agent:triage", Role: "agent", CommandType: cmd,
+			DeviceID: "dev-1", At: weekday, HostClasses: classes,
+		}
+	}
+
+	// Proposable, and permitted by policy.
+	for _, cmd := range []string{"live_query", "isolate", "quarantine_path"} {
+		d, err := e.Evaluate(agentReq(cmd), noUsage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !d.Allowed() && d.Effect != EffectRequireApproval {
+			t.Errorf("%s: the shipped policy refuses an agent proposal outright: %s", cmd, d.Reason)
+		}
+		// Nothing ships autonomous. An operator has to opt in deliberately.
+		if d.Autonomous {
+			t.Errorf("%s: the shipped policy grants autonomy out of the box", cmd)
+		}
+	}
+
+	// run_script is not proposable at all, and the shipped policy does not
+	// permit it for an agent either.
+	d, err := e.Evaluate(agentReq("run_script"), noUsage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Allowed() {
+		t.Error("the shipped policy permits an agent to run scripts")
+	}
+}
+
+// The commented autonomy example in the shipped file must be correct, or an
+// operator who uncomments it gets a policy that refuses to load — at which
+// point the control plane will not start.
+func TestTheCommentedAutonomyExampleWouldLoad(t *testing.T) {
+	var raw []byte
+	for _, p := range []string{
+		"packaging/policy/default.yaml",
+		filepath.Join("..", "..", "packaging", "policy", "default.yaml"),
+	} {
+		if b, err := os.ReadFile(p); err == nil {
+			raw = b
+			break
+		}
+	}
+	if raw == nil {
+		t.Fatal("could not find the shipped policy")
+	}
+
+	const commented = "    # autonomous: true"
+	const uncommented = "    autonomous: true"
+
+	if !strings.Contains(string(raw), commented) {
+		t.Fatal("the commented autonomy example is not in the shipped policy in the expected form; if it was reworded, reword this test with it")
+	}
+	enabled := strings.Replace(string(raw), commented, uncommented, 1)
+
+	doc, err := Parse([]byte(enabled))
+	if err != nil {
+		t.Fatalf("uncommenting the shipped autonomy example produces a policy that will not load: %v", err)
+	}
+
+	var found bool
+	for _, r := range doc.Rules {
+		if r.ID == "agents-may-query" {
+			found = true
+			if !r.Autonomous {
+				t.Error("the example rule is not marked autonomous")
+			}
+		}
+	}
+	if !found {
+		t.Error("the uncommented rule did not parse")
+	}
+
+	// And it actually grants autonomy for a query on an ordinary host, while
+	// leaving critical hosts out.
+	e := NewEngine(doc)
+	weekday := time.Date(2026, 9, 15, 14, 0, 0, 0, time.UTC)
+	ordinary := Request{
+		Actor: "agent:triage", Role: "agent", CommandType: "live_query",
+		DeviceID: "dev-1", At: weekday,
+	}
+	d, err := e.Evaluate(ordinary, noUsage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.Autonomous {
+		t.Errorf("the example does not grant autonomy where it claims to: %+v", d)
+	}
+
+}
+
+// Autonomy must not be reachable through a rule that does not grant it. Where
+// the document says two things about one command, the reading that keeps a
+// human in the loop is the one that holds.
+func TestANonAutonomousPermitShadowsAnAutonomousOne(t *testing.T) {
+	e := NewEngine(mustParse(t, `
+version: 1
+name: overlapping
+rules:
+  - id: broad-propose
+    effect: permit
+    roles: [agent]
+    commands: [live_query, isolate]
+  - id: narrow-autonomous
+    effect: permit
+    roles: [agent]
+    commands: [live_query]
+    autonomous: true
+limits:
+  - id: query-hourly
+    commands: [live_query]
+    scope: fleet
+    max: 10
+    per: 1h
+`))
+	d, err := e.Evaluate(Request{
+		Actor: "agent:triage", Role: "agent", CommandType: "live_query",
+		DeviceID: "dev-1", At: time.Date(2026, 9, 15, 14, 0, 0, 0, time.UTC),
+	}, noUsage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.Allowed() {
+		t.Fatalf("the command was refused: %s", d.Reason)
+	}
+	if d.Autonomous {
+		t.Error("a broad non-autonomous permit was overridden by a narrower autonomous one")
+	}
+	if d.RuleID != "broad-propose" {
+		t.Errorf("ruleId = %q, want the non-autonomous rule", d.RuleID)
+	}
 }

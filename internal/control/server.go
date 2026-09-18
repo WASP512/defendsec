@@ -337,6 +337,14 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 			Severity: item.GetSeverity(), Pass: item.GetPass(), Detail: item.GetDetail(),
 		})
 	}
+	// Captured before ApplyInventory overwrites the stored snapshot. Without
+	// this the previous versions are gone and a package upgrade can never be
+	// correlated with the file it rewrote (roadmap 4.3).
+	var previousSoftware []presence.Software
+	if before, ok := s.store.Get(id); ok {
+		previousSoftware = before.Software
+	}
+
 	events, err := s.store.ApplyInventory(dev)
 	if err != nil {
 		s.log.Error("inventory", "err", err)
@@ -361,6 +369,14 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 		for _, ev := range events {
 			if err := s.pg.AppendFimEvent(ctx2, ev); err != nil {
 				s.log.Warn("postgres fim event", "err", err)
+			}
+		}
+		// Package transitions, for triage correlation. Best-effort: failing a
+		// host's heartbeat because its package history could not be written
+		// would trade the security function for a nicety.
+		if changes := presence.DiffSoftware(previousSoftware, merged.Software); len(changes) > 0 {
+			if err := s.pg.RecordPackageChanges(ctx2, id, merged.Hostname, changes); err != nil {
+				s.log.Warn("postgres package changes", "err", err)
 			}
 		}
 	}

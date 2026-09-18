@@ -254,6 +254,18 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/detection/coverage", svc.HandleDetectionCoverage)
 	adminMux.HandleFunc("/v1/detection/forwarding", svc.HandleForwarding)
 
+	// Triage assistance (roadmap 4.3). Deterministic correlation over
+	// DefendSec's own records; no model is involved and nothing leaves the box.
+	adminMux.HandleFunc("/v1/triage", svc.HandleTriage)
+	adminMux.HandleFunc("/v1/packages/changes", svc.HandlePackageChanges)
+
+	// AI agent principals (roadmap 4.1). Admin-only: registering a principal
+	// hands out a credential that can read the fleet and propose responses.
+	adminMux.HandleFunc("/v1/agents", svc.HandleAgents)
+	// Bounded autonomy (roadmap 4.4). Off for every principal by default, and
+	// still gated by a policy rule marked autonomous.
+	adminMux.HandleFunc("/v1/agents/autonomy", svc.HandleAgentAutonomy)
+
 	// The audit layer (roadmap 1.9).
 	adminMux.HandleFunc("/v1/audit/periods", svc.HandleAuditPeriods)
 	adminMux.HandleFunc("/v1/audit/periods/close", svc.HandleAuditPeriodClose)
@@ -471,7 +483,42 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("grpc listen: %w", err)
 	}
 
-	errCh := make(chan error, 3)
+	// The MCP endpoint for AI agents (roadmap 4.1).
+	//
+	// Off unless configured. An MCP endpoint is a control surface, and one
+	// listening by default is an attack surface the operator did not ask for.
+	// It gets its own listener rather than a path on the admin mux so it can
+	// be bound, firewalled and logged separately — an agent often runs
+	// somewhere the admin port deliberately is not reachable from.
+	var mcpSrv *http.Server
+	if addr := strings.TrimSpace(os.Getenv("DEFENDSEC_MCP_ADDR")); addr != "" {
+		if pg == nil {
+			// Agent principals live in Postgres, so without it there is no
+			// way to authenticate one. Refusing to start beats listening on
+			// an endpoint that can only ever answer 401.
+			return fmt.Errorf("DEFENDSEC_MCP_ADDR is set but no database is configured; agent principals cannot be authenticated without one")
+		}
+		var origins []string
+		if raw := strings.TrimSpace(os.Getenv("DEFENDSEC_MCP_ORIGINS")); raw != "" {
+			for _, o := range strings.Split(raw, ",") {
+				if o = strings.TrimSpace(o); o != "" {
+					origins = append(origins, o)
+				}
+			}
+		}
+		mcpMux := http.NewServeMux()
+		mcpMux.Handle("/mcp", svc.MCPTransport(origins))
+		mcpSrv = &http.Server{
+			Addr:              addr,
+			Handler:           mcpMux,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		log.Info("mcp endpoint configured", "addr", addr,
+			"origins", origins,
+			"detail", "agents may read fleet state and propose responses; proposals are recorded unsigned and need a human approval")
+	}
+
+	errCh := make(chan error, 4)
 	go func() {
 		log.Info("https enroll listening", "addr", *httpAddr, "secret_fp", control.HashSecret(secretValue))
 		errCh <- httpSrv.Serve(tls.NewListener(httpLn, httpTLS))
@@ -484,6 +531,12 @@ func run(log *slog.Logger) error {
 		log.Info("admin commands listening", "addr", *adminAddr)
 		errCh <- adminSrv.ListenAndServe()
 	}()
+	if mcpSrv != nil {
+		go func() {
+			log.Info("mcp listening", "addr", mcpSrv.Addr)
+			errCh <- mcpSrv.ListenAndServe()
+		}()
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -497,6 +550,9 @@ func run(log *slog.Logger) error {
 		defer cancel()
 		_ = httpSrv.Shutdown(ctx)
 		_ = adminSrv.Shutdown(ctx)
+		if mcpSrv != nil {
+			_ = mcpSrv.Shutdown(ctx)
+		}
 		grpcSrv.GracefulStop()
 		return nil
 	}

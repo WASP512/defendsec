@@ -22,6 +22,7 @@ import {
   Users,
   ClipboardCheck,
   Gavel,
+  BotMessageSquare,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ConsoleTools } from "@/components/console-tools";
@@ -53,6 +54,7 @@ const nav = [
   { href: "/integrity", label: "Integrity", icon: FileWarning },
   { href: "/policies", label: "Policies", icon: ShieldCheck },
   { href: "/response", label: "Response", icon: Gavel },
+  { href: "/proposals", label: "Proposals", icon: BotMessageSquare },
   { href: "/audit", label: "Audit", icon: ScrollText },
   { href: "/compliance", label: "Compliance", icon: ClipboardCheck },
   { href: "/updates", label: "Updates", icon: RefreshCw },

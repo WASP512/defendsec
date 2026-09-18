@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/console-ui";
@@ -10,9 +11,10 @@ import {
 import { isAdminSession, isReadOnlySession } from "@/lib/auth";
 import {
   loadBreakGlass,
-  loadPendingApprovals,
+  loadHumanApprovals,
   loadPolicyDecisions,
   loadPolicyStatus,
+  loadProposals,
   PolicyUnavailableError,
   type BreakGlassStatus,
   type PendingCommand,
@@ -56,9 +58,15 @@ export default async function ResponsePage() {
       return fallback;
     }
   };
-  const [decisions, pending, breakGlass] = await Promise.all([
+  // Human requests and AI proposals are split deliberately. They are the
+  // same object in storage — neither is signed — but they are not the same
+  // thing to review, and showing a proposal in this list as a bare pending
+  // command would invite approving it without the reasoning that is the only
+  // thing making it reviewable.
+  const [decisions, pending, proposals, breakGlass] = await Promise.all([
     settle<PolicyDecision[]>(loadPolicyDecisions, []),
-    settle<PendingCommand[]>(loadPendingApprovals, []),
+    settle<PendingCommand[]>(loadHumanApprovals, []),
+    settle<PendingCommand[]>(loadProposals, []),
     settle<BreakGlassStatus | null>(loadBreakGlass, null),
   ]);
 
@@ -86,6 +94,29 @@ export default async function ResponsePage() {
       ) : null}
 
       <PendingApprovals pending={pending} />
+
+      {proposals.length > 0 ? (
+        <section className="rounded-xl border border-primary/40 bg-primary/5 p-5">
+          <h2 className="text-sm font-medium">
+            {proposals.length === 1
+              ? "1 AI proposal awaiting review"
+              : `${proposals.length} AI proposals awaiting review`}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            These are unsigned and cannot run until a human approves them.
+            They are reviewed on their own page rather than here, because
+            approving one without reading the model&rsquo;s reasoning is the
+            failure worth designing against.
+          </p>
+          <Link
+            href="/proposals"
+            className="mt-3 inline-block rounded-md bg-foreground px-3 py-1.5 text-sm text-background"
+          >
+            Review proposals
+          </Link>
+        </section>
+      ) : null}
+
       <RecentDecisions decisions={decisions} />
     </div>
   );

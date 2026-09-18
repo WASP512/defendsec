@@ -32,6 +32,14 @@ func (h *Hub) Unregister(id string, ch chan *defendsecv1.ServerToAgent) {
 }
 
 func (h *Hub) Send(id string, msg *defendsecv1.ServerToAgent) bool {
+	if h == nil {
+		// No hub means no connected agents, which is the same answer as an
+		// agent that is not connected: false. Returned rather than
+		// dereferenced because Send runs on the command-issuing path, and a
+		// panic there takes the control plane down — the one thing worse than
+		// a command that cannot be delivered.
+		return false
+	}
 	h.mu.Lock()
 	ch, ok := h.streams[id]
 	h.mu.Unlock()
@@ -47,6 +55,9 @@ func (h *Hub) Send(id string, msg *defendsecv1.ServerToAgent) bool {
 }
 
 func (h *Hub) Connected(id string) bool {
+	if h == nil {
+		return false
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	_, ok := h.streams[id]

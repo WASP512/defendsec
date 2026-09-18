@@ -789,18 +789,47 @@ open/write on watched paths, privilege transitions (setuid/setgid/capability cha
 loads. Ring buffer with explicit backpressure and sampling — a sensor that destabilizes the host
 under load will be uninstalled.
 
-*Partly delivered — the interface and a portable sensor; the eBPF program itself is not written.*
-The sensor is an interface with an honest capability declaration, and the shipped implementation
-is a `/proc` poller producing process events. That is deliberate sequencing rather than a
-substitute: eBPF is cgo, a kernel-version matrix and a build that cannot run without kernel
-headers, and shipping only that would mean no behavioural detection at all wherever the build did
-not work, and no way to test the pipeline above it. The poller runs anywhere, needs no privilege
-beyond reading `/proc`, and lets the buffer, batching, rules and process tree be exercised for
-real. What it cannot do is stated in code, logged at agent start and surfaced in the coverage
-view: it samples, so a process that starts and exits between samples is never seen — and
-`curl … | sh` is short-lived. It observes execution only; network, file, privilege and module
-events have no sensor yet and the coverage matrix lists them as unobserved rather than implying
-the rules covering them can fire.
+*Delivered for process execution; network, file, privilege and module events still have no sensor.*
+
+The eBPF sensor is written and runs. It hooks two tracepoints — `syscalls/sys_enter_execve` for
+the argument vector and `sched/sched_process_exec` for the resolved path — and emits through a BPF
+ring buffer. Every successful exec is seen, with argv as the caller passed it rather than as the
+process later rewrote it, which is precisely what the poller could not do.
+
+Three decisions differ from the plan above, each for a reason worth recording.
+
+**cilium/ebpf, not libbpf.** The objection to eBPF was cgo, a kernel matrix, and a build needing
+kernel headers. A pure-Go loader that performs CO-RE relocations itself removes all three:
+`defendsec-agentd` still cross-compiles to a static binary with `CGO_ENABLED=0`. The compiled BPF
+object is committed and embedded, so building the agent needs no clang, no kernel headers and no
+libbpf — `make bpf` is the only thing that asks for them.
+
+**Tracepoints, not kprobes.** Tracepoints are a stable kernel ABI. A kprobe on a function whose
+signature shifts between releases yields silently wrong fields, and a sensor that is confidently
+wrong is worse than one that is absent. Only a single field needs CO-RE at all
+(`task->real_parent->tgid` for the parent pid), declared as a minimal relocatable struct rather
+than via a generated `vmlinux.h`, so one object works across kernel versions.
+
+**Two tracepoints, not one.** `sys_enter_execve` is the only place argv is reachable, but it also
+fires for execs that then fail — a mistyped command, a missing interpreter. Emitting those would
+put processes in the console that never ran, and a rule matching `CommandLine` would fire on
+something that never executed. So argv is stashed at entry in an LRU hash and claimed at the
+success tracepoint; a failed exec leaves its stash to be evicted rather than leaking. There is a
+test that runs a deliberately failing exec and requires that nothing is reported for it.
+
+The poller remains, and the agent falls back to it when the kernel lacks a ring buffer (pre-5.8)
+or BTF, or when the agent cannot load a program. The fallback is logged at warning level with the
+specific reason and the coverage view shows the poller's capability, not the eBPF one: the two have
+genuinely different coverage, and an operator who believes they have the first while running the
+second has been misled about what their fleet can see. Bounds truncate rather than drop — the
+first 16 arguments, 128 bytes each — and truncation is flagged in the event so nothing downstream
+presents a clipped command line as the whole thing. Ring-buffer overflow is counted on the kernel
+side and reported, because a pipeline that drops silently produces a clean console during exactly
+the burst that overwhelmed it.
+
+Still missing, and listed as unobserved in the coverage matrix rather than implied: network
+connect/accept, file writes on watched paths, privilege transitions, and module loads. Rules
+depending on those kinds cannot fire, and the matrix says so.
 
 **3.2 — Event stream in the protocol.** Add a batched, backpressured event stream to
 `AgentToServer`, separate from the 60-second inventory report. Different volume profile
@@ -929,24 +958,200 @@ record. That is a claim no EDR with a remote shell can make, at any price.
 queries as read operations, plus the ability to *propose* actions. Proposals enter the same policy
 engine as human requests. The AI never holds signing authority.
 
+*Delivered.* `internal/mcp` implements MCP revision `2026-07-28` — the stateless one: no
+`initialize` handshake, no session id, no server-initiated requests, with version, client identity
+and capabilities carried per request. That statelessness is the property worth having here, because
+it means an agent's authority comes from the credential on each request and from nothing it
+established earlier. The server is dual-era and also answers the handshake most clients in the
+field still speak; a spec-pure server nobody can connect to has shipped nothing.
+
+The protocol layer knows nothing about DefendSec. It has no access to the signer and no ability to
+issue a command, so a protocol bug cannot become an authority bug. Origin is validated before the
+credential is read, header/body agreement is enforced (an intermediary may route on the header
+while the server acts on the body, and a disagreement means one of them is being lied to), and a
+missing authorization hook denies everything rather than allowing it.
+
+**An agent is a principal, not a user, and that is the whole design.** The alternative was a third
+role on the users table, which would have been less code and a worse guarantee: a role is a string
+compared at every call site, and "an agent cannot sign its own authority" would then rest on every
+one of those comparisons being written correctly, forever. Agent principals live in their own
+table, and the admin API resolves callers only against users and sessions. An agent token presented
+to the command endpoint is not an under-privileged caller — it is not a caller the admin API can
+see at all, and there is a test that asserts exactly that.
+
+**DefendSec does not call a model.** This is a server; an agent runs wherever its operator runs it
+and connects inward. There is no API key, no outbound dependency on any AI service, and no path by
+which fleet data leaves the box to a model provider. For self-hosted security software that is not
+a limitation but the only defensible design.
+
+The endpoint is off unless `DEFENDSEC_MCP_ADDR` is set, on its own listener rather than a path on
+the admin mux, so it can be bound and firewalled separately.
+
 **4.2 — Propose-and-sign workflow.** Console surface for AI-proposed actions showing the model's
 reasoning, the evidence cited, and the exact bounded command proposed. A human reviews and signs.
 Model identity and prompt provenance are recorded in the ledger alongside the human approver, so
 an auditor can reconstruct not just what was done but what recommended it.
+
+*Delivered, except the console surface.* A proposal is written to `pending_commands` — the same
+table a human request awaiting approval goes into, which is the point: an AI proposal and an
+unsigned human request are structurally the same object, and neither carries a signature. The
+columns added are the part an auditor needs that a human request does not have: the proposing
+agent, its declared model, the reasoning verbatim, the DefendSec record ids it cited, and the
+prompt it says it was given.
+
+Four things are enforced rather than intended, each with a test:
+
+- **The agent's own approval does not count.** A human requester self-approves, because they asked
+  for it. An agent does not — if it did, a one-approval rule would let an AI act unsupervised. The
+  asymmetry lives on the write path in `CreatePendingCommand`, not in whoever assembles the
+  request.
+- **A permit-outright policy still needs a human.** Where policy would have let a human act with no
+  approval at all, an agent proposal still lands unsigned with one approval required. Collapsing
+  those two cases is how a product ends up with an AI that acts on its own.
+- **A human approval cannot launder a proposal past an agent rule.** An approved proposal is
+  re-evaluated as role `agent`, not promoted to `admin`. Otherwise an operator clicking approve
+  would walk the proposal past the very rule written to bound agents, and the bound would hold only
+  until somebody was busy. The rule binds at signing time or it does not bind at all.
+- **Deny-by-default extends to the AI.** A policy that permits humans and says nothing about agents
+  permits an agent nothing.
+
+The proposable command set is narrower than the human one. `run_script` and `agent_update` are
+absent: the first is arbitrary code and the second replaces the agent enforcing everything else. A
+bounded command set that includes "run this script" is not bounded, whatever policy would say
+afterwards. Break-glass is deliberately not consulted on the proposal path either — an emergency is
+a human declaring an emergency, and letting it widen what an AI may propose would turn the worst
+moment to be careful into the moment the bounds came off.
+
+Writing this caught one real defect. `Propose` originally checked the principal it was handed,
+which made "a revoked agent cannot propose" depend on every caller having refreshed its copy first
+— an obligation that holds until somebody writes a new caller. It now re-reads the principal, so a
+revocation that lands mid-conversation bites on the next call.
+
+*The console surface is now delivered too.* A **Proposals** page shows each unsigned proposal with
+the model's reasoning, the evidence it cited, the prompt it says it was given, the declared model
+marked self-reported, the policy rule that let it through, and the exact command and payload — with
+approve and reject controls placed *after* the case rather than before it, so an operator who has
+reached the button has at least been shown the argument.
+
+The Response page no longer lists proposals in its generic approvals queue. They are the same
+object in storage, which is deliberate, but they are not the same thing to review: a proposal shown
+as a bare pending command invites approving it without the reasoning that is the only thing making
+it reviewable. The two are partitioned, and the Response page links across.
+
+Approval itself was API-only before this and is now wired through the console. The route forwards
+the operator's own token and relays the control plane's answer verbatim, including a refusal —
+rewriting it locally would give the operator a friendlier second account of something the ledger
+records differently. The page states that policy is re-evaluated at signing time, so an approval is
+not a guarantee the command will issue.
+
+The partition predicate lives in a module with no server-only imports, both so it can be tested and
+because a client component reaching it through the server-side policy client pulled `next/headers`
+into the browser bundle — a constraint neither `tsc` nor the linter catches, only `next build`.
 
 **4.3 — Triage assistance.** Alert summarization; FIM drift explanation (diff the file, identify
 its owning package, correlate against the pending-update list — *"this changed because
 `openssh-server` was upgraded 4 minutes earlier"* is both an excellent auto-resolve signal and an
 excellent demo); suggested follow-up queries drawn only from the existing allowlist.
 
+*Delivered, and deliberately not as a prompt.* This is filed under the AI control plane and it
+would have been easy to make it a model call. It is deterministic correlation instead, for two
+reasons: "was this file rewritten by a package upgrade?" has a factual answer in stored data, and a
+self-hosted security product that needs an outbound API call to triage an alert is one that stops
+triaging when the network is the thing under attack. The same explanation is served to the console
+and to an agent over MCP, so the operator and the model read the same analysis rather than two that
+can disagree.
+
+**The example in the paragraph above was not answerable when it was written.** Software inventory
+was a JSONB snapshot overwritten on every heartbeat, so there was no record that a package had ever
+changed version — only what was installed now. Migration 014 adds `package_changes`, recording
+transitions as they are observed, which also answers a compliance question that was previously
+unanswerable: when was this host actually patched, as opposed to when did it last report updates
+available. The first inventory from a host records nothing rather than reporting every installed
+package as newly appeared.
+
+**It explains; it does not resolve.** The roadmap calls a package-upgrade correlation "an excellent
+auto-resolve signal" and this stops deliberately short of that. A package upgrade immediately
+before a security-relevant configuration file changes is both the most common innocent explanation
+and exactly the cover an attacker would choose — an upgrade of `openssh-server` does not stop a
+`PermitRootLogin` line from having been added by hand in the same window. So every explanation
+carries the timeline it rests on, a caveat saying what it does not establish, and the specific
+checks that would settle it. `AutoResolvable` exists as a field that is always false, so nothing
+downstream can mistake a confident verdict for permission to close the alert.
+
+Five verdicts, and the useful one is negative: `unexplained` means nothing on the host accounts for
+the change, which is what makes `package-upgrade` mean anything. `package-activity` is the case a
+naive implementation gets wrong — packages changed nearby but none of them owns the file, which is
+not an explanation and would have resolved an intrusion. `local-change` is stronger than
+unexplained: the path belongs to no package, so an upgrade *cannot* be the cause.
+`unknown-ownership` refuses to draw a conclusion at all, because the absence of a correlation means
+nothing when ownership was never resolved.
+
+Path ownership comes from a curated map covering the paths DefendSec watches by default, with
+drop-in files inheriting their directory's owner. The authoritative answer is the package manager's
+own (`dpkg -S`, `rpm -qf`), which would need a new agent capability and is worth doing later; until
+then anything outside the map returns no owner rather than a guess, because a wrong owner produces
+a confident explanation of the wrong thing.
+
+Summarisation is grouping and counting rather than prose: clustering is on (kind, title), which is
+crude on purpose — a cleverer similarity measure would group things that merely look alike, and an
+operator who trusts a cluster that silently swallowed an unrelated alert is worse off than one
+reading a longer list. Alerts that group with nothing else are called out separately, because on a
+busy fleet the lone alert is usually the one worth reading and a queue sorted by time buries it.
+
+Follow-up suggestions are drawn only from the operator's own saved queries and never generated. The
+live-query surface is an allowlist precisely so arbitrary queries cannot be run; suggesting one
+DefendSec invented would route around that allowlist using the operator's credentials.
+
 **4.4 — Bounded autonomy.** Optional per-policy autonomous execution, constrained by Phase 2 blast
 radius, with every action attributed to the model in the signed ledger and trivially revocable.
 The operator sets the ceiling; the cryptography enforces it.
 
+*Delivered.* An agent acts without a human only when **both** switches are on: the permitting policy
+rule is marked `autonomous: true`, and the agent principal has autonomy enabled on it. Two rather
+than one, because they revoke differently — turning off the rule stops every agent and needs a
+policy reload, while turning off the principal stops one agent with a single call and touches
+nothing governing the others. "Trivially revocable" has to mean the second thing.
+
+Both default to off. A principal registered today proposes and never acts, and the shipped policy
+ships nothing autonomous.
+
+Three things are refused when the policy is **parsed**, not when a command is attempted, because a
+policy that cannot be safe should not start: autonomy on a deny rule; autonomy together with
+`require_approvals` above one, which asks for a human and for no human at once; and — the important
+one — **autonomy over any command no limit covers.** "The operator sets the ceiling" is the whole
+claim, and a rule with no ceiling is a runaway with paperwork. A wildcard rule needs a wildcard
+limit, and a limit of `max: 0` forbids rather than bounds so it does not count as a ceiling.
+
+Everything else is unchanged: the same policy engine, the same blast-radius limits counted the same
+way, the same signing key, the same hash-chained ledger. Autonomy removes the human from the loop
+and removes nothing else. There is a test that an autonomous agent sweeping the fleet stops at
+exactly its configured limit, and another that deny-by-default is not suspended by autonomy.
+
+Autonomous actions are recorded under their own audit action, `agent_autonomous_action`, rather than
+the generic `command_issue`. An auditor asking "what did the AI do by itself" answers it by
+filtering the ledger rather than by inferring from an actor string, and the command's actor is the
+agent — never a human who did not authorise it.
+
+Writing this surfaced a trap worth recording. Where two permit rules match one command, the engine
+took the strictest by approval count, and on a tie the first one found. That meant a broad
+non-autonomous permit and a narrow autonomous one could both match, with the winner decided by file
+order — so an operator adding an autonomous rule alongside an existing permit might get autonomy or
+might not. The tie-break is now explicit and conservative: **a rule withholding autonomy beats one
+granting it.** Where the document says two things about the same command, the reading that keeps a
+human in the loop holds. The shipped policy was reshaped accordingly — `live_query` has a rule of
+its own with `# autonomous: true` ready to uncomment, rather than sharing the containment rule where
+it would have been silently shadowed — and there is a test that uncommenting that line actually
+produces an autonomous decision, so the example cannot rot into one that does nothing.
+
+Two nil-dereference panics were fixed on the way. `issueAutonomous` dereferenced the signer and
+`Hub.Send`/`Hub.Connected` dereferenced a nil hub; both run on the request path, where a panic takes
+the control plane down. The one thing worse than an agent that cannot act is a server that stops
+defending because an agent tried to.
+
 **Acceptance:** an AI agent can triage an alert, gather evidence via allowlisted queries, and
 propose a bounded response; the proposal is unsignable without a human approver; the ledger
 records model identity, reasoning, and the approving human, and `defendsec verify` validates the
-whole chain.
+whole chain. *Met, with a test for each clause.*
 
 ---
 

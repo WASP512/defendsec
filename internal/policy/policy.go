@@ -88,6 +88,10 @@ type Decision struct {
 	PolicyHash string `json:"policyHash,omitempty"`
 	// PolicyName is the document's name.
 	PolicyName string `json:"policyName,omitempty"`
+	// Autonomous is true when the permitting rule allows an AI agent to
+	// execute without a human approval (roadmap 4.4). Meaningless on any
+	// effect other than permit, and false there.
+	Autonomous bool `json:"autonomous,omitempty"`
 	// BreakGlassUsed records that an emergency bypass carried this decision.
 	// It is a separate field rather than a note in Reason because it is the
 	// thing an auditor searches for.
@@ -193,7 +197,20 @@ func (e *Engine) Evaluate(req Request, usage UsageFunc) (Decision, error) {
 			// The strictest matching permit wins: where two rules both allow
 			// a command, the one demanding more approvals is the one that was
 			// written with more care.
-			if matched == nil || r.RequireApprovals > matched.RequireApprovals {
+			//
+			// On equal approvals, a rule that withholds autonomy beats one
+			// that grants it (roadmap 4.4). Autonomy is the most
+			// consequential thing a rule can confer, and where the document
+			// says two things about the same command the safe reading is the
+			// one that keeps a human in the loop. The consequence is worth
+			// knowing when writing policy: a broad non-autonomous permit
+			// shadows a narrower autonomous one, so autonomy belongs on the
+			// only rule matching that command rather than added alongside an
+			// existing permit.
+			if matched == nil ||
+				r.RequireApprovals > matched.RequireApprovals ||
+				(r.RequireApprovals == matched.RequireApprovals &&
+					matched.Autonomous && !r.Autonomous) {
 				matched = r
 			}
 		}
@@ -260,6 +277,10 @@ func (e *Engine) Evaluate(req Request, usage UsageFunc) (Decision, error) {
 	}
 
 	d.Effect = EffectPermit
+	// Autonomy is carried from the matching rule, never inferred (roadmap
+	// 4.4). A caller that wants to act without a human has to be looking at
+	// a rule that says so by name.
+	d.Autonomous = matched.Autonomous
 	if d.Reason == "" {
 		d.Reason = fmt.Sprintf("Rule %q permits %s for role %q on %s.",
 			matched.ID, req.CommandType, req.Role, describeClasses(req.HostClasses))
