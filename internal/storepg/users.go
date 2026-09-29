@@ -355,3 +355,54 @@ func (s *Store) PruneExpiredSessions(ctx context.Context, now time.Time) (int64,
 	}
 	return tag.RowsAffected(), nil
 }
+
+// ErrAccountsExist reports that first-run setup was attempted after an
+// account already exists.
+var ErrAccountsExist = errors.New("an account already exists; first-run setup is closed")
+
+// CreateFirstUser creates the first administrator, and only the first.
+//
+// The count and the insert happen in one transaction under an advisory lock.
+// Checking the count and then inserting separately would let two people who
+// open the setup page at the same moment both succeed, and first-run setup is
+// exactly the moment somebody might be racing the owner for the fleet.
+func (s *Store) CreateFirstUser(ctx context.Context, id, username, displayName, password string) (identity.User, error) {
+	username = identity.NormalizeUsername(username)
+	if err := identity.ValidUsername(username); err != nil {
+		return identity.User{}, err
+	}
+	if err := identity.ValidPassword(password); err != nil {
+		return identity.User{}, err
+	}
+	hash, err := identity.HashPassword(password)
+	if err != nil {
+		return identity.User{}, err
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return identity.User{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('defendsec:first-user'))`); err != nil {
+		return identity.User{}, err
+	}
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&n); err != nil {
+		return identity.User{}, err
+	}
+	if n > 0 {
+		return identity.User{}, ErrAccountsExist
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO users (id, username, display_name, role, password_hash)
+		VALUES ($1,$2,$3,$4,$5)
+	`, id, username, displayName, identity.RoleAdmin, hash); err != nil {
+		return identity.User{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return identity.User{}, err
+	}
+	return s.GetUserByUsername(ctx, username)
+}

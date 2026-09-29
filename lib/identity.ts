@@ -1,4 +1,5 @@
 import { APID_ADMIN_URL } from "./commands.ts";
+import type { SetupStatus } from "./login-state.ts";
 
 // Client for the control plane's identity API (roadmap 1.0).
 //
@@ -105,16 +106,43 @@ export async function apidLogout(token: string): Promise<void> {
 }
 
 /** True when at least one account exists, so the console shows sign-in rather than first-run setup. */
-export async function apidAccountsExist(): Promise<boolean> {
-  const res = await apid("/v1/session", { method: "GET" });
-  if (res.status === 401) {
-    // Unauthenticated: the endpoint cannot tell us, so assume accounts exist
-    // rather than exposing first-run setup on a configured install.
-    return true;
+// apidSetupStatus reports whether first-run setup is available. Unauthenticated
+// by design: it exists to work before any credential does. Returns null when
+// the control plane cannot be reached, so the caller can say so rather than
+// guess.
+export async function apidSetupStatus(): Promise<SetupStatus | null> {
+  try {
+    const res = await apid("/v1/setup", { method: "GET" });
+    if (!res.ok) return null;
+    return (await res.json()) as SetupStatus;
+  } catch {
+    return null;
   }
-  if (!res.ok) return true;
-  const body = (await res.json()) as SessionInfo;
-  return body.accountsExist !== false;
+}
+
+export type SetupOutcome =
+  | { ok: true; token?: string }
+  | { ok: false; error: string };
+
+// apidSetup creates the first administrator.
+export async function apidSetup(input: {
+  username: string;
+  displayName: string;
+  password: string;
+  clientAddress: string;
+}): Promise<SetupOutcome> {
+  const res = await apid("/v1/setup", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  let body: { token?: string; error?: string } = {};
+  try {
+    body = (await res.json()) as typeof body;
+  } catch {
+    // non-JSON error body
+  }
+  if (res.ok) return { ok: true, token: body.token };
+  return { ok: false, error: body.error ?? `The control plane returned ${res.status}.` };
 }
 
 export async function apidListUsers(token: string): Promise<IdentityUser[]> {

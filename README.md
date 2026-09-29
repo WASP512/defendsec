@@ -22,12 +22,10 @@ Most people run the server as a Proxmox LXC. That path is two commands plus a br
 
 2. **Open the console** at `https://<container-ip>:47261`. The certificate is self-signed on first
    start, so your browser will warn; [INSTALL.md](docs/INSTALL.md) covers verifying the
-   fingerprint and getting a certificate that does not warn. There is no username. Get the admin
-   token from the Proxmox host:
-
-   ```bash
-   pct exec <CTID> -- cat /var/lib/defendsec/admin-token.txt
-   ```
+   fingerprint and getting a certificate that does not warn. A fresh install asks you to
+   **create the administrator account** — no token needed. Setup stays open for 30 minutes after
+   the control plane starts; if you miss it, `pct exec <CTID> -- systemctl restart
+   defendsec-apid` reopens it.
 
 3. **Enroll each host** with the exact command on the console **Enroll** page. Do not re-run the Proxmox script on laptops or VMs you want to inventory.
 

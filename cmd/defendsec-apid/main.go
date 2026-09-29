@@ -256,6 +256,9 @@ func run(log *slog.Logger) error {
 	// Identity (roadmap 1.0). Login and session are unauthenticated by
 	// necessity; everything else resolves the caller's own session token.
 	adminMux.HandleFunc("/v1/login", svc.HandleLogin)
+	// First-run setup: create the first administrator without the shared
+	// token, while no account exists and only for a window after start.
+	adminMux.HandleFunc("/v1/setup", svc.HandleSetup)
 	adminMux.HandleFunc("/v1/logout", svc.HandleLogout)
 	adminMux.HandleFunc("/v1/session", svc.HandleSession)
 	adminMux.HandleFunc("/v1/users", svc.HandleUsers)
@@ -397,6 +400,32 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/policy/break-glass", svc.HandleBreakGlass)
 	adminMux.HandleFunc("/v1/policy/host-classes", svc.HandleHostClasses)
 	adminMux.HandleFunc("/v1/playbooks", svc.HandlePlaybooks)
+
+	// First-run setup window. Restarting defendsec-apid reopens it while no
+	// account exists, which is the point: restarting requires access to the
+	// server, and that is the proof of ownership an open form cannot ask for.
+	setupWindow := control.DefaultSetupWindow
+	if raw := strings.TrimSpace(os.Getenv("DEFENDSEC_SETUP_WINDOW")); raw != "" {
+		switch strings.ToLower(raw) {
+		case "0", "off", "false", "no":
+			setupWindow = 0
+		default:
+			d, err := time.ParseDuration(raw)
+			if err != nil || d < 0 {
+				// Refused rather than defaulted: a typo here would silently
+				// leave setup open for thirty minutes when the operator
+				// meant to close it.
+				return fmt.Errorf("DEFENDSEC_SETUP_WINDOW=%q is not a duration such as 30m, or off", raw)
+			}
+			setupWindow = d
+		}
+	}
+	svc.OpenSetupWindow(time.Now().UTC(), setupWindow)
+	if setupWindow > 0 {
+		log.Info("first-run setup open while no accounts exist",
+			"window", setupWindow.String(),
+			"detail", "open the console to create the first administrator; restart defendsec-apid to reopen it")
+	}
 
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,

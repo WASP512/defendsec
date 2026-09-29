@@ -83,6 +83,10 @@ type Server struct {
 	// forwarder ships events and alerts onward. Lossy and asynchronous, so a
 	// stalled collector cannot affect detection.
 	forwarder *forward.Forwarder
+
+	// setupOpenUntil is when first-run setup closes. Zero means it is not
+	// open at all. See setup.go.
+	setupOpenUntil time.Time
 }
 
 // SetAnchoring configures checkpoint anchoring. Called at startup rather than
