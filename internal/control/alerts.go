@@ -440,10 +440,14 @@ func (s *Server) resolveUnknownSca(dev presence.Device) {
 // apply to this host. The agent skips a check scoped to other distros and
 // reports nothing for it, so an alert raised before the check was scoped
 // (the Debian package name failing on every RPM host, say) would never see a
-// pass and would stay open. The server does not know the host's distro; it
-// knows the check did not run. That is only evidence when the report carries
-// results from the check's pack: a report without them says nothing about
-// which checks ran.
+// pass and would stay open.
+//
+// A missing result alone is not proof: the agent also skips every scoped
+// check when it cannot tell the host's distro, and a report can be
+// incomplete. So a check's alert is resolved only when the same report
+// carries a result for a check in its pack scoped to distros disjoint from
+// its own. That result shows the agent knew the host's family, and that the
+// family is not one the missing check applies to.
 func (s *Server) resolveOutOfScopeSca(dev presence.Device, reported []presence.ScaResult) {
 	if len(reported) == 0 {
 		return
@@ -453,21 +457,37 @@ func (s *Server) resolveOutOfScopeSca(dev presence.Device, reported []presence.S
 		return
 	}
 	ran := map[string]bool{}
-	packRan := map[string]bool{}
 	for _, r := range reported {
 		ran[r.PackID+"/"+r.CheckID] = true
-		packRan[r.PackID] = true
+	}
+	disjoint := func(a, b []string) bool {
+		for _, x := range a {
+			for _, y := range b {
+				if x == y {
+					return false
+				}
+			}
+		}
+		return true
 	}
 	for _, pack := range packs {
-		if !packRan[pack.ID] {
-			continue
+		var familyShown [][]string // distro lists of scoped checks that ran
+		for _, check := range pack.Checks {
+			if len(check.Distros) > 0 && ran[pack.ID+"/"+check.ID] {
+				familyShown = append(familyShown, check.Distros)
+			}
 		}
 		for _, check := range pack.Checks {
 			source := pack.ID + "/" + check.ID
 			if len(check.Distros) == 0 || !sca.IsHostCheck(check.Type) || ran[source] {
 				continue
 			}
-			s.resolveAlert(dev.ID, "sca", source)
+			for _, shown := range familyShown {
+				if disjoint(shown, check.Distros) {
+					s.resolveAlert(dev.ID, "sca", source)
+					break
+				}
+			}
 		}
 	}
 }

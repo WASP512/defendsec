@@ -46,6 +46,14 @@ func TestOutOfScopeScaAlertIsResolved(t *testing.T) {
 		t.Errorf("the pack ran without the Debian-only check: want it resolved, %d still open", n)
 	}
 
+	// The agent could not tell the distro: it ran only unscoped checks. The
+	// missing result proves nothing, and a real finding must stay open.
+	s = raise()
+	s.resolveOutOfScopeSca(dev, []presence.ScaResult{{PackID: pack, CheckID: "cis-4.1-aslr-enabled", Pass: true}})
+	if n := open(s); n != 1 {
+		t.Errorf("distro unknown to the agent: want the alert kept, %d open", n)
+	}
+
 	// A report with no SCA results says nothing about which checks ran.
 	s = raise()
 	s.resolveOutOfScopeSca(dev, nil)
