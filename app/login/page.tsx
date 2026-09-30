@@ -1,6 +1,7 @@
 import { LoginForm } from "@/components/login-form";
 import { isAuthenticatedSession, isDevFallbackToken } from "@/lib/auth";
-import { apidAccountsExist } from "@/lib/identity";
+import { apidSetupStatus, apidSSOStatus } from "@/lib/identity";
+import { loginState } from "@/lib/login-state";
 import { Anchor, LockKeyhole, ShieldCheck } from "lucide-react";
 import { redirect } from "next/navigation";
 
@@ -9,20 +10,24 @@ export const dynamic = "force-dynamic";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; totp?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    totp?: string;
+    setupError?: string;
+    created?: string;
+    ssoError?: string;
+  }>;
 }) {
   if (await isAuthenticatedSession()) {
     redirect("/");
   }
   const params = await searchParams;
-  // With no accounts yet the form offers first-run setup instead of sign-in.
-  let accountsExist = true;
-  try {
-    accountsExist = await apidAccountsExist();
-  } catch {
-    // Control plane unreachable; assume a configured install rather than
-    // exposing setup.
-  }
+  // Decided from the control plane's own unauthenticated setup status, rather
+  // than from a signed-in endpoint whose 401 used to be read as "accounts
+  // exist" — which hid first-run setup on every fresh install.
+  const [setup, sso] = await Promise.all([apidSetupStatus(), apidSSOStatus()]);
+  const state = loginState(setup);
+  const isSetup = state.kind === "setup";
   return (
     <main className="grid min-h-full bg-muted/30 lg:grid-cols-[1.1fr_0.9fr]">
       <section className="hidden border-r bg-primary p-12 text-primary-foreground lg:flex lg:flex-col lg:justify-between">
@@ -56,24 +61,30 @@ export default async function LoginPage({
               <span className="mb-4 flex size-10 items-center justify-center rounded-lg bg-muted">
                 <LockKeyhole className="size-5" />
               </span>
-              <h2 className="text-2xl font-semibold tracking-tight">Sign in to the console</h2>
+              <h2 className="text-2xl font-semibold tracking-tight">
+                {isSetup ? "Set up DefendSec" : "Sign in to the console"}
+              </h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                {accountsExist
-                  ? "Sign in with your account. Every action is recorded against your name."
-                  : "First run. Sign in with the admin token to create an administrator."}
+                {isSetup
+                  ? "Create the administrator account. Every action is recorded against your name."
+                  : "Sign in with your account. Every action is recorded against your name."}
               </p>
             </div>
             <LoginForm
+              state={state}
               showDevHint={await isDevFallbackToken()}
               failed={params.error === "1"}
               locked={params.error === "locked"}
               unavailable={params.error === "unavailable"}
               totpRequired={params.totp === "1"}
-              accountsExist={accountsExist}
+              setupError={params.setupError}
+              created={params.created === "1"}
+              sso={sso}
+              ssoError={params.ssoError}
             />
           </div>
           <p className="mt-4 text-center text-xs text-muted-foreground">
-            Console traffic uses HTTP on port 47261. Agent enrollment uses TLS.
+            Self-hosted. Nothing here is sent to a vendor.
           </p>
         </div>
       </section>

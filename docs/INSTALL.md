@@ -136,18 +136,26 @@ bash install-server.sh --help
    ```
 
    For a certificate that does not warn, see **HTTPS** below.
-2. There is **no username**. Paste the admin token.
-3. Get the token from the Proxmox host (replace `200` with your CTID):
+2. A fresh install shows **Set up DefendSec**. Choose a username and a password of at least 12
+   characters, and you are signed in as the first administrator. No token is involved.
+3. Setup is open for **30 minutes after the control plane starts**, and only while no account
+   exists. That limit is deliberate: an open "create the first admin" form would otherwise hand
+   your fleet to whoever reached it first. If you missed it, restart the control plane — which
+   needs access to the server, the proof of ownership the form cannot ask for — and reload:
+
+   ```bash
+   pct exec 200 -- systemctl restart defendsec-apid   # Proxmox (replace 200 with your CTID)
+   sudo systemctl restart defendsec-apid              # any other VM
+   ```
+
+   The admin token still works as a fallback, under **Sign in with the admin token instead**:
 
    ```bash
    pct exec 200 -- cat /var/lib/defendsec/admin-token.txt
    ```
 
-   On a non-Proxmox VM:
-
-   ```bash
-   sudo cat /var/lib/defendsec/admin-token.txt
-   ```
+   Set `DEFENDSEC_SETUP_WINDOW=off` in `/etc/defendsec/apid.env` to disable open setup entirely,
+   or a duration such as `10m` to change the window.
 
 The enroll secret (needed only if you build an agent command by hand) is:
 
@@ -367,6 +375,7 @@ Open `47261–47263` from your admin network and from agents. Leave `47264` and 
 | Agent TLS verify failed | `--tls-server-name` does not match the cert | Use the CT hostname (`defendsec` by default), or wipe `/var/lib/defendsec/pki` once and restart `defendsec-apid` so SANs refresh |
 | Downloads 404 | Agent installer pointed at the wrong host | Confirm files exist in `/var/lib/defendsec/downloads` |
 | Forgot the admin token | Token is on disk, not printed at the end | `pct exec <CTID> -- cat /var/lib/defendsec/admin-token.txt` |
+| "First-run setup has closed" | More than 30 minutes since the control plane started, with no account created | `systemctl restart defendsec-apid` and reload the page, or use the admin token |
 
 ---
 

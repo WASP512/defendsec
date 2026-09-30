@@ -36,6 +36,7 @@ import (
 	"defendsec/internal/sca"
 	"defendsec/internal/sigma"
 	"defendsec/internal/sign"
+	"defendsec/internal/sso"
 	"defendsec/internal/storepg"
 )
 
@@ -83,6 +84,14 @@ type Server struct {
 	// forwarder ships events and alerts onward. Lossy and asynchronous, so a
 	// stalled collector cannot affect detection.
 	forwarder *forward.Forwarder
+
+	// setupOpenUntil is when first-run setup closes. Zero means it is not
+	// open at all. See setup.go.
+	setupOpenUntil time.Time
+
+	// sso is the optional OIDC provider (roadmap 5.4). Nil means SSO is not
+	// configured; local accounts and the admin token work either way.
+	sso *sso.Provider
 }
 
 // SetAnchoring configures checkpoint anchoring. Called at startup rather than

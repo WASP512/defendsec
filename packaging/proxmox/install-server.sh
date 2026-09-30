@@ -811,7 +811,10 @@ DefendSec server install complete.
 
   Enroll secret: ${DATA_DIR}/defendsec.json
 
-Open the console with the admin token, then copy the agent command from Enroll.
+Open the console within 30 minutes and create your administrator account —
+no token needed. If you miss the window, restart it with
+  systemctl restart defendsec-apid
+or sign in with the admin token above. Then copy the agent command from Enroll.
 
 Docs: ${INSTALL_ROOT}/docs/INSTALL.md
 EOF

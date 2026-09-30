@@ -41,6 +41,16 @@ import (
 // build commands. Development builds intentionally report "dev".
 var agentVersion = "dev"
 
+// buildCommit is the source commit this binary was built from, stamped by
+// scripts/build-release.sh (roadmap 5.7).
+//
+// Stamped explicitly rather than left to Go's automatic VCS stamping, which
+// is switched off in release builds: automatic stamping makes the binary
+// depend on a .git directory being present, so a verifier rebuilding from a
+// source tarball gets a different hash than the release. An explicit value is
+// a build input, and reproducing the release means passing the same one.
+var buildCommit = "unknown"
+
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(log); err != nil {
@@ -57,7 +67,13 @@ func run(log *slog.Logger) error {
 	stateDir := flag.String("state-dir", "data/agent-mtls", "where to store CA, client cert, and key")
 	tlsServerName := flag.String("tls-server-name", "localhost", "SNI / hostname to verify on the server certificate")
 	heartbeatEvery := flag.Duration("heartbeat", 20*time.Second, "unary heartbeat interval")
+	showVersion := flag.Bool("version", false, "print the agent version and build commit, then exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("%s %s\n", agentVersion, buildCommit)
+		return nil
+	}
 
 	secret := *enrollSecret
 	if *enrollFile != "" {

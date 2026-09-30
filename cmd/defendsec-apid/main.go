@@ -34,6 +34,7 @@ import (
 	"defendsec/internal/secret"
 	"defendsec/internal/sigma"
 	"defendsec/internal/sign"
+	"defendsec/internal/sso"
 	"defendsec/internal/storepg"
 )
 
@@ -42,6 +43,16 @@ import (
 // so exposing it beyond localhost turns a leaked/guessed admin token into
 // full remote control. Set DEFENDSEC_ALLOW_NONLOOPBACK_ADMIN=1 to override
 // when the operator has their own network isolation in front of it.
+// buildCommit is the source commit this binary was built from, stamped by
+// scripts/build-release.sh (roadmap 5.7).
+//
+// Stamped explicitly rather than left to Go's automatic VCS stamping, which
+// is switched off in release builds: automatic stamping makes the binary
+// depend on a .git directory being present, so a verifier rebuilding from a
+// source tarball gets a different hash than the release. An explicit value is
+// a build input, and reproducing the release means passing the same one.
+var buildCommit = "unknown"
+
 func requireLoopbackAdminAddr(addr string) error {
 	if strings.TrimSpace(os.Getenv("DEFENDSEC_ALLOW_NONLOOPBACK_ADMIN")) == "1" {
 		return nil
@@ -71,6 +82,7 @@ func main() {
 }
 
 func run(log *slog.Logger) error {
+	showVersion := flag.Bool("version", false, "print the build commit and exit")
 	dataDir := flag.String("data-dir", "data", "directory for PKI and presence files")
 	httpAddr := flag.String("http-addr", "0.0.0.0:47262", "HTTPS enroll/health listen address")
 	grpcAddr := flag.String("grpc-addr", "0.0.0.0:47263", "mTLS gRPC listen address")
@@ -80,6 +92,11 @@ func run(log *slog.Logger) error {
 	advertise := flag.String("tls-hostname", strings.TrimSpace(os.Getenv("DEFENDSEC_TLS_HOSTNAME")), "extra hostname/IP SAN for the server certificate (or DEFENDSEC_TLS_HOSTNAME)")
 	dbURL := flag.String("db-url", "", "Postgres URL (or DATABASE_URL / DEFENDSEC_DATABASE_URL)")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(buildCommit)
+		return nil
+	}
 
 	if err := requireLoopbackAdminAddr(*adminAddr); err != nil {
 		return err
@@ -240,6 +257,13 @@ func run(log *slog.Logger) error {
 	// Identity (roadmap 1.0). Login and session are unauthenticated by
 	// necessity; everything else resolves the caller's own session token.
 	adminMux.HandleFunc("/v1/login", svc.HandleLogin)
+	// First-run setup: create the first administrator without the shared
+	// token, while no account exists and only for a window after start.
+	adminMux.HandleFunc("/v1/setup", svc.HandleSetup)
+	// Single sign-on (roadmap 5.4).
+	adminMux.HandleFunc("/v1/sso", svc.HandleSSO)
+	adminMux.HandleFunc("/v1/sso/start", svc.HandleSSO)
+	adminMux.HandleFunc("/v1/sso/finish", svc.HandleSSO)
 	adminMux.HandleFunc("/v1/logout", svc.HandleLogout)
 	adminMux.HandleFunc("/v1/session", svc.HandleSession)
 	adminMux.HandleFunc("/v1/users", svc.HandleUsers)
@@ -381,6 +405,65 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/policy/break-glass", svc.HandleBreakGlass)
 	adminMux.HandleFunc("/v1/policy/host-classes", svc.HandleHostClasses)
 	adminMux.HandleFunc("/v1/playbooks", svc.HandlePlaybooks)
+
+	// First-run setup window. Restarting defendsec-apid reopens it while no
+	// account exists, which is the point: restarting requires access to the
+	// server, and that is the proof of ownership an open form cannot ask for.
+	setupWindow := control.DefaultSetupWindow
+	if raw := strings.TrimSpace(os.Getenv("DEFENDSEC_SETUP_WINDOW")); raw != "" {
+		switch strings.ToLower(raw) {
+		case "0", "off", "false", "no":
+			setupWindow = 0
+		default:
+			d, err := time.ParseDuration(raw)
+			if err != nil || d < 0 {
+				// Refused rather than defaulted: a typo here would silently
+				// leave setup open for thirty minutes when the operator
+				// meant to close it.
+				return fmt.Errorf("DEFENDSEC_SETUP_WINDOW=%q is not a duration such as 30m, or off", raw)
+			}
+			setupWindow = d
+		}
+	}
+	svc.OpenSetupWindow(time.Now().UTC(), setupWindow)
+
+	// Single sign-on (roadmap 5.4). Off unless an issuer is set. A partial
+	// or unsafe configuration refuses to start rather than half-working:
+	// an operator who configured SSO believes it is in force.
+	if issuer := strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_ISSUER")); issuer != "" {
+		split := func(v string) []string {
+			var out []string
+			for _, x := range strings.Split(v, ",") {
+				if x = strings.TrimSpace(x); x != "" {
+					out = append(out, x)
+				}
+			}
+			return out
+		}
+		prov, err := sso.New(sso.Config{
+			Issuer:       issuer,
+			ClientID:     strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_CLIENT_ID")),
+			ClientSecret: strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_CLIENT_SECRET")),
+			RedirectURL:  strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_REDIRECT_URL")),
+			GroupsClaim:  strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_GROUPS_CLAIM")),
+			AdminGroups:  split(os.Getenv("DEFENDSEC_SSO_ADMIN_GROUPS")),
+			ViewerGroups: split(os.Getenv("DEFENDSEC_SSO_VIEWER_GROUPS")),
+			DisplayName:  strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_NAME")),
+		})
+		if err != nil {
+			return fmt.Errorf("single sign-on: %w", err)
+		}
+		if pg == nil {
+			return fmt.Errorf("single sign-on is configured but no database is; SSO accounts are stored in Postgres")
+		}
+		svc.SetSSO(prov)
+		log.Info("single sign-on enabled", "issuer", issuer)
+	}
+	if setupWindow > 0 {
+		log.Info("first-run setup open while no accounts exist",
+			"window", setupWindow.String(),
+			"detail", "open the console to create the first administrator; restart defendsec-apid to reopen it")
+	}
 
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,

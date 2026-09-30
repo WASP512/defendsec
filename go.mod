@@ -4,9 +4,12 @@ go 1.26.0
 
 require (
 	github.com/cilium/ebpf v0.22.0
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/jackc/pgx/v5 v5.11.0
 	golang.org/x/crypto v0.57.0
+	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.48.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
