@@ -4,7 +4,8 @@ import { SeverityBadge } from "@/components/status-badge";
 import { FindingActions } from "@/components/finding-actions";
 import { ActivityItem, ActivityList, EmptyState, PageHeader } from "@/components/console-ui";
 import { ensureStore } from "@/lib/store";
-import { allFindings, severityRank } from "@/lib/advisories";
+import { severityRank } from "@/lib/advisories";
+import { fleetFindings } from "@/lib/fleet-aggregates";
 import { loadAdvisories } from "@/lib/advisories-db";
 
 import { loadFleet } from "@/lib/mtls-agents";
@@ -29,7 +30,8 @@ export default async function AdvisoriesPage() {
   const alertBySource = new Map(
     vulnAlerts.map((alert) => [`${alert.deviceId}:${alert.sourceId}`, alert]),
   );
-  const findings = allFindings(await loadFleet(store.devices), store.triages, advisories).sort(
+  // Copied before sorting: the cached array is shared between requests.
+  const findings = [...fleetFindings(await loadFleet(store.devices), store.triages, advisories)].sort(
     (a, b) =>
       severityRank(a.advisory.severity) - severityRank(b.advisory.severity) ||
       a.hostname.localeCompare(b.hostname),

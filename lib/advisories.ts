@@ -114,18 +114,40 @@ export function findingKey(deviceId: string, advisoryId: string, packageName: st
   return `${deviceId}:${advisoryId}:${packageName.toLowerCase()}`;
 }
 
-export function findingsForSoftware(
+// Advisories indexed by canonical package name, built once per catalog.
+// Matching used to compare every installed package with every advisory,
+// normalising both names each time; at 10,000 hosts that was seconds of
+// blocking CPU per page view (roadmap 5.5). The result is identical: an
+// advisory applies exactly when the canonical names are equal.
+const catalogIndex = new WeakMap<Advisory[], Map<string, Advisory[]>>();
+
+function indexFor(advisories: Advisory[]): Map<string, Advisory[]> {
+  let idx = catalogIndex.get(advisories);
+  if (!idx) {
+    idx = new Map();
+    for (const advisory of advisories) {
+      const key = canonicalPackage(advisory.package);
+      const list = idx.get(key);
+      if (list) list.push(advisory);
+      else idx.set(key, [advisory]);
+    }
+    catalogIndex.set(advisories, idx);
+  }
+  return idx;
+}
+
+function matchSoftware(
   software: SoftwareItem[],
   device: Pick<Device, "id" | "hostname">,
-  triages: FindingTriage[] = [],
-  advisories: Advisory[] = ADVISORIES,
-): Finding[] {
-  const statusByKey = new Map(triages.map((item) => [item.key, item.status]));
-  const findings: Finding[] = [];
+  statusByKey: Map<string, FindingTriage["status"]>,
+  idx: Map<string, Advisory[]>,
+  findings: Finding[],
+) {
   for (const item of software) {
     if (!item.version) continue;
-    for (const advisory of advisories) {
-      if (!packageMatches(advisory.package, item.name)) continue;
+    const candidates = idx.get(canonicalPackage(item.name));
+    if (!candidates) continue;
+    for (const advisory of candidates) {
       if (!versionOlderThan(item.version, advisory.below)) continue;
       const key = findingKey(device.id, advisory.id, item.name);
       findings.push({
@@ -139,6 +161,16 @@ export function findingsForSoftware(
       });
     }
   }
+}
+
+export function findingsForSoftware(
+  software: SoftwareItem[],
+  device: Pick<Device, "id" | "hostname">,
+  triages: FindingTriage[] = [],
+  advisories: Advisory[] = ADVISORIES,
+): Finding[] {
+  const findings: Finding[] = [];
+  matchSoftware(software, device, new Map(triages.map((t) => [t.key, t.status])), indexFor(advisories), findings);
   return findings;
 }
 
@@ -155,7 +187,12 @@ export function allFindings(
   triages: FindingTriage[] = [],
   advisories: Advisory[] = ADVISORIES,
 ) {
-  return devices.flatMap((device) => findingsForSoftware(device.software, device, triages, advisories));
+  // One triage map and one index for the whole fleet, not one per host.
+  const statusByKey = new Map(triages.map((t) => [t.key, t.status]));
+  const idx = indexFor(advisories);
+  const findings: Finding[] = [];
+  for (const device of devices) matchSoftware(device.software, device, statusByKey, idx, findings);
+  return findings;
 }
 
 

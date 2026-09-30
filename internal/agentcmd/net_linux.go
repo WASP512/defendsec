@@ -1,19 +1,21 @@
+//go:build linux
+
 package agentcmd
 
 import (
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 )
 
 const iptablesChain = "DEFENDSEC_ISOLATE"
 
-func applyNetIsolate() error {
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("network isolate is only implemented on linux")
-	}
+const isolateDescription = "network isolated via iptables chain DEFENDSEC_ISOLATE (loopback + established allowed)"
+
+func privileged() bool { return os.Geteuid() == 0 }
+
+func applyNetIsolate(string) error {
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("network isolate requires root")
 	}
@@ -40,8 +42,8 @@ func applyNetIsolate() error {
 	return nil
 }
 
-func clearNetIsolate() error {
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+func clearNetIsolate(string) error {
+	if os.Geteuid() != 0 {
 		return nil
 	}
 	_ = iptables("-D", "OUTPUT", "-j", iptablesChain)

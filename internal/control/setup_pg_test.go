@@ -121,7 +121,7 @@ func TestSetupIsRefusedAfterTheWindow(t *testing.T) {
 	if st.SetupOpen {
 		t.Fatal("setup reports open after its window")
 	}
-	if !strings.Contains(st.Detail, "Restart defendsec-apid") {
+	if !strings.Contains(st.Detail, "bootstrap-admin") {
 		t.Errorf("the closed state does not say how to reopen it: %q", st.Detail)
 	}
 	if rec := postSetup(t, s, goodSetup); rec.Code != http.StatusForbidden {

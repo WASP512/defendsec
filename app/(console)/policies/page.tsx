@@ -1,8 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, PageHeader } from "@/components/console-ui";
 import { ensureStore } from "@/lib/store";
-import { policySummary } from "@/lib/policies";
-import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
+import { fleetAggregates } from "@/lib/fleet-aggregates";
+import { loadFleet } from "@/lib/mtls-agents";
 import { ShieldQuestion } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function PoliciesPage() {
   const store = await ensureStore();
   const fleet = await loadFleet(store.devices);
-  const policies = policySummary(fleet, [...(await loadMtlsFimEvents()), ...store.fimEvents], store.triages);
+  const { policies } = fleetAggregates(fleet, store.triages);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
