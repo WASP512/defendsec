@@ -71,6 +71,11 @@ func ParseAgentUpdatePayload(raw []byte) (AgentUpdatePayload, error) {
 }
 
 func RunLiveQuery(query string) (string, error) {
+	if runtime.GOOS == "windows" {
+		if out, ok, err := runWindowsLiveQuery(query); ok {
+			return out, err
+		}
+	}
 	switch query {
 	case "processes":
 		return listProcesses()
