@@ -46,6 +46,11 @@ type State struct {
 	Isolated bool   `json:"isolated"`
 	Mode     string `json:"mode"`
 	Message  string `json:"message"`
+	// NetRequested records that network isolation was asked for, apart from
+	// whether it is in effect (Mode). A failed re-apply at start sets Mode
+	// to "flag" but keeps this, so the next start tries again rather than
+	// forgetting the host was meant to be cut off.
+	NetRequested bool `json:"netRequested,omitempty"`
 }
 
 type KillPayload struct {
@@ -79,10 +84,18 @@ func SaveState(dir string, st State) error {
 	return os.WriteFile(StatePath(dir), raw, 0o600)
 }
 
+// applyNet and clearNet are applyNetIsolate and clearNetIsolate, replaceable
+// so tests of the state handling never touch the host's firewall.
+var (
+	applyNet = applyNetIsolate
+	clearNet = clearNetIsolate
+)
+
 func Isolate(dir string) (State, error) {
 	st := State{Isolated: true, Mode: "flag", Message: "host marked isolated; network drop requires root and DEFENDSEC_ISOLATE_NET=1"}
 	if privileged() && os.Getenv("DEFENDSEC_ISOLATE_NET") == "1" {
-		if err := applyNetIsolate(dir); err != nil {
+		st.NetRequested = true
+		if err := applyNet(dir); err != nil {
 			st.Mode = "flag"
 			st.Message = "isolated flag set; network drop failed: " + err.Error()
 		} else {
@@ -98,25 +111,33 @@ func Isolate(dir string) (State, error) {
 // was quietly un-isolated while the console still showed it isolated.
 // Windows Firewall rules persist, and re-applying there would record the
 // isolated profiles as the ones to restore, so it is Linux only.
+//
+// A failure is kept as a request (NetRequested) and retried at every start.
+// Recording only the failed outcome would make the next start skip the host,
+// and after its next reboot it would come up fully networked while the
+// console still showed it isolated.
 func ReapplyIsolation(dir string) (State, bool, error) {
 	st := LoadState(dir)
-	if runtime.GOOS != "linux" || !st.Isolated || st.Mode != "net" {
+	if runtime.GOOS != "linux" || !st.Isolated || (st.Mode != "net" && !st.NetRequested) {
 		return st, false, nil
 	}
-	if err := applyNetIsolate(dir); err != nil {
-		st.Message = "isolation could not be re-applied after restart: " + err.Error()
+	st.NetRequested = true
+	if err := applyNet(dir); err != nil {
 		st.Mode = "flag"
+		st.Message = "network isolation is not in effect: it could not be re-applied after restart and will be retried at the next agent start: " + err.Error()
 		return st, true, SaveState(dir, st)
 	}
+	st.Mode = "net"
 	st.Message = isolateDescription() + " (re-applied at agent start)"
 	return st, true, SaveState(dir, st)
 }
 
 func Release(dir string) (State, error) {
-	if err := clearNetIsolate(dir); err != nil {
+	if err := clearNet(dir); err != nil {
 		st := State{Isolated: true, Mode: "net", Message: "release failed; the host may still be isolated: " + err.Error()}
 		return st, SaveState(dir, st)
 	}
+	_ = os.Remove(resolvedPath(dir))
 	st := State{Isolated: false, Mode: "flag", Message: "isolation cleared"}
 	return st, SaveState(dir, st)
 }

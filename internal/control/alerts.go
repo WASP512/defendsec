@@ -436,6 +436,42 @@ func (s *Server) resolveUnknownSca(dev presence.Device) {
 	}
 }
 
+// resolveOutOfScopeSca resolves alerts for distro-scoped checks that do not
+// apply to this host. The agent skips a check scoped to other distros and
+// reports nothing for it, so an alert raised before the check was scoped
+// (the Debian package name failing on every RPM host, say) would never see a
+// pass and would stay open. The server does not know the host's distro; it
+// knows the check did not run. That is only evidence when the report carries
+// results from the check's pack: a report without them says nothing about
+// which checks ran.
+func (s *Server) resolveOutOfScopeSca(dev presence.Device, reported []presence.ScaResult) {
+	if len(reported) == 0 {
+		return
+	}
+	packs, err := sca.LoadShippedCached()
+	if err != nil {
+		return
+	}
+	ran := map[string]bool{}
+	packRan := map[string]bool{}
+	for _, r := range reported {
+		ran[r.PackID+"/"+r.CheckID] = true
+		packRan[r.PackID] = true
+	}
+	for _, pack := range packs {
+		if !packRan[pack.ID] {
+			continue
+		}
+		for _, check := range pack.Checks {
+			source := pack.ID + "/" + check.ID
+			if len(check.Distros) == 0 || !sca.IsHostCheck(check.Type) || ran[source] {
+				continue
+			}
+			s.resolveAlert(dev.ID, "sca", source)
+		}
+	}
+}
+
 func (s *Server) processScaAlerts(dev presence.Device, results []sca.Result) {
 	for _, r := range results {
 		r := r

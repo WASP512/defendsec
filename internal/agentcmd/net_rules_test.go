@@ -30,6 +30,34 @@ func TestResolveControlPlane(t *testing.T) {
 	}
 }
 
+// Once isolated, a host's DNS is blocked. An agent restarted then must still
+// be able to rebuild the rules for a named control plane, from the addresses
+// the isolation in place was built from.
+func TestResolvedAddressesSurviveBlockedDNS(t *testing.T) {
+	dir := t.TempDir()
+	SetControlPlane("ds.example:47263")
+	defer SetControlPlane()
+	answer := func(ip string) func(string) ([]string, error) {
+		return func(string) ([]string, error) { return []string{ip}, nil }
+	}
+	blocked := func(string) ([]string, error) { return nil, errors.New("i/o timeout") }
+
+	if _, err := resolveControlPlaneIn(dir, blocked); err == nil {
+		t.Fatal("never resolved and DNS fails: must refuse, not isolate the host from its server")
+	}
+	if _, err := resolveControlPlaneIn(dir, answer("10.0.0.5")); err != nil {
+		t.Fatal(err)
+	}
+	ep, err := resolveControlPlaneIn(dir, blocked)
+	if err != nil || strings.Join(ep.IPs, " ") != "10.0.0.5" {
+		t.Fatalf("blocked DNS after a resolve: %+v %v", ep, err)
+	}
+	// A fresh answer wins over the remembered one.
+	if ep, _ := resolveControlPlaneIn(dir, answer("10.0.0.6")); strings.Join(ep.IPs, " ") != "10.0.0.6" {
+		t.Errorf("fresh answer not used: %+v", ep)
+	}
+}
+
 func TestWindowsIsolateAndRestore(t *testing.T) {
 	cmds := windowsIsolateCommands(endpoint{IPs: []string{"10.0.0.5"}, Ports: []int{47262, 47263}})
 	joined := make([]string, len(cmds))

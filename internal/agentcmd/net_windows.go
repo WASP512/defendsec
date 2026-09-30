@@ -14,7 +14,7 @@ func isolateDescription() string {
 func privileged() bool { return windows.GetCurrentProcessToken().IsElevated() }
 
 func applyNetIsolate(dir string) error {
-	ep, err := resolveControlPlane(lookupHost)
+	ep, err := resolveControlPlaneIn(dir, lookupHost)
 	if err != nil {
 		return err
 	}

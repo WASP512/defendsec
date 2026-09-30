@@ -49,7 +49,7 @@ func applyNetIsolate(dir string) error {
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("network isolate requires root")
 	}
-	ep, err := resolveControlPlane(lookupHost)
+	ep, err := resolveControlPlaneIn(dir, lookupHost)
 	if err != nil {
 		return err
 	}

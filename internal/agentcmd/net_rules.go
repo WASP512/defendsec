@@ -1,8 +1,11 @@
 package agentcmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -73,6 +76,49 @@ func resolveControlPlane(lookup func(string) ([]string, error)) (endpoint, error
 	}
 	sort.Strings(ep.IPs)
 	sort.Ints(ep.Ports)
+	return ep, nil
+}
+
+// resolvedPath holds the control-plane addresses the current isolation was
+// built from, by host name.
+func resolvedPath(dir string) string { return filepath.Join(dir, "isolate-resolved.json") }
+
+// resolveControlPlaneIn resolves as resolveControlPlane does and remembers the
+// answers in dir. Once a host is isolated its DNS is blocked, so an agent
+// restarted while isolated cannot resolve a named control plane again;
+// where a lookup fails, the addresses remembered from the isolation already
+// in place are used. The file is removed on release, so it never outlives
+// the isolation it describes.
+func resolveControlPlaneIn(dir string, lookup func(string) ([]string, error)) (endpoint, error) {
+	remembered := map[string][]string{}
+	if raw, err := os.ReadFile(resolvedPath(dir)); err == nil {
+		_ = json.Unmarshal(raw, &remembered)
+	}
+	used := map[string][]string{}
+	ep, err := resolveControlPlane(func(host string) ([]string, error) {
+		addrs, err := lookup(host)
+		if err == nil && len(addrs) > 0 {
+			used[host] = addrs
+			return addrs, nil
+		}
+		if old := remembered[host]; len(old) > 0 {
+			used[host] = old
+			return old, nil
+		}
+		return addrs, err
+	})
+	if err != nil {
+		return ep, err
+	}
+	if len(used) > 0 {
+		raw, err := json.Marshal(used)
+		if err != nil {
+			return ep, err
+		}
+		if err := os.WriteFile(resolvedPath(dir), raw, 0o600); err != nil {
+			return ep, err
+		}
+	}
 	return ep, nil
 }
 

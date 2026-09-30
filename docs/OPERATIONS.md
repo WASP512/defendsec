@@ -305,7 +305,11 @@ DEFENDSEC_DATA_DIR="$PWD/data" DATABASE_URL=postgres://... ./scripts/backup.sh
   atomically and effective alongside firewalld or ufw. Where `nft` is unavailable it falls back to
   `iptables` and `ip6tables`, and refuses to isolate rather than leave IPv6 open. Isolation is
   re-applied when the agent starts, so a reboot does not quietly release a host the console shows
-  as isolated. `scripts/test-isolation-netns.sh` checks all of this against real traffic in
+  as isolated. If that fails, the agent logs an error, the host's isolation message says network
+  isolation is not in effect, and it tries again at every start until it succeeds or the host is
+  released. A control plane configured by name is resolved when isolation is applied, and those
+  addresses are kept (`isolate-resolved.json` in the state directory) for a restart while isolated,
+  when DNS is blocked; they are deleted on release. `scripts/test-isolation-netns.sh` checks all of this against real traffic in
   network namespaces, and runs in CI.
 - On Windows, connections already open when isolation starts are not cut, because Windows
   Firewall evaluates connections when they are made.
