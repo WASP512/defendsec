@@ -1,3 +1,4 @@
+import { supportedOs } from "./supported-os.ts";
 import type { Device, FindingTriage, PolicyResult, PolicyStatus } from "./types";
 import { ONLINE_WINDOW_MS } from "./types";
 import { findingsForDevice } from "./advisories";
@@ -49,7 +50,7 @@ export const POLICY_DEFS = [
   {
     id: "supported-os",
     name: "Supported OS",
-    description: "macOS 14+, Windows 11, or a current Ubuntu LTS.",
+    description: "A vendor-supported release: Ubuntu 22.04+, Debian 12+, Fedora (current), RHEL 8+, openSUSE Leap 16+ / Tumbleweed, or Windows 11 / Server 2022+.",
   },
   {
     id: "vulns",
@@ -68,27 +69,6 @@ export const POLICY_DEFS = [
   },
 ] as const;
 
-function supportedOs(device: Device): boolean | null {
-  const version = device.osVersion.toLowerCase();
-  if (device.platform === "darwin") {
-    const major = Number.parseInt(version.split(".")[0] ?? "", 10);
-    if (Number.isNaN(major)) return null;
-    return major >= 14;
-  }
-  if (device.platform === "windows") {
-    if (!version) return null;
-    return version.includes("11") || version.includes("2022") || version.includes("2025");
-  }
-  if (device.platform === "linux") {
-    if (!version) return null;
-    const match = version.match(/(\d+)\.(\d+)/);
-    if (!match) return version.includes("24.04") || version.includes("22.04");
-    const major = Number(match[1]);
-    const minor = Number(match[2]);
-    return major > 22 || (major === 22 && minor >= 4);
-  }
-  return null;
-}
 
 function patchStatus(device: Device): PolicyResult {
   if (device.patchInventory !== "ok") {

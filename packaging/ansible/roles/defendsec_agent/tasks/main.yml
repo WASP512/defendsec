@@ -1,4 +1,13 @@
 ---
+- name: Refuse unsupported platforms
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] in ['Windows', 'Debian', 'RedHat', 'Suse']
+    fail_msg: >-
+      DefendSec agents support Ubuntu, Debian, Fedora, RHEL (and rebuilds),
+      openSUSE and Windows; this host is {{ ansible_facts['distribution'] }}.
+    quiet: true
+
 - name: Check required variables
   ansible.builtin.assert:
     that:
@@ -13,4 +22,4 @@
   ansible.builtin.include_tasks: "{{ item }}"
   with_first_found:
     - "{{ ansible_facts['os_family'] | lower }}.yml"
-    - "{{ 'windows' if ansible_facts['os_family'] == 'Windows' else ('darwin' if ansible_facts['os_family'] == 'Darwin' else 'linux') }}.yml"
+    - "{{ 'windows' if ansible_facts['os_family'] == 'Windows' else 'linux' }}.yml"

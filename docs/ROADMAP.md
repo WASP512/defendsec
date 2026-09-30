@@ -1198,33 +1198,32 @@ it records every profile's state and policy. Only the control plane is reachable
 and the recorded profiles are restored exactly on release, including a firewall that was off.
 The rules are tested; the commands have not been run on a Windows machine.
 
-**5.2 — macOS.** EndpointSecurity framework for process and file events (requires an Apple
-developer account and entitlement — start the request early, it is slow), with FileVault, XProtect
-and firewall posture.
+**5.2 — macOS.** *Dropped by decision.* DefendSec supports Linux (Ubuntu, Debian, Fedora, RHEL and
+its rebuilds, openSUSE) and Windows, and not macOS. Full process visibility on macOS needs an
+Apple-granted EndpointSecurity entitlement, and supporting a platform without it would mean
+shipping a sampler and calling it coverage. The macOS agent code, packs, installers and docs were
+removed rather than left to rot.
 
-*Delivered, except EndpointSecurity, which is waiting on Apple.* See [MACOS.md](MACOS.md).
+Narrowing the platforms paid for itself on Linux straight away. Checking each supported
+distribution turned up defects that affected real installs:
 
-- **Service:** a launchd daemon, with install and uninstall scripts. `scripts/build-macos-pkg.sh`
-  builds a `.pkg` for MDM, on a Mac.
-- **Posture pack:**
-  - FileVault on (encryption in progress does not pass)
-  - application firewall and stealth mode
-  - SIP fully on (a custom configuration fails)
-  - Gatekeeper
-  - XProtect present, with security-data updates installing automatically
-  - automatic login off
-- **Inventory:** OS, memory, uptime, model, applications, and pending updates.
-- **Process sampling** from `kern.proc.all`, with command lines from `kern.procargs2`.
-- **`kill_process`** works on macOS, with system processes protected.
-- **Isolation** uses a pf anchor under `com.apple/*`, which the stock `pf.conf` already
-  evaluates, so the system configuration is not edited. pf's enable token is kept so that
-  release does not turn pf off for anything else using it.
-
-**EndpointSecurity needs an entitlement only the project owner can request from Apple.** The
-steps, from the request through Full Disk Access and the cgo sensor, are written down in MACOS.md.
-Until it is granted, the coverage page states the sampler's limits.
-
-Not yet run on a Mac by DefendSec's tests: only the parsers and the cross-compile are verified.
+- **Database login on RPM-based servers.** Fedora, RHEL and openSUSE use `ident` for local TCP in
+  `pg_hba.conf`. The server installer *appended* its password rule, which is too late: Postgres
+  uses the first matching line. So the control plane could not log in to its own database on
+  those distributions. The rule is now prepended.
+- **Firewall blocked the server's ports.** firewalld is on by default on Fedora, RHEL and openSUSE
+  and blocked the console, enroll and gRPC ports, so no agent could connect. The installer now
+  opens them in firewalld or ufw when either is active.
+- **Wrong package names in SCA checks.** The audit-daemon check looked for `auditd`, which is the
+  Debian name; on the RPM distributions the package is `audit`, so every RPM host failed. Checks
+  now carry `distros:`, the host's family is read from `os-release`, and SELinux is checked where
+  it is used (Fedora, RHEL, openSUSE) and AppArmor where it is (Ubuntu, Debian).
+- **No pending updates on openSUSE.** The agent could not report them; it now reads `zypper
+  list-updates`. The rpm database is also found in its newer `/usr/lib/sysimage` location.
+- **"Supported OS" failed every host except Ubuntu.** The policy only understood Ubuntu-style
+  versions, so Fedora, Debian, RHEL and openSUSE all failed it, and so did Windows 11, because
+  `10.0.22631` does not contain "11". It is now a per-distro table with its reasoning recorded,
+  and Windows is judged by build number.
 
 **5.3 — HTTPS by default.** Port 47261 shipping plain HTTP by default is a credibility problem for
 a security product, and the paper has to caveat it in four separate places. Generate a self-signed
@@ -1353,7 +1352,7 @@ else's stack.
   specification. It was received from a real run: 120 events, all well-formed.
 - **Slack and Teams:** alerts only, above a severity floor (default high), at most ten per post.
   A channel that receives every event is a channel everyone mutes.
-- **Ansible** role for Linux, Windows (MSI) and macOS, and a **Terraform** module that renders
+- **Ansible** role for Linux and Windows (MSI), and a **Terraform** module that renders
   first-boot user data for any provider. CI runs `terraform test`, `ansible-lint` and a PowerShell
   parse on every change. ansible-lint caught a real defect before merge: `get_url` in current
   ansible-core cannot take a per-request CA, so the verified download would have failed on first

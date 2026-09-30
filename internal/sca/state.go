@@ -95,8 +95,12 @@ func (h *Host) packageManager() string {
 	if _, err := os.Stat(h.resolve("/var/lib/dpkg/status")); err == nil {
 		return "dpkg"
 	}
-	if _, err := os.Stat(h.resolve("/var/lib/rpm")); err == nil {
-		return "rpm"
+	// Fedora and openSUSE keep the rpm database in /usr/lib/sysimage/rpm;
+	// /var/lib/rpm is a compatibility link that newer images may omit.
+	for _, p := range []string{"/var/lib/rpm", "/usr/lib/sysimage/rpm"} {
+		if _, err := os.Stat(h.resolve(p)); err == nil {
+			return "rpm"
+		}
 	}
 	return ""
 }

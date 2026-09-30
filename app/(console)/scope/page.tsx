@@ -70,7 +70,7 @@ export default function ScopePage() {
         <h2 className="text-lg font-semibold">Practical split</h2>
         <p className="text-muted-foreground">
           Keep going on this agent plane for “what is on the box, is it patched, did
-          sshd_config move.” Keep a real MDM beside it if you need “wipe a stolen Mac.” Do not
+          sshd_config move.” Keep a real MDM beside it if you need “wipe a stolen laptop.” Do not
           try to clone all of Fleet in one product.
         </p>
       </section>

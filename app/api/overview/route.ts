@@ -21,7 +21,6 @@ export async function GET(request: Request) {
       samples: fleet.filter((d) => d.sample).length,
       live: fleet.filter((d) => !d.sample).length,
       platforms: {
-        darwin: fleet.filter((d) => d.platform === "darwin").length,
         windows: fleet.filter((d) => d.platform === "windows").length,
         linux: fleet.filter((d) => d.platform === "linux").length,
       },

@@ -21,7 +21,7 @@ export function EnrollPanel({
 }) {
   const [secret, setSecret] = useState(enrollSecret);
   const [snippetTab, setSnippetTab] = useState("install");
-  type CopyKind = "secret" | "install" | "windows" | "msi" | "macos" | "go" | "py";
+  type CopyKind = "secret" | "install" | "windows" | "msi" | "go" | "py";
   const [copied, setCopied] = useState<CopyKind | null>(null);
   const [rotateError, setRotateError] = useState("");
   const [rotating, setRotating] = useState(false);
@@ -35,7 +35,6 @@ export function EnrollPanel({
   const cmdOpts = { host, downloadBase, secret };
   const installCommand = buildInstallCommand("linux", cmdOpts);
   const windowsCommand = buildInstallCommand("windows", cmdOpts);
-  const macosCommand = buildInstallCommand("macos", cmdOpts);
   const msi = msiCommand(cmdOpts);
 
   const goCommand = [
@@ -127,7 +126,6 @@ export function EnrollPanel({
               <TabsTrigger value="install">Linux</TabsTrigger>
               <TabsTrigger value="windows">Windows</TabsTrigger>
               <TabsTrigger value="msi">Windows MSI</TabsTrigger>
-              <TabsTrigger value="macos">macOS</TabsTrigger>
               <TabsTrigger value="go">Go binary</TabsTrigger>
               <TabsTrigger value="python">Python</TabsTrigger>
             </TabsList>
@@ -161,14 +159,6 @@ export function EnrollPanel({
               command: msi,
               description:
                 "For Intune, SCCM or Group Policy: download defendsec-agent-windows-amd64.msi from the Downloads URL and deploy it with these properties. The agent removes the enroll secret from its service configuration once enrolled.",
-            },
-            {
-              value: "macos",
-              kind: "macos" as const,
-              command: macosCommand,
-              description:
-                "Installs a launchd daemon. Process visibility on macOS samples the process table; full execution visibility needs EndpointSecurity (see docs/MACOS.md)." +
-                (needsCA ? " Copy console.crt from the server to /tmp/defendsec-console.crt first." : ""),
             },
             {
               value: "go",

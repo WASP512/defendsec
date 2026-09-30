@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Isolation on Windows and macOS (roadmap 5.1, 5.2). The commands and rules
+// Isolation on Windows (roadmap 5.1). The commands and rules
 // are built by pure functions so they are tested on every platform; only
 // running them is platform-specific.
 
@@ -167,28 +167,4 @@ func windowsReleaseCommands(saved []windowsProfile) [][]string {
 		}
 	}
 	return cmds
-}
-
-// pfRules isolates a macOS host: loopback and the control plane, nothing
-// else. Existing pf states (the agent's live connection) are kept.
-func pfRules(ep endpoint) string {
-	var b strings.Builder
-	b.WriteString("# DefendSec host isolation. Removed on release.\n")
-	b.WriteString("pass quick on lo0 all\n")
-	fmt.Fprintf(&b, "pass out quick proto tcp to { %s } port { %s } keep state\n",
-		strings.Join(ep.IPs, " "), strings.Join(strings.Split(joinPorts(ep.Ports), ","), " "))
-	b.WriteString("block drop quick all\n")
-	return b.String()
-}
-
-// parsePfToken reads the reference token `pfctl -E` prints, so release
-// drops only this enable reference rather than turning pf off for anyone
-// else using it.
-func parsePfToken(out string) string {
-	for _, line := range strings.Split(out, "\n") {
-		if k, v, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "Token" {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
 }

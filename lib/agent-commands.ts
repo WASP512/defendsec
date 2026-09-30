@@ -2,7 +2,7 @@
 // Pure, so the commands the console shows are tested rather than assembled
 // inline in a component.
 
-export type AgentPlatform = "linux" | "windows" | "macos";
+export type AgentPlatform = "linux" | "windows";
 
 // Every file the console's /downloads route will serve.
 export const AGENT_DOWNLOADS = [
@@ -10,15 +10,11 @@ export const AGENT_DOWNLOADS = [
   "uninstall-agent.sh",
   "install-agent.ps1",
   "uninstall-agent.ps1",
-  "install-agent-macos.sh",
-  "uninstall-agent-macos.sh",
   "SHA256SUMS",
   "defendsec-agentd-linux-amd64",
   "defendsec-agentd-linux-arm64",
   "defendsec-agentd-windows-amd64.exe",
   "defendsec-agentd-windows-arm64.exe",
-  "defendsec-agentd-darwin-amd64",
-  "defendsec-agentd-darwin-arm64",
   "defendsec-agent-windows-amd64.msi",
 ] as const;
 
@@ -35,9 +31,6 @@ export function agentPlatform(platform: string | undefined): AgentPlatform | nul
       return "linux";
     case "windows":
       return "windows";
-    case "darwin":
-    case "macos":
-      return "macos";
     default:
       return null;
   }
@@ -67,19 +60,6 @@ export function installCommand(platform: AgentPlatform, o: CommandOptions): stri
       return [
         `${curlFetch(o.downloadBase, "install-agent.sh", "/tmp/install-agent.sh")} && \\`,
         `  sudo bash /tmp/install-agent.sh \\`,
-        `  --server-http https://${o.host}:47262 \\`,
-        `  --server-grpc ${o.host}:47263 \\`,
-        `  --tls-server-name ${o.host} \\`,
-        `  --enroll-secret ${o.secret} \\`,
-        ca ? `  --download-ca ${CA_PATH} \\` : null,
-        `  --download-base "${o.downloadBase}"`,
-      ]
-        .filter((l): l is string => l !== null)
-        .join("\n");
-    case "macos":
-      return [
-        `${curlFetch(o.downloadBase, "install-agent-macos.sh", "/tmp/install-agent-macos.sh")} && \\`,
-        `  sudo bash /tmp/install-agent-macos.sh \\`,
         `  --server-http https://${o.host}:47262 \\`,
         `  --server-grpc ${o.host}:47263 \\`,
         `  --tls-server-name ${o.host} \\`,
@@ -125,8 +105,7 @@ export function msiCommand(o: CommandOptions): string {
   ].join("\n");
 }
 
-// Uninstall. The installed agent carries its own uninstaller on Windows and
-// macOS; the command falls back to downloading it so it works on a host
+// Uninstall. The installed agent carries its own uninstaller on Windows; the command falls back to downloading it so it works on a host
 // installed by hand too.
 export function uninstallCommand(
   platform: AgentPlatform,
@@ -138,15 +117,6 @@ export function uninstallCommand(
       return [
         `${curlFetch(downloadBase, "uninstall-agent.sh", "/tmp/uninstall-agent.sh")} && \\`,
         `  sudo bash /tmp/uninstall-agent.sh${purge ? " --purge-data" : ""}`,
-      ].join("\n");
-    case "macos":
-      return [
-        `if [ -x /usr/local/bin/defendsec-agent-uninstall ]; then`,
-        `  sudo defendsec-agent-uninstall${purge ? " --purge-data" : ""}`,
-        `else`,
-        `  ${curlFetch(downloadBase, "uninstall-agent-macos.sh", "/tmp/uninstall-agent-macos.sh")} && \\`,
-        `    sudo bash /tmp/uninstall-agent-macos.sh${purge ? " --purge-data" : ""}`,
-        `fi`,
       ].join("\n");
     case "windows":
       return [

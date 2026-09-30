@@ -1,4 +1,4 @@
-// Package posture checks the security posture of Windows and macOS hosts
+// Package posture checks the security posture of Windows hosts
 // (roadmap 5.1, 5.2): disk encryption, antivirus, firewall, and the platform
 // protections an auditor asks about first.
 //
@@ -92,8 +92,6 @@ func stateFrom(f Finding) *bool {
 var Probes = map[string][]string{
 	"windows": {WinBitLocker, WinDefenderAV, WinDefenderRealtime, WinDefenderSignatures,
 		WinDefenderTamper, WinFirewall, WinSMB1, WinUAC, WinRDPNLA},
-	"darwin": {MacFileVault, MacFirewall, MacStealth, MacSIP, MacGatekeeper,
-		MacXProtect, MacSecurityUpdates, MacAutoLogin},
 }
 
 // KnownProbe reports whether id names a probe on any platform.

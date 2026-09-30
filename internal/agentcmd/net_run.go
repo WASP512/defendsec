@@ -1,4 +1,4 @@
-//go:build windows || darwin
+//go:build windows
 
 package agentcmd
 
@@ -17,7 +17,6 @@ import (
 // isolateSaved is what release needs to restore, kept beside the state file.
 type isolateSaved struct {
 	WindowsProfiles []windowsProfile `json:"windowsProfiles,omitempty"`
-	PfToken         string           `json:"pfToken,omitempty"`
 }
 
 func savedPath(dir string) string { return filepath.Join(dir, "isolate-restore.json") }

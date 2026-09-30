@@ -28,9 +28,12 @@ type Host struct {
 	LookupGroup func(name string) (gid uint32, err error)
 	// Runner executes commands. Nil means the default, allowlisted runner.
 	Runner Runner
-	// Posture is the Windows or macOS posture report collected for this
+	// Posture is the Windows posture report collected for this
 	// run. Nil on Linux, where posture checks do not apply.
 	Posture posture.Report
+	// Distro overrides os-release detection (ubuntu, debian, fedora, rhel,
+	// opensuse). Set in tests.
+	Distro string
 }
 
 // LocalHost is the real machine.

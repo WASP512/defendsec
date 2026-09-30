@@ -33,8 +33,6 @@ var protected = map[string]struct{}{
 	// Windows: killing any of these crashes or logs out the machine.
 	"csrss": {}, "lsass": {}, "wininit": {}, "winlogon": {}, "services": {},
 	"smss": {}, "svchost": {}, "system": {}, "msmpeng": {},
-	// macOS.
-	"launchd": {}, "kernel_task": {}, "windowserver": {}, "loginwindow": {},
 }
 
 // isProtected compares without case or an .exe suffix, so "LSASS.EXE" is
@@ -112,7 +110,7 @@ func KillByName(name string) (int, error) {
 	if isProtected(name) {
 		return 0, fmt.Errorf("refusing to signal protected process %q", name)
 	}
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		return killByList(name)
 	}
 	entries, err := os.ReadDir("/proc")

@@ -770,7 +770,7 @@ built, so the first deployment against yours is still worth watching.
 ## Provisioning with Ansible and Terraform
 
 - `packaging/ansible` — a role that installs, enrolls or removes the agent on
-  Linux, Windows (the MSI) and macOS. Downloads are verified, the secret is
+  Linux (Ubuntu, Debian, Fedora, RHEL, openSUSE) and Windows (the MSI). Downloads are verified, the secret is
   `no_log`, and re-running on an enrolled host does nothing. See its README.
 - `packaging/terraform/defendsec-agent` — a module that renders first-boot user
   data (bash, or `<powershell>` for Windows) to install and enroll the agent on

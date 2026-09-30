@@ -181,10 +181,8 @@ prepare_release() {
 
 OPTIONAL_DOWNLOADS=(
   defendsec-agentd-windows-amd64.exe defendsec-agentd-windows-arm64.exe
-  defendsec-agentd-darwin-amd64 defendsec-agentd-darwin-arm64
   defendsec-agent-windows-amd64.msi
   uninstall-agent.sh install-agent.ps1 uninstall-agent.ps1
-  install-agent-macos.sh uninstall-agent-macos.sh
 )
 
 apply_release() {

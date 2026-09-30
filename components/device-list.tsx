@@ -39,7 +39,6 @@ export function DeviceList({ query, page }: { query: DeviceListQuery; page: Devi
           <option value="">All platforms</option>
           <option value="linux">Linux</option>
           <option value="windows">Windows</option>
-          <option value="darwin">macOS</option>
         </select>
         <select name="status" defaultValue={query.status} aria-label="Status"
           className="h-9 rounded-md border bg-background px-2 text-sm">

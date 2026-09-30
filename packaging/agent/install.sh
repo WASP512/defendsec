@@ -135,6 +135,7 @@ fetch_binary() {
     return
   fi
 
+  command -v jq >/dev/null 2>&1 || die "jq is needed to read GitHub release metadata; install it, or pass --download-base or --binary"
   info "Downloading latest GitHub release asset (${GITHUB_REPO})"
   local api release url sums_url
   api="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
@@ -158,13 +159,26 @@ verify_binary() {
   info "Verified ${name} SHA256"
 }
 
+# Supported: Ubuntu, Debian, Fedora, RHEL (and Rocky / Alma), openSUSE.
+# curl and CA certificates are required. jq is only needed for the GitHub
+# download path, so a repository without it is not a failure.
 install_packages_light() {
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y --no-install-recommends ca-certificates curl jq
+    apt-get install -y --no-install-recommends ca-certificates curl
+    apt-get install -y --no-install-recommends jq || true
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y ca-certificates curl jq
+    dnf install -y ca-certificates curl
+    dnf install -y jq || true
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y ca-certificates curl
+    yum install -y jq || true
+  elif command -v zypper >/dev/null 2>&1; then
+    zypper --non-interactive install -y ca-certificates curl
+    zypper --non-interactive install -y jq || true
+  else
+    command -v curl >/dev/null 2>&1 || die "no supported package manager (apt, dnf, yum, zypper) and curl is missing"
   fi
 }
 

@@ -1,4 +1,4 @@
-// Package proclist enumerates running processes on Windows and macOS, where
+// Package proclist enumerates running processes on Windows, where
 // there is no /proc to read (roadmap 5.1, 5.2). It feeds the polling process
 // sensor and the kill_process command on those platforms.
 package proclist
@@ -17,7 +17,7 @@ type Proc struct {
 	Image string
 	// Name is the short executable name.
 	Name string
-	// UID is the real user id on macOS, -1 where not applicable.
+	// UID is -1 on Windows, where owners are SIDs.
 	UID int
 }
 

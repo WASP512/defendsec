@@ -272,3 +272,14 @@ func firstNonEmpty(vals ...string) string {
 	}
 	return ""
 }
+
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 200 {
+		s = s[:200]
+	}
+	return s
+}

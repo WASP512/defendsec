@@ -122,6 +122,8 @@ checks:
     owner: root
 
   # --- Control 8: Audit log management --------------------------------
+  # The package is "auditd" on Debian and Ubuntu and "audit" on the RPM
+  # distros; checking one name everywhere failed every RPM host.
   - id: cis-8.2-auditd-installed
     controls: [cis-v8:8.2, nist-800-53:AU-2, nist-800-171:3.3.1]
     title: The audit daemon is installed
@@ -129,6 +131,16 @@ checks:
     type: package
     package: auditd
     present: true
+    distros: [ubuntu, debian]
+
+  - id: cis-8.2-audit-installed-rpm
+    controls: [cis-v8:8.2, nist-800-53:AU-2, nist-800-171:3.3.1]
+    title: The audit daemon is installed
+    severity: medium
+    type: package
+    package: audit
+    present: true
+    distros: [fedora, rhel, opensuse]
 
   - id: cis-8.2-auditd-running
     controls: [cis-v8:8.2, nist-800-53:AU-2, nist-800-53:AU-3]
@@ -165,6 +177,16 @@ checks:
     type: package
     package: telnetd
     present: false
+    distros: [ubuntu, debian]
+
+  - id: no-telnet-server-rpm
+    controls: [cis-v8:4.1, nist-800-53:CM-6, nist-800-53:SC-8]
+    title: A telnet server is not installed
+    severity: high
+    type: package
+    package: telnet-server
+    present: false
+    distros: [fedora, rhel, opensuse]
 
   - id: no-rsh-server
     controls: [cis-v8:4.1, nist-800-53:CM-6]
@@ -175,13 +197,22 @@ checks:
     present: false
 
   # --- SELinux / AppArmor ---------------------------------------------
+  # Fedora, RHEL and openSUSE (Leap 16 and Tumbleweed) use SELinux; Ubuntu
+  # and Debian use AppArmor. Each host is checked against its own.
   - id: mandatory-access-control-enforcing
     controls: [cis-v8:4.1, nist-800-53:AC-3, nist-800-53:SI-7]
-    title: SELinux is enforcing, where SELinux is in use
+    title: SELinux is enforcing
     severity: medium
-    # A command check because the answer is not a file or a unit state. On a
-    # host without SELinux the command is absent and the check reports that
-    # rather than failing, which is the honest outcome on an AppArmor system.
     type: command
     command: [getenforce]
     output_matches: "(?i)enforcing"
+    distros: [fedora, rhel, opensuse]
+
+  - id: mandatory-access-control-apparmor
+    controls: [cis-v8:4.1, nist-800-53:AC-3, nist-800-53:SI-7]
+    title: AppArmor is enabled
+    severity: medium
+    type: command
+    command: [aa-enabled]
+    exit_code: 0
+    distros: [ubuntu, debian]

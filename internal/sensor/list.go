@@ -11,7 +11,7 @@ import (
 	"defendsec/internal/proclist"
 )
 
-// ListSensor observes process execution on Windows and macOS by sampling the
+// ListSensor observes process execution on Windows by sampling the
 // platform's process table (roadmap 5.1, 5.2). It is the counterpart of
 // ProcSensor for hosts with no /proc, and carries the same blind spot.
 type ListSensor struct {
@@ -51,9 +51,6 @@ func (s *ListSensor) Describe() Capability {
 		"Observes process execution only. Network connections, file writes and module loads are not visible.",
 	}
 	switch runtime.GOOS {
-	case "darwin":
-		lim = append(lim,
-			"On macOS the kernel reports only the first 16 characters of the executable name, not its path. Full paths and every execution need the EndpointSecurity sensor, which requires an Apple-granted entitlement.")
 	case "windows":
 		lim = append(lim,
 			"Protected processes refuse the query for their full path and are recorded by executable name only. Every execution, with command lines, needs the ETW sensor.")

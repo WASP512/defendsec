@@ -36,10 +36,11 @@ checks:
       - nist-800-53:CM-6
       - nist-800-171:3.13.11
       - cjis-v6:10
-    title: System crypto-policies config present (Fedora/RHEL)
+    title: System crypto-policies config present
     severity: low
     type: file_regex
     path: /etc/crypto-policies/config
+    distros: [fedora, rhel]
     must_match: '(?i)^(DEFAULT|FUTURE|FIPS|NEXT)'
   - id: sshd-password-auth-host
     controls:

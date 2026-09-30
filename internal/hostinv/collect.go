@@ -55,7 +55,7 @@ type Snapshot struct {
 	PendingUpdates []Update
 	PatchInventory string
 	Fim            []FimFile
-	// Posture is the Windows or macOS posture report (roadmap 5.1, 5.2),
+	// Posture is the Windows posture report (roadmap 5.1, 5.2),
 	// handed to the SCA engine's posture checks. Nil on Linux.
 	Posture posture.Report
 }
@@ -105,13 +105,13 @@ func Collect() Snapshot {
 	snap.PendingUpdates = updates
 	snap.PatchInventory = status
 	snap.Fim = fimFiles()
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		applyPlatformInventory(&snap)
 	}
 	return snap
 }
 
-// applyPlatformInventory overlays what the Windows and macOS collectors found.
+// applyPlatformInventory overlays what the Windows collectors found.
 // The Linux-shaped collectors above return zero values on these platforms, so
 // a value here only ever replaces an absence.
 func applyPlatformInventory(snap *Snapshot) {
@@ -167,9 +167,6 @@ func run(name string, args ...string) string {
 }
 
 func osName() string {
-	if runtime.GOOS == "darwin" {
-		return "macOS"
-	}
 	if runtime.GOOS == "windows" {
 		return "Windows"
 	}
@@ -181,9 +178,6 @@ func osName() string {
 }
 
 func osVersion() string {
-	if runtime.GOOS == "darwin" {
-		return run("sw_vers", "-productVersion")
-	}
 	kv := osRelease()
 	if kv["VERSION_ID"] != "" {
 		return kv["VERSION_ID"]
@@ -479,7 +473,69 @@ func pendingUpdates() ([]Update, string) {
 	if _, err := exec.LookPath("yum"); err == nil {
 		return pendingDNF("yum")
 	}
+	if _, err := exec.LookPath("zypper"); err == nil {
+		return pendingZypper()
+	}
 	return nil, "unsupported"
+}
+
+// pendingZypper lists openSUSE updates. Exit 7 is another process holding
+// the zypper lock, which is reported as an error rather than as "no updates".
+func pendingZypper() ([]Update, string) {
+	raw, code := runAllowExit("zypper", []int{7}, "--non-interactive", "--quiet", "list-updates")
+	if code != 0 {
+		return nil, "error"
+	}
+	return ParseZypperUpdates(raw), "ok"
+}
+
+// ParseZypperUpdates reads the table `zypper list-updates` prints:
+//
+//	S | Repository | Name | Current Version | Available Version | Arch
+//	--+------------+------+-----------------+-------------------+-------
+//	v | repo-oss   | curl | 8.6.0-1.1       | 8.6.0-2.1         | x86_64
+//
+// Columns are found from the header rather than by position, because
+// zypper versions differ in which columns they print.
+func ParseZypperUpdates(raw string) []Update {
+	var updates []Update
+	col := map[string]int{}
+	for _, line := range strings.Split(raw, "\n") {
+		if !strings.Contains(line, "|") {
+			continue
+		}
+		cells := strings.Split(line, "|")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		if len(col) == 0 {
+			for i, c := range cells {
+				col[strings.ToLower(c)] = i
+			}
+			if _, ok := col["name"]; !ok {
+				col = map[string]int{}
+			}
+			continue
+		}
+		if strings.HasPrefix(cells[0], "--") {
+			continue
+		}
+		get := func(name string) string {
+			if i, ok := col[name]; ok && i < len(cells) {
+				return cells[i]
+			}
+			return ""
+		}
+		name := get("name")
+		if name == "" {
+			continue
+		}
+		updates = append(updates, Update{Name: name, Current: get("current version"), Available: get("available version")})
+		if len(updates) >= 40 {
+			break
+		}
+	}
+	return updates
 }
 
 func pendingApt() ([]Update, string) {
@@ -552,8 +608,19 @@ func FimPaths() []string {
 			"/etc/sudoers",
 			"/etc/crypto-policies/config",
 		}
-	case "darwin":
-		paths = []string{"/etc/hosts", "/etc/ssh/sshd_config"}
+	case "windows":
+		// Files an attacker edits to redirect or persist, readable without
+		// taking locks on system hives.
+		root := os.Getenv("SystemRoot")
+		if root == "" {
+			root = `C:\Windows`
+		}
+		paths = []string{
+			filepath.Join(root, "System32", "drivers", "etc", "hosts"),
+			filepath.Join(root, "System32", "drivers", "etc", "services"),
+			filepath.Join(root, "System32", "GroupPolicy", "Machine", "Scripts"),
+			filepath.Join(root, "System32", "Tasks"),
+		}
 	default:
 		paths = []string{}
 	}

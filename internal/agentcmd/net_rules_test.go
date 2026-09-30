@@ -89,14 +89,3 @@ Ok.
 		}
 	}
 }
-
-func TestPfRules(t *testing.T) {
-	r := pfRules(endpoint{IPs: []string{"10.0.0.5", "fd00::5"}, Ports: []int{47262, 47263}})
-	want := "pass quick on lo0 all\npass out quick proto tcp to { 10.0.0.5 fd00::5 } port { 47262 47263 } keep state\nblock drop quick all\n"
-	if !strings.HasSuffix(r, want) {
-		t.Errorf("rules:\n%s", r)
-	}
-	if tok := parsePfToken("No ALTQ support in kernel\npf enabled\nToken : 12345678901234\n"); tok != "12345678901234" {
-		t.Errorf("token %q", tok)
-	}
-}

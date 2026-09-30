@@ -80,7 +80,7 @@ func iptables(args ...string) error {
 		hint := ""
 		if strings.Contains(strings.ToLower(err.Error()), "executable file not found") ||
 			strings.Contains(strings.ToLower(msg), "no such file") {
-			hint = " (on Fedora install iptables-nft: sudo dnf install -y iptables-nft)"
+			hint = " (install iptables: apt install iptables | dnf install iptables-nft | zypper install iptables)"
 		}
 		return fmt.Errorf("%s %s: %w (%s)%s", bin, strings.Join(args, " "), err, msg, hint)
 	}

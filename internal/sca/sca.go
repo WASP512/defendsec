@@ -86,8 +86,14 @@ type Check struct {
 	// pointer so requiring zero is distinguishable from not caring.
 	ExitCode *int `yaml:"exit_code"`
 
+	// Distros limits a Linux check to these families (ubuntu, debian,
+	// fedora, rhel, opensuse). Empty means every distro. A check that only
+	// makes sense on one family — a package name, a distro-specific config
+	// file — would otherwise fail everywhere else and raise false alerts.
+	Distros []string `yaml:"distros"`
+
 	// --- posture (roadmap 5.1, 5.2) ---
-	// Probe names one of the Windows or macOS posture probes in
+	// Probe names one of the Windows posture probes in
 	// internal/posture. The probe is collected once per report by the native
 	// tools, not per check.
 	Probe string `yaml:"probe"`
@@ -172,6 +178,11 @@ func (p *Pack) validateChecks() error {
 				c.ID, c.Type, strings.Join(KnownCheckTypes(), ", "))
 		}
 
+		for _, d := range c.Distros {
+			if !KnownDistro(d) {
+				return fmt.Errorf("check %q names unknown distro %q; use %s", c.ID, d, strings.Join(Distros, ", "))
+			}
+		}
 		if err := c.validate(); err != nil {
 			return fmt.Errorf("check %q: %w", c.ID, err)
 		}

@@ -3,7 +3,7 @@
 **Endpoint security you run yourself, and can prove works.**
 
 DefendSec is a self-hosted platform for watching and defending the machines you own. It covers
-Linux, Windows and macOS. One server, one small agent per host. No vendor cloud, no per-seat
+Linux and Windows. One server, one small agent per host. No vendor cloud, no per-seat
 subscription, no telemetry leaving your network.
 
 ## Why DefendSec exists
@@ -41,12 +41,12 @@ DefendSec fills that gap. It is a complete, self-contained product built around 
 
 | Area | What you get |
 | --- | --- |
-| **Inventory** | Hardware, OS, software and pending patches on Linux, Windows and macOS, with package change history |
+| **Inventory** | Hardware, OS, software and pending patches on Linux (apt, dnf/yum, zypper) and Windows, with package change history |
 | **Vulnerabilities** | Advisory matching against installed software, with an optional OSV ingest, triage and acknowledgement |
-| **Configuration & posture** | SCA packs (CIS-aligned Linux checks; BitLocker, Defender, firewall, SMBv1, UAC and RDP on Windows; FileVault, SIP, Gatekeeper and XProtect on macOS), each tagged to framework controls |
+| **Configuration & posture** | SCA packs (CIS-aligned Linux checks that know each distro — its package names, SELinux or AppArmor; BitLocker, Defender, firewall, SMBv1, UAC and RDP on Windows), each tagged to framework controls |
 | **File integrity** | Hash-based FIM on sensitive paths, with baselines you accept explicitly |
-| **Detection** | Process telemetry (eBPF on Linux, process sampling or opt-in ETW on Windows, sampling on macOS), Sigma rules and a coverage page that leads with blind spots |
-| **Response** | Signed commands: host isolation on all three platforms, kill process, live queries, quarantine. Governed by a deny-by-default policy engine with host classes, two-person approval, break-glass and playbooks |
+| **Detection** | Process telemetry (eBPF on Linux, process sampling or opt-in ETW on Windows), Sigma rules and a coverage page that leads with blind spots |
+| **Response** | Signed commands: host isolation on Linux and Windows, kill process, live queries, quarantine. Governed by a deny-by-default policy engine with host classes, two-person approval, break-glass and playbooks |
 | **Compliance** | Control mapping for NIST 800-53, 800-171, CIS v8, CMMC and CJIS; audit periods, documented exceptions and offline-verifiable evidence exports |
 | **Accounts** | Named users, TOTP, lockout, OIDC single sign-on and a hash-chained audit ledger of every action |
 | **AI agents, safely** | An MCP interface where AI agents can read and *propose*, but never sign. Humans approve, within blast-radius limits |
@@ -59,6 +59,17 @@ DefendSec fills that gap. It is a complete, self-contained product built around 
 - **Not a SIEM.** It keeps a short event window and forwards everything else to the log platform
   you already run.
 - **Not a patch deployer.** It reports missing patches; it does not install them.
+
+## Supported platforms
+
+| | Supported |
+| --- | --- |
+| **Agents: Linux** | Ubuntu 22.04+, Debian 12+, Fedora (current releases), RHEL 8+ (and Rocky, AlmaLinux, CentOS Stream), openSUSE Leap 16+ and Tumbleweed — amd64 and arm64 |
+| **Agents: Windows** | Windows 11, Windows Server 2022 and 2025 — amd64 (and arm64 binary) |
+| **Server** | Any of the Linux distributions above, or the Proxmox LXC installer (Debian) |
+
+macOS is not supported. The **Supported OS** policy flags hosts on releases their vendor no
+longer patches.
 
 ## Start here
 
@@ -90,9 +101,8 @@ Most people run the server as a Proxmox LXC: one command, then a browser.
 
    | Platform | How |
    | --- | --- |
-   | Linux (amd64/arm64) | `install-agent.sh`, run with sudo; installs a systemd service |
+   | Linux (amd64/arm64): Ubuntu, Debian, Fedora, RHEL and rebuilds, openSUSE | `install-agent.sh`, run with sudo; installs a systemd service |
    | Windows | `install-agent.ps1` in an elevated Windows PowerShell, or the **MSI** for Intune / SCCM / GPO |
-   | macOS | `install-agent-macos.sh` with sudo; installs a launchd daemon |
    | Fleets | The [Ansible role](packaging/ansible) or [Terraform module](packaging/terraform/defendsec-agent) |
 
    Downloads are checksum-verified and pinned to your server's certificate. Nothing asks you to
@@ -107,7 +117,7 @@ Most people run the server as a Proxmox LXC: one command, then a browser.
 | --- | --- |
 | Install, enroll and uninstall, step by step | [docs/INSTALL.md](docs/INSTALL.md) |
 | Operations: backup, HTTPS, SSO, policy, forwarding, metrics, scale | [docs/OPERATIONS.md](docs/OPERATIONS.md) |
-| Windows and macOS specifics, and what is verified there | [docs/WINDOWS.md](docs/WINDOWS.md), [docs/MACOS.md](docs/MACOS.md) |
+| Windows specifics, and what is verified there | [docs/WINDOWS.md](docs/WINDOWS.md) |
 | The 10,000-host load test | [docs/LOADTEST.md](docs/LOADTEST.md) |
 | What is built, and what is next | [docs/ROADMAP.md](docs/ROADMAP.md) |
 | Architecture and security model | [Technical white paper (PDF)](docs/DefendSec-Technical-White-Paper.pdf) |
@@ -117,12 +127,10 @@ Most people run the server as a Proxmox LXC: one command, then a browser.
 
 Linux is the most mature platform.
 
-- **Windows and macOS agents** are feature-complete, but have so far been verified by
-  cross-compilation, parser tests and script checks rather than on real machines. Treat your first
-  deployment on each as a pilot.
+- **The Windows agent** is feature-complete, but has so far been verified by cross-compilation,
+  parser tests and script checks rather than on real machines. Treat your first Windows
+  deployment as a pilot.
 - **Windows ETW** process tracing is opt-in until it has been field-tested.
-- **Full process visibility on macOS** (EndpointSecurity) is waiting on an Apple-granted
-  entitlement. The Mac agent samples processes until then, and says so.
 
 ## Verify what you run
 

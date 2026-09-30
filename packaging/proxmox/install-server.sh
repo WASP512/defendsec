@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # DefendSec — install control plane (apid + console + Postgres) on a Linux host.
 #
-# Supported: Debian 12 / Ubuntu 22.04+ (Proxmox CT target). Fedora also works
-# with dnf packages (same layout).
+# Supported: Ubuntu 22.04+, Debian 12+, Fedora, RHEL 8+ (and Rocky / Alma),
+# and openSUSE Leap 16+ / Tumbleweed. The Proxmox CT target is Debian.
 #
 # Usage:
 #   sudo bash packaging/proxmox/install-server.sh
@@ -174,8 +174,18 @@ install_packages() {
         systemctl enable --now docker || true
       fi
       ;;
+    opensuse-leap|opensuse-tumbleweed|sles|sled)
+      zypper --non-interactive --gpg-auto-import-keys refresh
+      zypper --non-interactive install -y ca-certificates curl wget git jq make openssl xz tar iptables
+      if [[ "$POSTGRES_MODE" == "native" ]]; then
+        zypper --non-interactive install -y postgresql-server postgresql
+      else
+        zypper --non-interactive install -y docker
+        systemctl enable --now docker || true
+      fi
+      ;;
     *)
-      die "unsupported OS id=${OS_ID}; install git jq make curl tar xz (+ postgresql) manually, then re-run"
+      die "unsupported OS id=${OS_ID}; DefendSec supports Ubuntu, Debian, Fedora, RHEL (and Rocky/Alma) and openSUSE"
       ;;
   esac
 
@@ -396,6 +406,10 @@ clone_or_update_repo() {
 start_postgres_native() {
   info "Starting Postgres (native)"
   case "$OS_ID" in
+    opensuse-leap|opensuse-tumbleweed|sles|sled)
+      # openSUSE initialises the cluster on first start.
+      systemctl enable --now postgresql
+      ;;
     fedora|rhel|centos|rocky|almalinux)
       if [[ ! -f /var/lib/pgsql/data/PG_VERSION ]] && [[ ! -f /var/lib/pgsql/data/postgresql.conf ]]; then
         postgresql-setup --initdb 2>/dev/null || /usr/bin/postgresql-setup --initdb || true
@@ -421,6 +435,30 @@ start_postgres_native() {
   done
   [[ "$postgres_ready" -eq 1 ]] || die "Postgres did not become ready within 30 seconds"
 
+  # apid connects over TCP with a password. Fedora, RHEL and openSUSE ship a
+  # pg_hba.conf that uses ident for TCP, which refuses it; Debian and Ubuntu
+  # already use scram. Lines for the defendsec role go first, so they win,
+  # and nothing else in the file is changed.
+  local hba
+  hba="$(su -s /bin/bash postgres -c "cd /tmp && psql -tAc 'SHOW hba_file'" | tr -d '[:space:]')"
+  if [[ -n "$hba" && -f "$hba" ]] && ! grep -q '^# defendsec: password auth' "$hba"; then
+    local tmp_hba
+    tmp_hba="$(mktemp)"
+    {
+      echo "# defendsec: password auth for the control plane (added by install-server.sh)"
+      echo "host    defendsec    defendsec    127.0.0.1/32    scram-sha-256"
+      echo "host    defendsec    defendsec    ::1/128         scram-sha-256"
+      cat "$hba"
+    } >"$tmp_hba"
+    cat "$tmp_hba" >"$hba"
+    rm -f "$tmp_hba"
+    su -s /bin/bash postgres -c "cd /tmp && psql -tAc 'SELECT pg_reload_conf()'" >/dev/null
+  fi
+  # scram needs the password stored as scram, which is the default only
+  # from Postgres 14; set it for this session so older servers match.
+  su -s /bin/bash postgres -c "cd /tmp && psql -tAc \"ALTER SYSTEM SET password_encryption = 'scram-sha-256'\"" >/dev/null 2>&1 || true
+  su -s /bin/bash postgres -c "cd /tmp && psql -tAc 'SELECT pg_reload_conf()'" >/dev/null 2>&1 || true
+
   local esc
   esc="$(printf "%s" "$PG_PASSWORD" | sed "s/'/''/g")"
   su -s /bin/bash postgres -c "cd /tmp && psql -v ON_ERROR_STOP=1" <<SQL
@@ -437,17 +475,6 @@ SELECT 'CREATE DATABASE defendsec OWNER defendsec'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'defendsec')\gexec
 GRANT ALL PRIVILEGES ON DATABASE defendsec TO defendsec;
 SQL
-
-  # Allow password auth on local TCP (apid uses 127.0.0.1, not peer/socket).
-  local confhba
-  confhba="$(su -s /bin/bash postgres -c "cd /tmp && psql -tAc 'SHOW hba_file'" | tr -d '[:space:]')"
-  if [[ -n "$confhba" && -f "$confhba" ]]; then
-    if ! grep -qE '^[[:space:]]*host[[:space:]]+defendsec[[:space:]]+defendsec[[:space:]]+127\.0\.0\.1/32[[:space:]]+(scram-sha-256|md5)' "$confhba"; then
-      printf '\nhost defendsec defendsec 127.0.0.1/32 scram-sha-256\n' >>"$confhba"
-      systemctl reload postgresql || systemctl restart postgresql
-      sleep 2
-    fi
-  fi
 
   for attempt in $(seq 1 30); do
     if PGPASSWORD="$PG_PASSWORD" psql -h 127.0.0.1 -U defendsec -d defendsec -tAc 'SELECT 1' >/dev/null 2>&1; then
@@ -521,7 +548,7 @@ build_binaries() {
       go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd ./cmd/defendsec-agentd
       GOOS=linux GOARCH=amd64 go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-linux-amd64 ./cmd/defendsec-agentd
       GOOS=linux GOARCH=arm64 go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-linux-arm64 ./cmd/defendsec-agentd
-      for target in windows/amd64/.exe windows/arm64/.exe darwin/amd64/ darwin/arm64/; do
+      for target in windows/amd64/.exe windows/arm64/.exe; do
         IFS=/ read -r os arch ext <<<\"\$target\"
         GOOS=\$os GOARCH=\$arch go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-\$os-\$arch\$ext ./cmd/defendsec-agentd
       done
@@ -661,8 +688,7 @@ EOF
   mkdir -p "$DOWNLOADS_DIR"
   local agent_bin
   for agent_bin in defendsec-agentd-linux-amd64 defendsec-agentd-linux-arm64 \
-    defendsec-agentd-windows-amd64.exe defendsec-agentd-windows-arm64.exe \
-    defendsec-agentd-darwin-amd64 defendsec-agentd-darwin-arm64; do
+    defendsec-agentd-windows-amd64.exe defendsec-agentd-windows-arm64.exe; do
     if [[ -f "${INSTALL_ROOT}/bin/${agent_bin}" ]]; then
       install -m 0755 "${INSTALL_ROOT}/bin/${agent_bin}" "${DOWNLOADS_DIR}/${agent_bin}"
     fi
@@ -670,8 +696,7 @@ EOF
   # Installers and uninstallers for every platform (published name <- source).
   local pair
   for pair in install-agent.sh:install.sh uninstall-agent.sh:uninstall.sh \
-    install-agent.ps1:install-agent.ps1 uninstall-agent.ps1:uninstall-agent.ps1 \
-    install-agent-macos.sh:install-agent-macos.sh uninstall-agent-macos.sh:uninstall-agent-macos.sh; do
+    install-agent.ps1:install-agent.ps1 uninstall-agent.ps1:uninstall-agent.ps1; do
     if [[ -f "${INSTALL_ROOT}/packaging/agent/${pair#*:}" ]]; then
       install -m 0644 "${INSTALL_ROOT}/packaging/agent/${pair#*:}" "${DOWNLOADS_DIR}/${pair%%:*}"
     fi
@@ -685,6 +710,24 @@ EOF
     sha256sum defendsec-agent* install-agent* uninstall-agent* >SHA256SUMS
   )
   chown -R defendsec:defendsec "$DOWNLOADS_DIR"
+}
+
+# open_host_firewall lets agents and browsers reach the server. Fedora, RHEL
+# and openSUSE enable firewalld by default and block these ports; Ubuntu's
+# ufw does when it has been turned on. Nothing is changed when neither is
+# active, and nothing is opened beyond DefendSec's own ports (the admin API
+# on 47264 stays loopback-only and is not opened).
+open_host_firewall() {
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    info "Opening DefendSec ports in firewalld"
+    for port in 47261 47262 47263; do
+      firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null
+    done
+    firewall-cmd --reload >/dev/null
+  elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    info "Opening DefendSec ports in ufw"
+    ufw allow 47261:47263/tcp >/dev/null
+  fi
 }
 
 install_systemd_units() {
@@ -854,4 +897,5 @@ stage "Write configuration and agent downloads"
 seed_secrets_and_downloads
 stage "Install services and run health checks"
 install_systemd_units
+open_host_firewall
 print_summary
