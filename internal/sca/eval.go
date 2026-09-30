@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"defendsec/internal/posture"
 )
 
 // Dispatch across check types (roadmap 3.7).
@@ -14,7 +16,7 @@ import (
 // and re-collecting it on the agent would give two answers to one question.
 var HostCheckTypes = []string{
 	"file_regex", "file_mode", "mount_option", "sysctl",
-	"package", "systemd_unit", "command",
+	"package", "systemd_unit", "command", "posture",
 }
 
 // KnownCheckTypes is every type the engine understands.
@@ -56,6 +58,9 @@ func (h *Host) Eval(ctx context.Context, check Check) Result {
 		return h.EvalSystemdUnit(ctx, check)
 	case "command":
 		return h.EvalCommand(ctx, check)
+	case "posture":
+		res, _ := h.EvalPosture(check)
+		return res
 	default:
 		res := newResult(check)
 		res.Detail = fmt.Sprintf("unknown check type %q; the engine understands %s",
@@ -69,6 +74,15 @@ func (h *Host) EvalPack(ctx context.Context, pack *Pack) []Result {
 	var out []Result
 	for _, check := range pack.Checks {
 		if !IsHostCheck(check.Type) {
+			continue
+		}
+		if check.Type == "posture" {
+			// An unknown probe produces no result: see EvalPosture.
+			r, known := h.EvalPosture(check)
+			if known {
+				r.PackID = pack.ID
+				out = append(out, r)
+			}
 			continue
 		}
 		r := h.Eval(ctx, check)
@@ -95,4 +109,25 @@ func Describe(pack *Pack) Coverage {
 		c.ByType[check.Type]++
 	}
 	return c
+}
+
+// EvalPosture answers a posture check from the host's collected report.
+//
+// known is false when the probe could not run or was never collected. Such a
+// check yields no result rather than a failure (an alert about something
+// nobody measured) or a pass (a claim of evidence nobody has); the compliance
+// view shows it as missing evidence, which is what it is.
+func (h *Host) EvalPosture(check Check) (res Result, known bool) {
+	res = newResult(check)
+	f, ok := h.Posture[check.Probe]
+	if !ok || f.State == posture.Unknown {
+		res.Detail = "posture probe " + check.Probe + " was not collected"
+		if ok && f.Detail != "" {
+			res.Detail = f.Detail
+		}
+		return res, false
+	}
+	res.Pass = f.State == posture.Pass
+	res.Detail = f.Detail
+	return res, true
 }

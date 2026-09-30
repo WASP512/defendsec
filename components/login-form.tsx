@@ -11,14 +11,49 @@ import type { LoginState } from "@/lib/login-state";
 // submit the token until those were filled — and filling them sent the request
 // down the account path instead. Separate forms cannot interfere.
 
-function SetupForm({ minutesRemaining, error }: { minutesRemaining: number; error?: string }) {
+// The command that proves ownership from the server itself, and prints a
+// one-time link to create the first administrator.
+const BOOTSTRAP_COMMAND = "sudo defendsec-apid bootstrap-admin";
+
+function HostSetup({ open }: { open?: boolean }) {
+  return (
+    <details className="group border-t pt-4" open={open}>
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium">
+        <span className="font-mono text-muted-foreground">&gt;_</span>
+        Prefer to finish setup from the server?
+      </summary>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Run this on the machine that runs DefendSec to print a one-time link that creates the first
+        administrator. It works once, expires in an hour, and needs no restart.
+      </p>
+      <pre className="mt-3 overflow-x-auto rounded-md border bg-muted/40 px-3 py-2.5 text-xs">
+        {BOOTSTRAP_COMMAND}
+      </pre>
+    </details>
+  );
+}
+
+function SetupForm({
+  minutesRemaining,
+  viaInvite,
+  invite,
+  error,
+}: {
+  minutesRemaining: number;
+  viaInvite: boolean;
+  invite?: string;
+  error?: string;
+}) {
   return (
     <form action="/api/setup" method="post" className="space-y-4">
-      <div className="rounded-lg border border-dashed bg-muted/40 p-3 text-sm text-muted-foreground">
-        This is a new install. Create the first administrator account. Setup stays open for about{" "}
-        {minutesRemaining} more {minutesRemaining === 1 ? "minute" : "minutes"}, and closes as soon
-        as this account exists.
-      </div>
+      {invite ? <input type="hidden" name="invite" value={invite} /> : null}
+      <p className="text-sm text-muted-foreground">
+        {viaInvite
+          ? "You opened a one-time setup link issued on the server."
+          : `Setup stays open for about ${minutesRemaining} more ${
+              minutesRemaining === 1 ? "minute" : "minutes"
+            }, and closes as soon as this account exists.`}
+      </p>
       <div className="space-y-2">
         <Label htmlFor="setup-username">Username</Label>
         <Input
@@ -62,7 +97,7 @@ function SetupForm({ minutesRemaining, error }: { minutesRemaining: number; erro
       </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <Button type="submit" className="h-10 w-full">
-        Create administrator and sign in
+        Create account and sign in
       </Button>
     </form>
   );
@@ -220,7 +255,9 @@ export function LoginForm({
   created,
   sso,
   ssoError,
+  invite,
 }: {
+  invite?: string;
   sso?: { enabled: boolean; displayName?: string };
   ssoError?: string;
   state: LoginState;
@@ -243,7 +280,13 @@ export function LoginForm({
       return (
         <div className="space-y-5">
           {ssoButton}
-          <SetupForm minutesRemaining={state.minutesRemaining} error={setupError} />
+          <SetupForm
+            minutesRemaining={state.minutesRemaining}
+            viaInvite={state.viaInvite}
+            invite={invite}
+            error={setupError}
+          />
+          {state.viaInvite ? null : <HostSetup />}
           <TokenForm showDevHint={showDevHint} failed={failed} />
         </div>
       );
@@ -252,19 +295,18 @@ export function LoginForm({
       return (
         <div className="space-y-5">
           {ssoButton}
-          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-            <p className="font-medium">First-run setup has closed.</p>
-            <p className="mt-1 text-muted-foreground">
-              It stays open for 30 minutes after the control plane starts, so that only someone
-              with access to the server can reopen it. To create your administrator, restart it
-              and reload this page:
+          {state.inviteInvalid || setupError ? (
+            <p className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              {setupError ||
+                "That setup link is invalid, expired or already used. Run the command below for a new one."}
             </p>
-            <pre className="mt-2 overflow-x-auto rounded bg-background p-2 text-xs">
-              systemctl restart defendsec-apid
-            </pre>
-            <p className="mt-2 text-muted-foreground">Or sign in with the admin token below.</p>
-          </div>
-          <TokenForm open showDevHint={showDevHint} failed={failed} />
+          ) : null}
+          <p className="text-sm text-muted-foreground">
+            The open setup window has closed. It lasts 30 minutes after DefendSec starts, so that
+            only someone with access to the server can claim a new install after that.
+          </p>
+          <HostSetup open />
+          <TokenForm showDevHint={showDevHint} failed={failed} />
         </div>
       );
 

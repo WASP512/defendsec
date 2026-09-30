@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"defendsec/internal/alertmeta"
@@ -132,6 +133,7 @@ func (s *Server) recordAlert(alert presence.Alert) {
 	if alert.GeneratorVersion == "" {
 		alert.GeneratorVersion = alertmeta.GeneratorVersion
 	}
+	alertsCreated.Inc(alert.Kind, alert.Severity)
 	if err := s.store.InsertAlert(alert); err != nil {
 		s.log.Warn("alert file", "err", err)
 	}
@@ -181,7 +183,51 @@ func (s *Server) considerAutomaticResponse(alert presence.Alert) {
 	}()
 }
 
+// alertBatch is a device's open alert keys, loaded once for the duration of
+// processing one inventory report. It only ever suppresses a query whose
+// answer it already knows; anything it cannot answer goes to the database.
+type alertBatch struct {
+	mu   sync.Mutex
+	open map[string]bool
+}
+
+// beginAlertBatch loads a device's open alerts for the calls that follow,
+// and returns the function that ends the batch.
+func (s *Server) beginAlertBatch(deviceID string) func() {
+	if s.pg == nil {
+		return func() {}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	open, err := s.pg.OpenAlertKeys(ctx, deviceID)
+	cancel()
+	if err != nil {
+		s.log.Warn("load open alerts", "err", err, "device", deviceID)
+		return func() {}
+	}
+	b := &alertBatch{open: open}
+	s.alertBatches.Store(deviceID, b)
+	return func() { s.alertBatches.CompareAndDelete(deviceID, b) }
+}
+
+func (s *Server) batchFor(deviceID string) *alertBatch {
+	if v, ok := s.alertBatches.Load(deviceID); ok {
+		return v.(*alertBatch)
+	}
+	return nil
+}
+
 func (s *Server) ensureAlert(deviceID, kind, sourceID string, build func() presence.Alert) {
+	if b := s.batchFor(deviceID); b != nil {
+		key := kind + "\x00" + sourceID
+		b.mu.Lock()
+		open := b.open[key]
+		b.open[key] = true
+		b.mu.Unlock()
+		if !open {
+			s.recordAlert(build())
+		}
+		return
+	}
 	// When Postgres is enabled it's the source of truth for reads (see
 	// listAlerts), so dedup must check it first, not the JSON store: if an
 	// earlier recordAlert wrote to JSON but its Postgres insert failed
@@ -209,6 +255,16 @@ func (s *Server) ensureAlert(deviceID, kind, sourceID string, build func() prese
 
 func (s *Server) resolveAlert(deviceID, kind, sourceID string) {
 	_ = s.store.ResolveOpenAlerts(deviceID, kind, sourceID)
+	if b := s.batchFor(deviceID); b != nil {
+		key := kind + "\x00" + sourceID
+		b.mu.Lock()
+		open := b.open[key]
+		delete(b.open, key)
+		b.mu.Unlock()
+		if !open {
+			return // nothing open in the database to resolve
+		}
+	}
 	if s.pg != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -376,27 +432,27 @@ func (s *Server) processScaAlerts(dev presence.Device, results []sca.Result) {
 }
 
 func (s *Server) evaluateSca(dev presence.Device, agentResults []presence.ScaResult) []presence.ScaResult {
-	var packs []*sca.Pack
-	if pack, err := sca.LoadDefaultLinuxSSH(); err == nil {
-		packs = append(packs, pack)
-	} else {
-		s.log.Warn("sca pack", "err", err)
+	// Every pack the server knows, not two named here. The server's copy is
+	// authoritative for a check's title, severity and controls; the agent is
+	// authoritative only for whether it passed on that host.
+	packs, err := sca.LoadShippedCached()
+	if err != nil {
+		s.log.Warn("sca packs", "err", err)
+		packs = nil
 	}
-	if pack, err := sca.LoadDefaultLinuxHost(); err == nil {
-		packs = append(packs, pack)
+	index := map[string]sca.Check{}
+	for _, pack := range packs {
+		for _, check := range pack.Checks {
+			index[pack.ID+"/"+check.ID] = check
+		}
 	}
-	agentByKey := map[string]presence.ScaResult{}
-	for _, r := range agentResults {
-		agentByKey[r.PackID+"/"+r.CheckID] = r
-		agentByKey[r.CheckID] = r
-	}
+
 	var merged []presence.ScaResult
 	seen := map[string]bool{}
+
+	// Inventory-field checks are evaluated here, from what the host reported.
 	for _, pack := range packs {
-		if pack == nil {
-			continue
-		}
-		if dev.Platform != "" && pack.Platform != "" && pack.Platform != "linux" && pack.Platform != dev.Platform {
+		if dev.Platform != "" && pack.Platform != "" && pack.Platform != dev.Platform {
 			continue
 		}
 		for _, r := range sca.EvalInventoryFieldChecks(pack, dev) {
@@ -408,30 +464,34 @@ func (s *Server) evaluateSca(dev presence.Device, agentResults []presence.ScaRes
 			merged = append(merged, presence.ScaResult{
 				PackID: r.PackID, CheckID: r.CheckID, Title: r.Title,
 				Severity: r.Severity, Pass: r.Pass, Detail: r.Detail,
+				Controls: r.Controls,
 			})
 		}
-		for _, check := range pack.Checks {
-			if check.Type != "file_regex" {
-				continue
-			}
-			key := pack.ID + "/" + check.ID
-			if seen[key] {
-				continue
-			}
-			if r, ok := agentByKey[key]; ok {
-				seen[key] = true
-				merged = append(merged, r)
-				continue
-			}
-			if r, ok := agentByKey[check.ID]; ok {
-				seen[key] = true
-				r.PackID = pack.ID
-				merged = append(merged, r)
-			}
-		}
 	}
-	if len(merged) == 0 {
-		return agentResults
+
+	// Every result the agent evaluated, whatever its check type.
+	//
+	// This used to keep only file_regex results, so sysctl, mount-option,
+	// file-mode, command and platform-posture checks were evaluated on the
+	// host and then discarded here, before any alert could be raised. The
+	// console showed those checks as never failing because they never
+	// arrived.
+	for _, r := range agentResults {
+		key := r.PackID + "/" + r.CheckID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if check, ok := index[key]; ok {
+			if check.Title != "" {
+				r.Title = check.Title
+			}
+			if check.Severity != "" {
+				r.Severity = check.Severity
+			}
+			r.Controls = check.Controls
+		}
+		merged = append(merged, r)
 	}
 	return merged
 }

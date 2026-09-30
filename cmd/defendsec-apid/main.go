@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"defendsec/internal/telemetry"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -74,6 +77,13 @@ func requireLoopbackAdminAddr(addr string) error {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "bootstrap-admin" {
+		if err := runBootstrapAdmin(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "bootstrap-admin:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(log); err != nil {
 		log.Error("defendsec-apid", "err", err)
@@ -133,6 +143,14 @@ func run(log *slog.Logger) error {
 	}
 
 	store := presence.New(filepath.Join(*dataDir, "defendsec-agents.json"))
+	// Cancelled on shutdown so the export's final flush runs.
+	exportCtx, stopExport := context.WithCancel(context.Background())
+	defer func() {
+		stopExport()
+		if err := store.Flush(); err != nil {
+			log.Error("final export of defendsec-agents.json", "err", err)
+		}
+	}()
 	commands := cmdlog.New(filepath.Join(*dataDir, "commands.json"))
 	// Privileged-action history is kept by age rather than by count
 	// (roadmap 5.5). The default is the CJIS minimum of one year.
@@ -153,6 +171,14 @@ func run(log *slog.Logger) error {
 	})
 
 	svc := control.New(bundle, secretValue, adminToken, *dataDir, store, commands, signer, log)
+	svc.RegisterMetrics(buildCommit)
+
+	// OpenTelemetry traces (roadmap 5.6): off unless an OTLP endpoint is set.
+	tracer, err := telemetry.FromEnv(log)
+	if err != nil {
+		return err
+	}
+	defer tracer.Shutdown(context.Background())
 	if viewer := strings.TrimSpace(os.Getenv("DEFENDSEC_VIEWER_TOKEN")); viewer != "" {
 		svc.SetViewerToken(viewer)
 		log.Info("viewer token enabled (GET-only admin API)")
@@ -173,6 +199,23 @@ func run(log *slog.Logger) error {
 		pg = storepg.New(pool)
 		svc.SetPostgres(pg)
 		log.Info("postgres enabled")
+
+		// Postgres is the primary device store (roadmap 5.5): apid's memory
+		// is seeded from it, and defendsec-agents.json becomes an export
+		// written at most every 30 seconds instead of on every heartbeat.
+		seedCtx, seedCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		devices, err := pg.LoadDevices(seedCtx)
+		seedCancel()
+		if err != nil {
+			return fmt.Errorf("load devices from postgres: %w", err)
+		}
+		if err := store.Seed(devices); err != nil {
+			return fmt.Errorf("seed device state: %w", err)
+		}
+		store.ExportEvery(exportCtx, 30*time.Second, func(err error) {
+			log.Error("export defendsec-agents.json", "err", err)
+		})
+		log.Info("device state loaded from postgres", "devices", len(devices))
 		// One year, the CJIS Policy Area 4 minimum, rather than the 90 days
 		// this used to default to (roadmap 5.5). DefendSec's compliance view
 		// claims to evidence audit retention; a default below the minimum of
@@ -271,6 +314,11 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/totp", svc.HandleTOTP)
 	adminMux.HandleFunc("/v1/crypto-posture", svc.HandleCryptoPosture)
 	adminMux.HandleFunc("/v1/retention", svc.HandleRetention)
+	// Prometheus (roadmap 5.6). On the loopback admin listener without a
+	// token, as node_exporter is; DEFENDSEC_METRICS_ADDR serves it elsewhere.
+	adminMux.HandleFunc("/metrics", control.HandleMetrics)
+	adminMux.HandleFunc("/v1/devices", svc.HandleDevices)
+	adminMux.HandleFunc("/v1/devices/summary", svc.HandleDevices)
 
 	// Compliance (roadmap 1.7).
 	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
@@ -467,7 +515,7 @@ func run(log *slog.Logger) error {
 
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
-		Handler:           adminMux,
+		Handler:           control.HTTPTracing(tracer, control.HTTPMetrics(adminMux)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	httpSrv := &http.Server{
@@ -551,7 +599,8 @@ func run(log *slog.Logger) error {
 
 	grpcSrv := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(grpcTLS)),
-		grpc.UnaryInterceptor(control.UnaryLogging(log)),
+		grpc.ChainUnaryInterceptor(control.UnaryMetrics, control.UnaryTracing(tracer), control.UnaryLogging(log)),
+		grpc.StreamInterceptor(control.StreamMetrics),
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 30 * time.Second, Timeout: 10 * time.Second}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 10 * time.Second, PermitWithoutStream: true}),
 	)
@@ -618,6 +667,42 @@ func run(log *slog.Logger) error {
 		go func() {
 			log.Info("mcp listening", "addr", mcpSrv.Addr)
 			errCh <- mcpSrv.ListenAndServe()
+		}()
+	}
+
+	// Profiling, for diagnosing load (roadmap 5.5). Off unless set, and
+	// refused on anything but a loopback address: profiles expose memory
+	// contents and internal state.
+	if addr := strings.TrimSpace(os.Getenv("DEFENDSEC_PPROF_ADDR")); addr != "" {
+		host, _, err := net.SplitHostPort(addr)
+		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
+			return fmt.Errorf("DEFENDSEC_PPROF_ADDR must be a loopback host:port, got %q", addr)
+		}
+		pmux := http.NewServeMux()
+		pmux.HandleFunc("/debug/pprof/", pprof.Index)
+		pmux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		pmux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		go func() {
+			log.Warn("pprof listening", "addr", addr)
+			_ = (&http.Server{Addr: addr, Handler: pmux, ReadHeaderTimeout: 5 * time.Second}).ListenAndServe()
+		}()
+	}
+
+	if addr := strings.TrimSpace(os.Getenv("DEFENDSEC_METRICS_ADDR")); addr != "" {
+		token := strings.TrimSpace(os.Getenv("DEFENDSEC_METRICS_TOKEN"))
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return fmt.Errorf("DEFENDSEC_METRICS_ADDR: %w", err)
+		}
+		if ip := net.ParseIP(host); token == "" && (ip == nil || !ip.IsLoopback()) {
+			return fmt.Errorf("DEFENDSEC_METRICS_ADDR %q is not loopback; set DEFENDSEC_METRICS_TOKEN so scrapes are authenticated", addr)
+		}
+		msrv := &http.Server{Addr: addr, ReadHeaderTimeout: 5 * time.Second, Handler: control.MetricsHandler(token)}
+		go func() {
+			log.Info("metrics listening", "addr", addr, "token", token != "")
+			if err := msrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("metrics listener", "err", err)
+			}
 		}()
 	}
 

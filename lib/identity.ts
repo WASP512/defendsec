@@ -110,9 +110,10 @@ export async function apidLogout(token: string): Promise<void> {
 // by design: it exists to work before any credential does. Returns null when
 // the control plane cannot be reached, so the caller can say so rather than
 // guess.
-export async function apidSetupStatus(): Promise<SetupStatus | null> {
+export async function apidSetupStatus(invite = ""): Promise<SetupStatus | null> {
   try {
-    const res = await apid("/v1/setup", { method: "GET" });
+    const q = invite ? `?invite=${encodeURIComponent(invite)}` : "";
+    const res = await apid(`/v1/setup${q}`, { method: "GET" });
     if (!res.ok) return null;
     return (await res.json()) as SetupStatus;
   } catch {
@@ -130,6 +131,7 @@ export async function apidSetup(input: {
   displayName: string;
   password: string;
   clientAddress: string;
+  invite?: string;
 }): Promise<SetupOutcome> {
   const res = await apid("/v1/setup", {
     method: "POST",

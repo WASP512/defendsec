@@ -1,6 +1,7 @@
 package presence
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -86,5 +87,39 @@ func TestSetAgentVersionPersistsHelloMetadata(t *testing.T) {
 	device, ok = store.Get("device-1")
 	if !ok || device.AgentVersion != "v1.2.4" || device.Hostname != "renamed-host" {
 		t.Fatalf("agent version was not updated: %#v", device)
+	}
+}
+
+// The id index is a hint: devices added by every path, and a file reloaded
+// from disk, must still be found.
+func TestDeviceIndexStaysCorrect(t *testing.T) {
+	f := New(filepath.Join(t.TempDir(), "p.json"))
+	for i := 0; i < 50; i++ {
+		if err := f.Upsert(Device{ID: fmt.Sprintf("d%d", i), Hostname: "h"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.ApplyInventory(Device{ID: "inv-only", Hostname: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetAgentVersion("ver-only", "y", "1.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Seed([]Device{{ID: "seeded", Hostname: "s"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"d0", "d49", "inv-only", "ver-only", "seeded"} {
+		if _, ok := f.Get(id); !ok {
+			t.Errorf("%s not found", id)
+		}
+	}
+	if err := f.Upsert(Device{ID: "d7", Hostname: "renamed"}); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := f.Get("d7"); d.Hostname != "renamed" {
+		t.Errorf("update went to the wrong device: %+v", d)
+	}
+	if n := len(f.List()); n != 53 {
+		t.Errorf("%d devices, want 53", n)
 	}
 }

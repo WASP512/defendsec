@@ -206,16 +206,20 @@ export function policySummary(
   _fimEvents: unknown[] = [],
   triages: FindingTriage[] = [],
 ) {
-  void _fimEvents;
-  return POLICY_DEFS.map((def) => {
-    const results = devices.map(
-      (d) => evaluateDevice(d, _fimEvents, triages).find((p) => p.id === def.id)!,
-    );
-    return {
-      ...def,
-      passing: results.filter((r) => r.status === "pass").length,
-      failing: results.filter((r) => r.status === "fail").length,
-      unknown: results.filter((r) => r.status === "unknown").length,
-    };
-  });
+  // Each device is evaluated once. Evaluating it once per policy repeated the
+  // advisory matching seven times per host, which at 10,000 hosts made this
+  // page take twenty seconds (roadmap 5.5 load test).
+  const counts = new Map<string, { passing: number; failing: number; unknown: number }>(
+    POLICY_DEFS.map((def) => [def.id, { passing: 0, failing: 0, unknown: 0 }]),
+  );
+  for (const device of devices) {
+    for (const result of evaluateDevice(device, _fimEvents, triages)) {
+      const c = counts.get(result.id);
+      if (!c) continue;
+      if (result.status === "pass") c.passing++;
+      else if (result.status === "fail") c.failing++;
+      else c.unknown++;
+    }
+  }
+  return POLICY_DEFS.map((def) => ({ ...def, ...counts.get(def.id)! }));
 }

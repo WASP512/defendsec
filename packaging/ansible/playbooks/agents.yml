@@ -1,0 +1,12 @@
+---
+# Enroll every host in the "defendsec_agents" group:
+#   ansible-galaxy collection install -r packaging/ansible/requirements.yml
+#   ansible-playbook -i inventory packaging/ansible/playbooks/agents.yml \
+#     -e defendsec_agent_server=defendsec.example.internal \
+#     -e defendsec_agent_console_ca=./console.crt \
+#     -e @secrets.vault.yml --ask-vault-pass
+# Remove them: add -e defendsec_agent_state=absent
+- name: DefendSec agents
+  hosts: defendsec_agents
+  roles:
+    - role: defendsec_agent

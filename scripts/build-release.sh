@@ -50,8 +50,13 @@ build() {
 
 build linux amd64 ./cmd/defendsec-apid "defendsec-apid-linux-amd64"
 build linux arm64 ./cmd/defendsec-apid "defendsec-apid-linux-arm64"
-build linux amd64 ./cmd/defendsec-agentd "defendsec-agentd-linux-amd64"
-build linux arm64 ./cmd/defendsec-agentd "defendsec-agentd-linux-arm64"
+build linux   amd64 ./cmd/defendsec-agentd "defendsec-agentd-linux-amd64"
+build linux   arm64 ./cmd/defendsec-agentd "defendsec-agentd-linux-arm64"
+# Windows and macOS agents (roadmap 5.1, 5.2).
+build windows amd64 ./cmd/defendsec-agentd "defendsec-agentd-windows-amd64.exe"
+build windows arm64 ./cmd/defendsec-agentd "defendsec-agentd-windows-arm64.exe"
+build darwin  amd64 ./cmd/defendsec-agentd "defendsec-agentd-darwin-amd64"
+build darwin  arm64 ./cmd/defendsec-agentd "defendsec-agentd-darwin-arm64"
 
 # The evidence verifier is built for the platforms an auditor is likely to be
 # on, not just the server's. It needs no server, database, network or
@@ -66,7 +71,26 @@ build darwin  amd64 ./cmd/defendsec-verify "defendsec-verify-darwin-amd64"
 build darwin  arm64 ./cmd/defendsec-verify "defendsec-verify-darwin-arm64"
 build windows amd64 ./cmd/defendsec-verify "defendsec-verify-windows-amd64.exe"
 
+# Installers and uninstallers for every agent platform, published with the
+# release so a host can be cleaned up without a checkout of the repository.
 install -m 0644 packaging/agent/install.sh "${OUT}/install-agent.sh"
+install -m 0644 packaging/agent/uninstall.sh "${OUT}/uninstall-agent.sh"
+install -m 0644 packaging/agent/install-agent.ps1 "${OUT}/install-agent.ps1"
+install -m 0644 packaging/agent/uninstall-agent.ps1 "${OUT}/uninstall-agent.ps1"
+install -m 0644 packaging/agent/install-agent-macos.sh "${OUT}/install-agent-macos.sh"
+install -m 0644 packaging/agent/uninstall-agent-macos.sh "${OUT}/uninstall-agent-macos.sh"
+
+# The Windows MSI wraps the amd64 agent. Required in a release (the workflow
+# installs wixl); a local build without wixl skips it and says so.
+if command -v wixl >/dev/null 2>&1; then
+  "${ROOT}/scripts/build-msi.sh" "${OUT}/defendsec-agentd-windows-amd64.exe" \
+    "${OUT}/defendsec-agent-windows-amd64.msi" "$release_version"
+elif [[ "${REQUIRE_MSI:-0}" == "1" ]]; then
+  echo "wixl is required to build the MSI (apt-get install wixl)" >&2
+  exit 1
+else
+  echo "  !! wixl not found; skipping defendsec-agent-windows-amd64.msi"
+fi
 install -m 0755 packaging/proxmox/update-server.sh "${OUT}/update-server.sh"
 
 echo "  -> defendsec-console.tar.gz"
@@ -82,7 +106,7 @@ printf '%s\n' "$release_version" >"${OUT}/VERSION"
 
 (
   cd "$OUT"
-  sha256sum defendsec-* install-agent.sh update-server.sh VERSION >SHA256SUMS
+  sha256sum defendsec-* install-agent* uninstall-agent* update-server.sh VERSION >SHA256SUMS
 )
 
 # SBOMs, generated from the built binaries and appended to SHA256SUMS

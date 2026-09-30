@@ -1162,9 +1162,63 @@ complete supported service installer." Ship a real service, MSI packaging, and *
 telemetry as the eBPF analogue, plus BitLocker / Defender / firewall posture. Windows is where the
 endpoints are.
 
+*Delivered, and not yet run on a Windows machine.* See [WINDOWS.md](WINDOWS.md).
+
+- **Service.** `DefendSecAgent` runs as LocalSystem, restarts on failure, logs to a file under
+  ProgramData and to the Event Log, and keeps its state readable by SYSTEM and Administrators only.
+- **Installers.** An MSI built on Linux with `wixl`, which hides the enroll secret from installer
+  logs; the agent removes the secret from its own service configuration once enrolled. Also
+  `install-agent.ps1` / `uninstall-agent.ps1`, with the checksum verified and the console
+  certificate pinned.
+- **Posture, as a control-tagged SCA pack.** BitLocker (protection on, not merely encrypted),
+  Defender (antivirus, real-time, tamper protection, definition age), firewall on for every
+  profile, SMBv1 off, UAC on, and RDP off or requiring NLA.
+- **Inventory:** OS, memory, uptime, serial, model, installed programs, and pending updates from
+  the Windows Update Agent.
+- **Process telemetry.** Process-table sampling by default, with command lines. An ETW consumer is
+  opt-in (`DEFENDSEC_ETW=1`) until it has run on Windows hosts, and falls back to sampling. The
+  coverage view reports whichever sensor is actually running.
+
+What has been checked, and how:
+
+- The Win32 structure layouts are asserted against the SDK sizes.
+- The posture script was run under real PowerShell, on Linux.
+- The MSI tables were inspected with `msiinfo`.
+- Everything cross-compiles and vets for `GOOS=windows`.
+
+Two pre-existing defects surfaced along the way and were fixed. The agent did not compile for
+Windows at all. And installed agents on every platform had no SCA packs, so host-side
+configuration checks never ran outside a source checkout. Packs are now embedded in the binary.
+
+The server was also discarding every agent SCA result that was not `file_regex`, before alerting
+on it. That is fixed too.
+
+**Not done:** network isolation on Windows. The isolate command still says it is Linux-only.
+
 **5.2 — macOS.** EndpointSecurity framework for process and file events (requires an Apple
 developer account and entitlement — start the request early, it is slow), with FileVault, XProtect
 and firewall posture.
+
+*Delivered, except EndpointSecurity, which is waiting on Apple.* See [MACOS.md](MACOS.md).
+
+- **Service:** a launchd daemon, with install and uninstall scripts. `scripts/build-macos-pkg.sh`
+  builds a `.pkg` for MDM, on a Mac.
+- **Posture pack:**
+  - FileVault on (encryption in progress does not pass)
+  - application firewall and stealth mode
+  - SIP fully on (a custom configuration fails)
+  - Gatekeeper
+  - XProtect present, with security-data updates installing automatically
+  - automatic login off
+- **Inventory:** OS, memory, uptime, model, applications, and pending updates.
+- **Process sampling** from `kern.proc.all`, with command lines from `kern.procargs2`.
+- **`kill_process`** works on macOS, with system processes protected.
+
+**EndpointSecurity needs an entitlement only the project owner can request from Apple.** The
+steps, from the request through Full Disk Access and the cgo sensor, are written down in MACOS.md.
+Until it is granted, the coverage page states the sampler's limits.
+
+Not yet run on a Mac by DefendSec's tests: only the parsers and the cross-compile are verified.
 
 **5.3 — HTTPS by default.** Port 47261 shipping plain HTTP by default is a credibility problem for
 a security product, and the paper has to caveat it in four separate places. Generate a self-signed
@@ -1239,12 +1293,67 @@ evidence CJIS Policy Area 4, and a 500-record cap could push a month of signed a
 file in an afternoon while the console reported the control as satisfied. `GET /v1/retention`
 reports the windows in force *and how much history is actually held*, because retention
 configuration does not create history that was never recorded: a one-year policy on a system
-installed last month evidences one month, and an assessor will ask. The Postgres-primary move,
-pagination and the 10k-host load test remain.
+installed last month evidences one month, and an assessor will ask.
+
+*The scale half, delivered and measured — see [LOADTEST.md](LOADTEST.md).* 10,000 simulated
+agents, each with its own key, mTLS connection and 80-package inventory, heartbeating on the real
+schedule against a real apid and Postgres, for five minutes: **zero errors**. Heartbeats: p99
+9.7 ms. Inventory reports: p50 62 ms, p99 715 ms. Paging through all 10,000 hosts: under 600 ms.
+
+The first 10k run also had zero errors, and was not acceptable: inventory reports took **68
+seconds** at the median. Profiling found that the alert list was being copied on every insert,
+that every configuration check made its own round trip to ask whether its alert was open, and that
+every heartbeat rewrote an 81 MB state file. Those are fixed:
+
+- Postgres is the primary device store. apid seeds its memory from it at start, and heartbeats
+  update only liveness columns. `defendsec-agents.json` is now an export, written every 30 seconds
+  outside the lock, plus once on shutdown. Without Postgres, writes stay synchronous, since the
+  file is then the only copy.
+- `GET /v1/devices` pages with a keyset cursor, so the last page costs what the first does. It
+  filters in the database by search (hostname, serial, user, OS, IP), platform and
+  online/offline/isolated status. `/v1/devices/summary` counts without listing. Without Postgres
+  the same semantics run in memory.
+- The console's host list and the overview's host table are the control plane's pages. The
+  overview used to send every host to the browser, which was 42 MB at 10,000 hosts.
+
+**Not yet at scale:** the overview, Policies and Advisories pages still compute over the whole
+fleet in the console, and take 3–7 seconds at 10,000 hosts. That is down from 26 seconds, but
+those aggregates belong in the control plane. Also, apid holds the fleet in memory: 1.9 GB RSS at
+10,000 hosts. That is fine for the target size, and it is the next ceiling after this one.
 
 **5.6 — Integrations.** Prometheus metrics, OTel traces, syslog/CEF export, webhook and Slack/Teams
 alerting, and Terraform/Ansible modules for provisioning. Be the best-behaved citizen in someone
 else's stack.
+
+*Delivered.* Everything is in OPERATIONS.md under "Forwarding", "Metrics and traces", and
+"Provisioning with Ansible and Terraform".
+
+- **Prometheus:** `/metrics` for agent RPCs, admin API, alerts, fleet, forwarding and process
+  health. It is hand-written against the 0.0.4 text format, with no new dependency. Labels come
+  only from fixed sets, so no host or user identity reaches the metrics system. Checked with
+  Prometheus's own scrape parser and `promlint`: 82 series, no findings.
+- **OpenTelemetry:** traces of every agent RPC and admin request, configured by the standard
+  `OTEL_*` variables and continuing W3C `traceparent`. There is also an `otlp=` forwarding
+  destination that sends events and alerts as OTLP log records. Both use a small OTLP/HTTP JSON
+  encoder rather than the SDK. They were checked by sending real apid traffic to a receiver built
+  on the collector's own OTLP decoder: 112 spans and 120 log records, none rejected. The
+  destination this replaces used to refuse `otlp=` because "an almost-OTLP exporter a collector
+  rejects is worse than none". That is still the standard, and it is why this one was tested
+  against the collector's decoder rather than against itself.
+- **CEF** over the existing syslog transports, with header and extension escaping per the
+  specification. It was received from a real run: 120 events, all well-formed.
+- **Slack and Teams:** alerts only, above a severity floor (default high), at most ten per post.
+  A channel that receives every event is a channel everyone mutes.
+- **Ansible** role for Linux, Windows (MSI) and macOS, and a **Terraform** module that renders
+  first-boot user data for any provider. CI runs `terraform test`, `ansible-lint` and a PowerShell
+  parse on every change. ansible-lint caught a real defect before merge: `get_url` in current
+  ansible-core cannot take a per-request CA, so the verified download would have failed on first
+  use.
+
+*Not verified here:* delivery to real Slack or Teams workspaces, where only the payload shapes are
+tested. The role and module have not been run against a live fleet. A full OpenTelemetry Collector
+binary could not be fetched in the build environment, so the check used the collector's decoder
+library instead.
 
 **5.7 — Supply-chain hardening for DefendSec itself.** A tool making provenance claims must hold
 itself to them: reproducible builds, SLSA provenance attestations, signed releases (cosign),

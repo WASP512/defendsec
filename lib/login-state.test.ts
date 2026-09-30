@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { loginState, validateSetup, type SetupStatus } from "./login-state.ts";
+import { cleanInvite, loginState, validateSetup, type SetupStatus } from "./login-state.ts";
 
 const base: SetupStatus = {
   databaseConfigured: true,
@@ -44,4 +44,21 @@ test("setup input is checked before it is sent", () => {
   assert.match(validateSetup({ username: "m", password: "long enough pw", confirm: "long enough pw" }) ?? "", /username/);
   assert.match(validateSetup({ username: "mason", password: "short", confirm: "short" }) ?? "", /12 characters/);
   assert.match(validateSetup({ username: "mason", password: "long enough pw", confirm: "different pw!!" }) ?? "", /do not match/);
+});
+
+test("a valid one-time link opens setup even after the window", () => {
+  const s = loginState({ ...base, setupOpen: true, viaInvite: true });
+  assert.deepEqual(s, { kind: "setup", minutesRemaining: 0, viaInvite: true });
+});
+
+test("a refused link is reported, not silently ignored", () => {
+  const s = loginState({ ...base, inviteInvalid: true });
+  assert.deepEqual(s, { kind: "setup-closed", inviteInvalid: true });
+});
+
+test("invite tokens are shape-checked before use", () => {
+  assert.equal(cleanInvite("  AbC-_123456789012345678901234  "), "AbC-_123456789012345678901234");
+  assert.equal(cleanInvite("short"), "");
+  assert.equal(cleanInvite("x".repeat(30) + "&admin=1"), "");
+  assert.equal(cleanInvite(undefined), "");
 });

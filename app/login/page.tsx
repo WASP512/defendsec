@@ -1,7 +1,7 @@
 import { LoginForm } from "@/components/login-form";
 import { isAuthenticatedSession, isDevFallbackToken } from "@/lib/auth";
 import { apidSetupStatus, apidSSOStatus } from "@/lib/identity";
-import { loginState } from "@/lib/login-state";
+import { cleanInvite, loginState } from "@/lib/login-state";
 import { Anchor, LockKeyhole, ShieldCheck } from "lucide-react";
 import { redirect } from "next/navigation";
 
@@ -16,6 +16,7 @@ export default async function LoginPage({
     setupError?: string;
     created?: string;
     ssoError?: string;
+    invite?: string;
   }>;
 }) {
   if (await isAuthenticatedSession()) {
@@ -25,9 +26,12 @@ export default async function LoginPage({
   // Decided from the control plane's own unauthenticated setup status, rather
   // than from a signed-in endpoint whose 401 used to be read as "accounts
   // exist" — which hid first-run setup on every fresh install.
-  const [setup, sso] = await Promise.all([apidSetupStatus(), apidSSOStatus()]);
+  const invite = cleanInvite(params.invite);
+  const [setup, sso] = await Promise.all([apidSetupStatus(invite), apidSSOStatus()]);
   const state = loginState(setup);
-  const isSetup = state.kind === "setup";
+  // Both setup states are the same task — claiming an unclaimed install —
+  // so they share one heading, as Paperclip's does.
+  const isSetup = state.kind === "setup" || state.kind === "setup-closed";
   return (
     <main className="grid min-h-full bg-muted/30 lg:grid-cols-[1.1fr_0.9fr]">
       <section className="hidden border-r bg-primary p-12 text-primary-foreground lg:flex lg:flex-col lg:justify-between">
@@ -62,11 +66,11 @@ export default async function LoginPage({
                 <LockKeyhole className="size-5" />
               </span>
               <h2 className="text-2xl font-semibold tracking-tight">
-                {isSetup ? "Set up DefendSec" : "Sign in to the console"}
+                {isSetup ? "Finish setting up DefendSec" : "Sign in to the console"}
               </h2>
               <p className="mt-2 text-sm text-muted-foreground">
                 {isSetup
-                  ? "Create the administrator account. Every action is recorded against your name."
+                  ? "No administrator has claimed this instance yet. Create your account to become the first administrator."
                   : "Sign in with your account. Every action is recorded against your name."}
               </p>
             </div>
@@ -78,6 +82,7 @@ export default async function LoginPage({
               unavailable={params.error === "unavailable"}
               totpRequired={params.totp === "1"}
               setupError={params.setupError}
+              invite={invite}
               created={params.created === "1"}
               sso={sso}
               ssoError={params.ssoError}

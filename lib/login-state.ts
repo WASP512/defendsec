@@ -10,14 +10,19 @@ export type SetupStatus = {
   accountsExist: boolean;
   setupOpen: boolean;
   secondsRemaining?: number;
+  // Setup is open because the request carried a valid one-time link from
+  // `defendsec-apid bootstrap-admin`.
+  viaInvite?: boolean;
+  // A link was presented and refused (unknown, expired or used).
+  inviteInvalid?: boolean;
   detail: string;
 };
 
 export type LoginState =
   // Create the first administrator, no token needed.
-  | { kind: "setup"; minutesRemaining: number }
-  // No accounts, but the window has closed.
-  | { kind: "setup-closed" }
+  | { kind: "setup"; minutesRemaining: number; viaInvite: boolean }
+  // No accounts, but the window has closed; bootstrap-admin reopens it.
+  | { kind: "setup-closed"; inviteInvalid: boolean }
   // Normal sign-in.
   | { kind: "signin" }
   // No database, so there are no accounts to sign in to.
@@ -35,13 +40,23 @@ export function loginState(status: SetupStatus | null): LoginState {
   if (status === null) return { kind: "unavailable" };
   if (!status.databaseConfigured) return { kind: "token-only" };
   if (status.accountsExist) return { kind: "signin" };
+  if (status.setupOpen && status.viaInvite) {
+    return { kind: "setup", minutesRemaining: 0, viaInvite: true };
+  }
   if (status.setupOpen) {
     const seconds = Math.max(0, status.secondsRemaining ?? 0);
     // Rounded up: "0 minutes left" while it is still open would read as
     // already closed.
-    return { kind: "setup", minutesRemaining: Math.max(1, Math.ceil(seconds / 60)) };
+    return { kind: "setup", minutesRemaining: Math.max(1, Math.ceil(seconds / 60)), viaInvite: false };
   }
-  return { kind: "setup-closed" };
+  return { kind: "setup-closed", inviteInvalid: Boolean(status.inviteInvalid) };
+}
+
+// An invite token as it appears in ?invite=, or "" if malformed. Validated
+// by the control plane; this only keeps junk out of the request.
+export function cleanInvite(raw: string | undefined): string {
+  const v = (raw ?? "").trim();
+  return /^[A-Za-z0-9_-]{20,100}$/.test(v) ? v : "";
 }
 
 // validateSetup checks what the browser sent before bothering the control

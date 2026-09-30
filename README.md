@@ -24,8 +24,8 @@ Most people run the server as a Proxmox LXC. That path is two commands plus a br
    start, so your browser will warn; [INSTALL.md](docs/INSTALL.md) covers verifying the
    fingerprint and getting a certificate that does not warn. A fresh install asks you to
    **create the administrator account** — no token needed. Setup stays open for 30 minutes after
-   the control plane starts; if you miss it, `pct exec <CTID> -- systemctl restart
-   defendsec-apid` reopens it.
+   the control plane starts; if you miss it, run `pct exec <CTID> -- defendsec-apid
+   bootstrap-admin` for a one-time setup link.
 
 3. **Enroll each host** with the exact command on the console **Enroll** page. Do not re-run the Proxmox script on laptops or VMs you want to inventory.
 

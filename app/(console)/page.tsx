@@ -1,4 +1,7 @@
 import { DeviceTable } from "@/components/device-table";
+import { DeviceList } from "@/components/device-list";
+import { parseDeviceListQuery } from "@/lib/device-list";
+import { loadDevicePage } from "@/lib/devices-server";
 import { SampleToggle } from "@/components/sample-toggle";
 import { PageHeader, StatCard } from "@/components/console-ui";
 import { ensureStore, publicDevice } from "@/lib/store";
@@ -16,7 +19,9 @@ export default async function HomePage() {
   const readOnly = await isReadOnlySession();
   const fleet = await loadFleet(store.devices);
   const fimEvents = [...(await loadMtlsFimEvents()), ...store.fimEvents];
-  const devices = fleet.map(publicDevice);
+  // The host table is the control plane's first page, not the whole fleet:
+  // shipping every host to the browser was 42 MB at 10,000 hosts.
+  const firstPage = await loadDevicePage(parseDeviceListQuery({}));
   const online = fleet.filter((d) => isOnline(d)).length;
   const failing = policySummary(fleet, fimEvents, store.triages).reduce(
     (n, p) => n + p.failing,
@@ -93,7 +98,11 @@ export default async function HomePage() {
             View all
           </Link>
         </div>
-        <DeviceTable devices={devices} />
+        {"page" in firstPage ? (
+          <DeviceList query={parseDeviceListQuery({})} page={firstPage.page} />
+        ) : (
+          <DeviceTable devices={fleet.slice(0, 200).map(publicDevice)} />
+        )}
       </section>
     </div>
   );

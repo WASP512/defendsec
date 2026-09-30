@@ -27,6 +27,8 @@ TARGETS=(
   "./cmd/defendsec-verify linux amd64"
   "./cmd/defendsec-web linux amd64"
   "./cmd/defendsec-verify darwin arm64"
+  "./cmd/defendsec-agentd windows amd64"
+  "./cmd/defendsec-agentd darwin arm64"
 )
 
 # The same flags scripts/build-release.sh uses. Kept in step by

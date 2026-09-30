@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: defendsec_agent
+  namespace: defendsec
+  author: DefendSec
+  description: Install, enroll or remove the DefendSec agent on Linux, Windows and macOS.
+  license: see repository
+  min_ansible_version: "2.15"
+  platforms:
+    - name: EL
+      versions: [all]
+    - name: Debian
+      versions: [all]
+    - name: Ubuntu
+      versions: [all]
+    - name: Windows
+      versions: [all]
+    - name: macOS
+      versions: [all]
+dependencies: []

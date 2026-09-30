@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"runtime"
 	"time"
 
 	"defendsec/internal/events"
@@ -95,6 +96,9 @@ func startEventShipper(ctx context.Context, log *slog.Logger, deviceID, hostname
 // claiming execution coverage the host does not have, so the reason is logged
 // at warning level and the capability the console shows is the poller's.
 func pickSensor(log *slog.Logger, deviceID, hostname string, tree *events.Tree) sensor.Sensor {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return pickPlatformSensor(log, deviceID, hostname, tree)
+	}
 	bpf, err := sensor.NewBPFSensor(deviceID, hostname, tree)
 	if err == nil {
 		return bpf

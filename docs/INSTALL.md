@@ -140,13 +140,19 @@ bash install-server.sh --help
    characters, and you are signed in as the first administrator. No token is involved.
 3. Setup is open for **30 minutes after the control plane starts**, and only while no account
    exists. That limit is deliberate: an open "create the first admin" form would otherwise hand
-   your fleet to whoever reached it first. If you missed it, restart the control plane — which
-   needs access to the server, the proof of ownership the form cannot ask for — and reload:
+   your fleet to whoever reached it first. If you missed it, the login page says so and shows
+   the way back in: run this **on the server** — access to the server is the proof of ownership
+   the web form cannot ask for — and open the link it prints:
 
    ```bash
-   pct exec 200 -- systemctl restart defendsec-apid   # Proxmox (replace 200 with your CTID)
-   sudo systemctl restart defendsec-apid              # any other VM
+   pct exec 200 -- defendsec-apid bootstrap-admin   # Proxmox (replace 200 with your CTID)
+   sudo defendsec-apid bootstrap-admin              # any other VM
    ```
+
+   The link works once, expires after an hour, and running the command again replaces it. It
+   reads the database and console addresses from `/etc/defendsec/`, needs no restart, and is
+   refused once any account exists. The audit log records which way the first administrator was
+   created.
 
    The admin token still works as a fallback, under **Sign in with the admin token instead**:
 
@@ -254,6 +260,34 @@ The agent installer:
 
 Then open **Hosts**. The machine should appear within about a minute.
 
+### Windows hosts
+
+The **Enroll** page has a **Windows** tab. Run its command in *Windows PowerShell*
+(`powershell.exe`) as administrator. It downloads `install-agent.ps1` and the
+agent from your server, verifies the checksum, and installs the `DefendSecAgent`
+service running as LocalSystem, with state in `C:\ProgramData\DefendSec\agent`
+(readable by SYSTEM and Administrators only) and its log in `agent.log` there.
+
+For Intune, SCCM or Group Policy, deploy `defendsec-agent-windows-amd64.msi`
+(from the server's downloads or the GitHub release) silently:
+
+```bat
+msiexec /i defendsec-agent-windows-amd64.msi /qn ^
+  SERVER_HTTP=https://SERVER:47262 SERVER_GRPC=SERVER:47263 ^
+  TLS_SERVER_NAME=SERVER ENROLL_SECRET=SECRET
+```
+
+The secret reaches the service as an argument; the agent deletes it from the
+service configuration as soon as it has enrolled. See [WINDOWS.md](WINDOWS.md)
+for what the Windows agent collects and what it cannot yet do.
+
+### macOS hosts
+
+The **macOS** tab installs a launchd daemon (`com.defendsec.agentd`) with the
+secret in `/Library/Application Support/DefendSec/enroll-secret` (root, 0600) and
+the log in `/Library/Logs/DefendSec/agentd.log`. See [MACOS.md](MACOS.md),
+including how full process visibility (EndpointSecurity) is enabled.
+
 ### After you sign in
 
 | Page | Use it for |
@@ -338,11 +372,27 @@ curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/pr
 
 ### Agent on an enrolled host
 
+Each host's page in the console ends with **Uninstall the agent**: the exact
+command for that host's platform, with a box to also delete its certificate
+and key. The uninstallers are also published with every release and served
+from your server's `/downloads`:
+
+| Platform | Uninstaller | Also delete state |
+| --- | --- | --- |
+| Linux | `sudo bash uninstall-agent.sh` | `--purge-data` |
+| Windows | `C:\Program Files\DefendSec\uninstall-agent.ps1` (installed with the agent), or Settings → Apps → DefendSec Agent for an MSI install | `-PurgeData` |
+| macOS | `sudo defendsec-agent-uninstall` (installed with the agent) | `--purge-data` |
+
+Without a server to download from:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/agent/uninstall.sh | sudo bash
 # also remove /var/lib/defendsec-agent:
 curl -fsSL https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/agent/uninstall.sh | sudo bash -s -- --purge-data
 ```
+
+Uninstalling stops the agent; the host then shows as offline in the console
+until you remove it there.
 
 ---
 

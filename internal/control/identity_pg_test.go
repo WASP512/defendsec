@@ -38,7 +38,7 @@ func pgServer(t *testing.T) (*Server, *storepg.Store) {
 		t.Fatalf("apply migrations: %v", err)
 	}
 	store := storepg.New(pool)
-	if _, err := pool.Exec(ctx, `TRUNCATE users, user_sessions CASCADE`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE users, user_sessions, setup_invites CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	s := &Server{

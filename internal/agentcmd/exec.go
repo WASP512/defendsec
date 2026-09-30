@@ -9,7 +9,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
+
+	"defendsec/internal/proclist"
 )
 
 const (
@@ -29,6 +30,18 @@ var protected = map[string]struct{}{
 	"sshd":             {},
 	"ssh":              {},
 	"next-server":      {},
+	// Windows: killing any of these crashes or logs out the machine.
+	"csrss": {}, "lsass": {}, "wininit": {}, "winlogon": {}, "services": {},
+	"smss": {}, "svchost": {}, "system": {}, "msmpeng": {},
+	// macOS.
+	"launchd": {}, "kernel_task": {}, "windowserver": {}, "loginwindow": {},
+}
+
+// isProtected compares without case or an .exe suffix, so "LSASS.EXE" is
+// refused on Windows as surely as "lsass".
+func isProtected(name string) bool {
+	_, ok := protected[strings.TrimSuffix(strings.ToLower(name), ".exe")]
+	return ok
 }
 
 type State struct {
@@ -93,11 +106,11 @@ func KillByName(name string) (int, error) {
 	if !nameRe.MatchString(name) {
 		return 0, fmt.Errorf("process name must be 1-64 letters, digits, dot, underscore, or hyphen")
 	}
-	if _, ok := protected[name]; ok {
+	if isProtected(name) {
 		return 0, fmt.Errorf("refusing to signal protected process %q", name)
 	}
-	if runtime.GOOS == "windows" {
-		return 0, fmt.Errorf("kill_process is not implemented on windows in phase 2")
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return killByList(name)
 	}
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -117,7 +130,7 @@ func KillByName(name string) (int, error) {
 		if strings.TrimSpace(string(comm)) != name {
 			continue
 		}
-		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+		if err := terminate(int32(pid)); err != nil {
 			return signaled, fmt.Errorf("signal %d: %w", pid, err)
 		}
 		signaled++
@@ -140,4 +153,37 @@ func ParseKillPayload(raw []byte) (KillPayload, error) {
 		return p, fmt.Errorf("kill_process payload requires name")
 	}
 	return p, nil
+}
+
+// killByList is kill_process on platforms without /proc. Names compare
+// case-insensitively on Windows, where "Notepad.exe" and "notepad.exe" are
+// the same file, and with or without the .exe suffix.
+func killByList(name string) (int, error) {
+	procs, err := proclist.List()
+	if err != nil {
+		return 0, err
+	}
+	self := int32(os.Getpid())
+	signaled := 0
+	for _, p := range procs {
+		if p.PID <= 4 || p.PID == self || !sameProcessName(p.Name, name) {
+			continue
+		}
+		if err := proclist.Terminate(p.PID); err != nil {
+			return signaled, fmt.Errorf("terminate %d: %w", p.PID, err)
+		}
+		signaled++
+	}
+	if signaled == 0 {
+		return 0, fmt.Errorf("no process named %q", name)
+	}
+	return signaled, nil
+}
+
+func sameProcessName(have, want string) bool {
+	if runtime.GOOS != "windows" {
+		return have == want
+	}
+	trim := func(s string) string { return strings.TrimSuffix(strings.ToLower(s), ".exe") }
+	return trim(have) == trim(want)
 }
