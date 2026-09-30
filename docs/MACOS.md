@@ -9,7 +9,7 @@
 | Inventory | `sw_vers`, `sysctl`, `system_profiler`, `softwareupdate -l` | OS, memory, uptime, model, applications, pending updates. |
 | Process events | Process-table sampling (`kern.proc.all`) | Command lines from `kern.procargs2`. The kernel gives only the first 16 characters of an executable's name, not its path. |
 | `kill_process` | `kern.proc.all` + SIGTERM | `launchd`, `kernel_task`, `WindowServer` and `loginwindow` are refused. |
-| Isolation | **Not implemented** | pf-based isolation is future work. |
+| Isolation | pf anchor `com.apple/250.DefendSecIsolate` | Needs `DEFENDSEC_ISOLATE_NET=1`. Allows loopback and the control plane and drops everything else; the agent's existing connection survives. Release flushes the anchor and returns pf's enable reference. |
 
 ## Full process visibility: EndpointSecurity
 

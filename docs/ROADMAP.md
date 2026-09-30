@@ -1193,7 +1193,10 @@ configuration checks never ran outside a source checkout. Packs are now embedded
 The server was also discarding every agent SCA result that was not `file_regex`, before alerting
 on it. That is fixed too.
 
-**Not done:** network isolation on Windows. The isolate command still says it is Linux-only.
+**Isolation.** Isolation now works on Windows through Windows Firewall. Before changing anything
+it records every profile's state and policy. Only the control plane is reachable while isolated,
+and the recorded profiles are restored exactly on release, including a firewall that was off.
+The rules are tested; the commands have not been run on a Windows machine.
 
 **5.2 — macOS.** EndpointSecurity framework for process and file events (requires an Apple
 developer account and entitlement — start the request early, it is slow), with FileVault, XProtect
@@ -1213,6 +1216,9 @@ and firewall posture.
 - **Inventory:** OS, memory, uptime, model, applications, and pending updates.
 - **Process sampling** from `kern.proc.all`, with command lines from `kern.procargs2`.
 - **`kill_process`** works on macOS, with system processes protected.
+- **Isolation** uses a pf anchor under `com.apple/*`, which the stock `pf.conf` already
+  evaluates, so the system configuration is not edited. pf's enable token is kept so that
+  release does not turn pf off for anything else using it.
 
 **EndpointSecurity needs an entitlement only the project owner can request from Apple.** The
 steps, from the request through Full Disk Access and the cgo sensor, are written down in MACOS.md.
@@ -1316,10 +1322,13 @@ every heartbeat rewrote an 81 MB state file. Those are fixed:
 - The console's host list and the overview's host table are the control plane's pages. The
   overview used to send every host to the browser, which was 42 MB at 10,000 hosts.
 
-**Not yet at scale:** the overview, Policies and Advisories pages still compute over the whole
-fleet in the console, and take 3–7 seconds at 10,000 hosts. That is down from 26 seconds, but
-those aggregates belong in the control plane. Also, apid holds the fleet in memory: 1.9 GB RSS at
-10,000 hosts. That is fine for the target size, and it is the next ceiling after this one.
+The overview, Policies and Advisories pages were then fixed in the console. Advisory matching is
+indexed, and the aggregates are cached per export version and refreshed in the background. At
+10,000 hosts they typically answer in under 100 ms, and in 1.7 s on the first view after the
+console starts.
+
+**The next ceiling:** apid holds the fleet in memory, at 1.9 GB RSS for 10,000 hosts. That is fine
+for the target size and is the limit to address next.
 
 **5.6 — Integrations.** Prometheus metrics, OTel traces, syslog/CEF export, webhook and Slack/Teams
 alerting, and Terraform/Ansible modules for provisioning. Be the best-behaved citizen in someone

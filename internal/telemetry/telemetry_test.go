@@ -123,7 +123,7 @@ func TestSamplingIsDeterministicByTraceID(t *testing.T) {
 		if tr.sample(id) {
 			n++
 		}
-		if tr.sample(id) != tr.sample(id) {
+		if first, again := tr.sample(id), tr.sample(id); first != again {
 			t.Fatal("not deterministic")
 		}
 	}

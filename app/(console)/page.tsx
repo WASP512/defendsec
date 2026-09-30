@@ -6,8 +6,8 @@ import { SampleToggle } from "@/components/sample-toggle";
 import { PageHeader, StatCard } from "@/components/console-ui";
 import { ensureStore, publicDevice } from "@/lib/store";
 import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
-import { isOnline, policySummary } from "@/lib/policies";
-import { allFindings } from "@/lib/advisories";
+import { isOnline } from "@/lib/policies";
+import { fleetAggregates } from "@/lib/fleet-aggregates";
 import { isReadOnlySession } from "@/lib/auth";
 import { FileWarning, MonitorCheck, Package, ShieldAlert } from "lucide-react";
 import Link from "next/link";
@@ -23,12 +23,13 @@ export default async function HomePage() {
   // shipping every host to the browser was 42 MB at 10,000 hosts.
   const firstPage = await loadDevicePage(parseDeviceListQuery({}));
   const online = fleet.filter((d) => isOnline(d)).length;
-  const failing = policySummary(fleet, fimEvents, store.triages).reduce(
+  const aggregates = fleetAggregates(fleet, store.triages);
+  const failing = aggregates.policies.reduce(
     (n, p) => n + p.failing,
     0,
   );
   const samples = store.devices.some((d) => d.sample);
-  const findings = allFindings(fleet, store.triages);
+  const findings = aggregates.findings;
   const serious = findings.filter(
     (f) =>
       f.status === "open" &&

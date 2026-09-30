@@ -14,8 +14,7 @@ import (
 
 type fakeIdP struct {
 	*ssotest.IdP
-	claims       map[string]any
-	lastVerifier string
+	claims map[string]any
 }
 
 func newFakeIdP(t *testing.T) *fakeIdP {

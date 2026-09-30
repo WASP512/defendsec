@@ -94,6 +94,9 @@ func run(ctx context.Context, log *slog.Logger, args []string) error {
 		secret = strings.TrimSpace(string(raw))
 	}
 
+	// Isolation keeps these reachable and nothing else.
+	agentcmd.SetControlPlane(*serverHTTP, *serverGRPC)
+
 	if err := os.MkdirAll(*stateDir, 0o700); err != nil {
 		return err
 	}

@@ -1,3 +1,5 @@
+//lint:file-ignore SA4023 NewBPFSensor only fails off Linux, where pickSensor returns before calling it
+
 package main
 
 import (

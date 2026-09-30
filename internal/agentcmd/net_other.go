@@ -1,0 +1,19 @@
+//go:build !linux && !windows && !darwin
+
+package agentcmd
+
+import (
+	"fmt"
+	"os"
+	"runtime"
+)
+
+const isolateDescription = ""
+
+func privileged() bool { return os.Geteuid() == 0 }
+
+func applyNetIsolate(string) error {
+	return fmt.Errorf("network isolation is not implemented on %s", runtime.GOOS)
+}
+
+func clearNetIsolate(string) error { return nil }

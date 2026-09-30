@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { dataPath } from "./data-paths";
 import type { Device, FimEvent, FimFile, PatchInventory, Platform, SoftwareItem, PendingUpdate } from "./types";
 
@@ -38,17 +38,63 @@ function asPlatform(value: string | undefined): Platform {
   return "unknown";
 }
 
+// The export is rewritten at most every 30 seconds and is tens of megabytes
+// at fleet scale, so it is parsed once per version rather than once per
+// request (roadmap 5.5). The version is its mtime and size.
+//
+// When a new version appears and one is already loaded, the loaded one is
+// served while the new one is parsed in the background (stale while
+// revalidate). The export itself trails the control plane by up to 30
+// seconds, so serving the previous version for a moment more costs little,
+// while making the next visitor wait for a multi-second parse is exactly
+// the delay this exists to remove.
+let fileCache: { key: string; data: MtlsFile } | null = null;
+let refreshing: Promise<void> | null = null;
+
+async function parseExport(path: string, key: string): Promise<MtlsFile> {
+  const data = JSON.parse(await readFile(path, "utf8")) as MtlsFile;
+  fileCache = { key, data };
+  return data;
+}
+
 export async function loadMtlsFile(): Promise<MtlsFile> {
+  const path = dataPath("defendsec-agents.json");
   try {
-    const raw = await readFile(dataPath("defendsec-agents.json"), "utf8");
-    return JSON.parse(raw) as MtlsFile;
+    const st = await stat(path);
+    const key = `${st.mtimeMs}:${st.size}`;
+    if (fileCache?.key === key) return fileCache.data;
+    if (fileCache) {
+      refreshing ??= parseExport(path, key)
+        .then(() => undefined)
+        .catch(() => undefined)
+        .finally(() => {
+          refreshing = null;
+        });
+      return fileCache.data;
+    }
+    return await parseExport(path, key);
   } catch {
-    return {};
+    return fileCache?.data ?? {};
   }
 }
 
+// fleetVersion identifies the export last loaded, for caching work derived
+// from it. Empty before the first load.
+export function fleetVersion(): string {
+  return fileCache?.key ?? "";
+}
+
+let devicesCache: { key: string; devices: Device[] } | null = null;
+
 export async function loadMtlsDevices(): Promise<Device[]> {
   const parsed = await loadMtlsFile();
+  if (devicesCache && devicesCache.key === fleetVersion() && fleetVersion() !== "") return devicesCache.devices;
+  const devices = mapMtlsDevices(parsed);
+  devicesCache = { key: fleetVersion(), devices };
+  return devices;
+}
+
+function mapMtlsDevices(parsed: MtlsFile): Device[] {
   return (parsed.devices ?? []).map((item) => ({
     id: item.id,
     hostname: item.hostname,

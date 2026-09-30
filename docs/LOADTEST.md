@@ -62,18 +62,25 @@ exposes (loopback only).
 
 With the same 10,000 hosts, the console pages measured:
 
-| Page | Before | After |
-| --- | --- | --- |
-| Hosts (`/devices`, paged by the control plane) | read the whole fleet file | 38 ms |
-| Fleet overview (`/`) | 26 s, 42 MB of HTML | 6.7 s, 246 KB |
-| Policies | 20 s | 3.8 s |
-| Advisories | 3.3 s | 3.3 s |
+| Page | First run | Now: first view | Now: typical |
+| --- | --- | --- | --- |
+| Hosts (`/devices`, paged by the control plane) | read the whole fleet file | 38 ms | 38 ms |
+| Fleet overview (`/`) | 26 s, 42 MB of HTML | 1.7 s | 90 ms |
+| Policies | 20 s | — | 20 ms |
+| Advisories | 3.3 s | 0.34 s | 20 ms |
 
-**The overview, Policies and Advisories pages still compute over the whole
-fleet**, by parsing the exported state file and matching advisories per host
-in the console. That takes 3–7 seconds at 10,000 hosts. Moving those
-aggregates into the control plane is the next step. Until then they are usable
-at this size, but not fast.
+Three changes got it there:
+
+- **Advisory matching** compared every installed package with every advisory, normalising
+  both names each time. It now looks packages up in an index built once per catalog. The
+  findings are identical.
+- **Policy evaluation** ran each host once per policy instead of once.
+- **The fleet export** is parsed once per version instead of once per request, and so are
+  the aggregates built on it. When a new export lands, the previous result is served while
+  the new one is computed. Right after a refresh, the worst request measured was 0.7 s.
+
+"First view" is the first request after the console starts. Most of its 1.7 s is parsing
+the 81 MB export.
 
 ## Reproduce
 

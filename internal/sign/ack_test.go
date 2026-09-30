@@ -136,7 +136,7 @@ func TestVerifyAckStored(t *testing.T) {
 }
 
 func TestHashResultIsStable(t *testing.T) {
-	if HashResult("isolated") != HashResult("isolated") {
+	if a, b := HashResult("isolated"), HashResult("isolated"); a != b {
 		t.Fatal("HashResult must be deterministic")
 	}
 	if HashResult("a") == HashResult("b") {

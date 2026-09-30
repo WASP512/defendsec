@@ -9,7 +9,7 @@
 | Inventory | Same script, plus the Windows Update Agent | OS, build, memory, uptime, serial, model, installed programs (both registry hives), pending updates. |
 | Process events | Process-table sampling by default; ETW opt-in | See below. |
 | `kill_process` | Toolhelp + TerminateProcess | Names match case-insensitively with or without `.exe`. Core system processes (`lsass`, `csrss`, `wininit`, `winlogon`, `services`, `smss`, `svchost`, `MsMpEng`) are refused. |
-| Isolation | **Not implemented** | The isolate command reports that it is Linux-only. Windows Filtering Platform isolation is future work. |
+| Isolation | Windows Firewall (`netsh advfirewall`) | Needs `DEFENDSEC_ISOLATE_NET=1`, as on Linux. Before changing anything it records each profile's state and policy. It then allows outbound TCP only to the control plane and blocks inbound, overriding allow rules such as RDP, and sets block-outbound. Release deletes its rules and restores the recorded profiles. A domain GPO that manages the firewall can override this. |
 | File integrity | The same hash-based FIM as Linux, over Windows paths. | |
 
 A posture probe that cannot run — a cmdlet missing on Home edition, Defender
