@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -133,6 +134,14 @@ func run(log *slog.Logger) error {
 	}
 
 	store := presence.New(filepath.Join(*dataDir, "defendsec-agents.json"))
+	// Cancelled on shutdown so the export's final flush runs.
+	exportCtx, stopExport := context.WithCancel(context.Background())
+	defer func() {
+		stopExport()
+		if err := store.Flush(); err != nil {
+			log.Error("final export of defendsec-agents.json", "err", err)
+		}
+	}()
 	commands := cmdlog.New(filepath.Join(*dataDir, "commands.json"))
 	// Privileged-action history is kept by age rather than by count
 	// (roadmap 5.5). The default is the CJIS minimum of one year.
@@ -173,6 +182,23 @@ func run(log *slog.Logger) error {
 		pg = storepg.New(pool)
 		svc.SetPostgres(pg)
 		log.Info("postgres enabled")
+
+		// Postgres is the primary device store (roadmap 5.5): apid's memory
+		// is seeded from it, and defendsec-agents.json becomes an export
+		// written at most every 30 seconds instead of on every heartbeat.
+		seedCtx, seedCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		devices, err := pg.LoadDevices(seedCtx)
+		seedCancel()
+		if err != nil {
+			return fmt.Errorf("load devices from postgres: %w", err)
+		}
+		if err := store.Seed(devices); err != nil {
+			return fmt.Errorf("seed device state: %w", err)
+		}
+		store.ExportEvery(exportCtx, 30*time.Second, func(err error) {
+			log.Error("export defendsec-agents.json", "err", err)
+		})
+		log.Info("device state loaded from postgres", "devices", len(devices))
 		// One year, the CJIS Policy Area 4 minimum, rather than the 90 days
 		// this used to default to (roadmap 5.5). DefendSec's compliance view
 		// claims to evidence audit retention; a default below the minimum of
@@ -271,6 +297,8 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/totp", svc.HandleTOTP)
 	adminMux.HandleFunc("/v1/crypto-posture", svc.HandleCryptoPosture)
 	adminMux.HandleFunc("/v1/retention", svc.HandleRetention)
+	adminMux.HandleFunc("/v1/devices", svc.HandleDevices)
+	adminMux.HandleFunc("/v1/devices/summary", svc.HandleDevices)
 
 	// Compliance (roadmap 1.7).
 	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
@@ -618,6 +646,24 @@ func run(log *slog.Logger) error {
 		go func() {
 			log.Info("mcp listening", "addr", mcpSrv.Addr)
 			errCh <- mcpSrv.ListenAndServe()
+		}()
+	}
+
+	// Profiling, for diagnosing load (roadmap 5.5). Off unless set, and
+	// refused on anything but a loopback address: profiles expose memory
+	// contents and internal state.
+	if addr := strings.TrimSpace(os.Getenv("DEFENDSEC_PPROF_ADDR")); addr != "" {
+		host, _, err := net.SplitHostPort(addr)
+		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
+			return fmt.Errorf("DEFENDSEC_PPROF_ADDR must be a loopback host:port, got %q", addr)
+		}
+		pmux := http.NewServeMux()
+		pmux.HandleFunc("/debug/pprof/", pprof.Index)
+		pmux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		pmux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		go func() {
+			log.Warn("pprof listening", "addr", addr)
+			_ = (&http.Server{Addr: addr, Handler: pmux, ReadHeaderTimeout: 5 * time.Second}).ListenAndServe()
 		}()
 	}
 

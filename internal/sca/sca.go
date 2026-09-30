@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -611,4 +613,29 @@ func loadFS(fsys fs.FS, dir, label string) ([]*Pack, error) {
 		out = append(out, pack)
 	}
 	return out, nil
+}
+
+var shippedCache struct {
+	sync.Mutex
+	packs  []*Pack
+	err    error
+	loaded time.Time
+}
+
+// ShippedCacheTTL is how long LoadShippedCached reuses a load.
+const ShippedCacheTTL = time.Minute
+
+// LoadShippedCached is LoadShipped, reused for ShippedCacheTTL. The server
+// evaluates packs on every inventory report; parsing every YAML file each
+// time is waste at fleet scale, while a minute's delay picking up an edited
+// pack is not a cost anyone will notice.
+func LoadShippedCached() ([]*Pack, error) {
+	shippedCache.Lock()
+	defer shippedCache.Unlock()
+	if !shippedCache.loaded.IsZero() && time.Since(shippedCache.loaded) < ShippedCacheTTL {
+		return shippedCache.packs, shippedCache.err
+	}
+	shippedCache.packs, shippedCache.err = LoadShipped()
+	shippedCache.loaded = time.Now()
+	return shippedCache.packs, shippedCache.err
 }

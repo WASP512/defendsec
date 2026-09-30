@@ -49,11 +49,14 @@ type Server struct {
 	viewerToken string
 	dataDir     string
 	store       *presence.File
-	commands    *cmdlog.File
-	pg          *storepg.Store
-	hub         *Hub
-	signer      *sign.Key
-	log         *slog.Logger
+	// alertBatches holds per-device open-alert sets while an inventory
+	// report is processed; see beginAlertBatch.
+	alertBatches sync.Map
+	commands     *cmdlog.File
+	pg           *storepg.Store
+	hub          *Hub
+	signer       *sign.Key
+	log          *slog.Logger
 
 	// Transparency anchoring (roadmap 1.6). Both are optional: an instance
 	// with no targets simply publishes nothing, and one with no peer token
@@ -138,6 +141,30 @@ func (s *Server) syncDevice(dev presence.Device) {
 	defer cancel()
 	if err := s.pg.UpsertDevice(ctx, dev); err != nil {
 		s.log.Warn("postgres upsert device", "err", err, "device", dev.ID)
+	}
+}
+
+// touchDevice records a heartbeat in Postgres without rewriting inventory. A
+// device the database does not have yet (enrolled before Postgres was
+// configured) gets the full row once.
+func (s *Server) touchDevice(dev presence.Device) {
+	if s.pg == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	found, err := s.pg.TouchDevice(ctx, dev)
+	if err != nil {
+		s.log.Warn("postgres touch device", "err", err, "device", dev.ID)
+		return
+	}
+	if !found {
+		if got, ok := s.store.Get(dev.ID); ok {
+			dev = got
+		}
+		if err := s.pg.UpsertDevice(ctx, dev); err != nil {
+			s.log.Warn("postgres upsert device", "err", err, "device", dev.ID)
+		}
 	}
 }
 
@@ -287,11 +314,7 @@ func (s *Server) Heartbeat(ctx context.Context, req *defendsecv1.HeartbeatReques
 		s.log.Error("presence upsert", "err", err)
 		return nil, status.Error(codes.Internal, "presence")
 	}
-	if got, ok := s.store.Get(id); ok {
-		s.syncDevice(got)
-	} else {
-		s.syncDevice(dev)
-	}
+	s.touchDevice(dev)
 	return &defendsecv1.HeartbeatResponse{Ok: true, ServerTimeUnix: time.Now().Unix()}, nil
 }
 
@@ -368,6 +391,8 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 		s.log.Warn("sca merge upsert", "err", err)
 	}
 	s.syncDevice(merged)
+	endBatch := s.beginAlertBatch(id)
+	defer endBatch()
 	s.processFimAlerts(events)
 	s.processDriftAlerts(merged)
 	s.processScaAlerts(merged, toScaResults(merged.ScaResults))

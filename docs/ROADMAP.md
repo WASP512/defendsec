@@ -1239,8 +1239,33 @@ evidence CJIS Policy Area 4, and a 500-record cap could push a month of signed a
 file in an afternoon while the console reported the control as satisfied. `GET /v1/retention`
 reports the windows in force *and how much history is actually held*, because retention
 configuration does not create history that was never recorded: a one-year policy on a system
-installed last month evidences one month, and an assessor will ask. The Postgres-primary move,
-pagination and the 10k-host load test remain.
+installed last month evidences one month, and an assessor will ask.
+
+*The scale half, delivered and measured — see [LOADTEST.md](LOADTEST.md).* 10,000 simulated
+agents, each with its own key, mTLS connection and 80-package inventory, heartbeating on the real
+schedule against a real apid and Postgres, for five minutes: **zero errors**. Heartbeats: p99
+9.7 ms. Inventory reports: p50 62 ms, p99 715 ms. Paging through all 10,000 hosts: under 600 ms.
+
+The first 10k run also had zero errors, and was not acceptable: inventory reports took **68
+seconds** at the median. Profiling found that the alert list was being copied on every insert,
+that every configuration check made its own round trip to ask whether its alert was open, and that
+every heartbeat rewrote an 81 MB state file. Those are fixed:
+
+- Postgres is the primary device store. apid seeds its memory from it at start, and heartbeats
+  update only liveness columns. `defendsec-agents.json` is now an export, written every 30 seconds
+  outside the lock, plus once on shutdown. Without Postgres, writes stay synchronous, since the
+  file is then the only copy.
+- `GET /v1/devices` pages with a keyset cursor, so the last page costs what the first does. It
+  filters in the database by search (hostname, serial, user, OS, IP), platform and
+  online/offline/isolated status. `/v1/devices/summary` counts without listing. Without Postgres
+  the same semantics run in memory.
+- The console's host list and the overview's host table are the control plane's pages. The
+  overview used to send every host to the browser, which was 42 MB at 10,000 hosts.
+
+**Not yet at scale:** the overview, Policies and Advisories pages still compute over the whole
+fleet in the console, and take 3–7 seconds at 10,000 hosts. That is down from 26 seconds, but
+those aggregates belong in the control plane. Also, apid holds the fleet in memory: 1.9 GB RSS at
+10,000 hosts. That is fine for the target size, and it is the next ceiling after this one.
 
 **5.6 — Integrations.** Prometheus metrics, OTel traces, syslog/CEF export, webhook and Slack/Teams
 alerting, and Terraform/Ansible modules for provisioning. Be the best-behaved citizen in someone

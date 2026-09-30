@@ -188,6 +188,41 @@ Keep `47262`/`47263` reachable by agents. Do not expose Postgres, port `47264`, 
 
 ---
 
+## Scale and the device store
+
+With Postgres configured (every packaged install), **Postgres is the primary
+device store**. apid loads the fleet from it at start and holds it in memory.
+Heartbeats update only liveness columns. `defendsec-agents.json` is an export,
+written every 30 seconds and on shutdown, so it can trail the database by up
+to 30 seconds after a crash. Restore from the Postgres dump in a backup, not
+from that file. Without Postgres, the file is the only copy and is written on
+every change.
+
+Measured at 10,000 hosts on 4 vCPU: heartbeat p99 under 10 ms, inventory
+reports p50 62 ms, and 1.9 GB of apid memory. See [LOADTEST.md](LOADTEST.md)
+for the full result, what it found, and how to rerun it against your own
+hardware.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `DEFENDSEC_DB_MAX_CONNS` | 20 | apid's Postgres pool size. Raise it for large fleets, and keep it under `max_connections` minus your other clients. |
+| `DEFENDSEC_PPROF_ADDR` | off | A loopback `host:port` for Go's profiler, to diagnose load. apid refuses any non-loopback address. |
+
+The fleet API pages and filters in the database:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  'http://127.0.0.1:47264/v1/devices?limit=100&platform=windows&status=offline&q=web'
+# → {"devices":[…],"total":N,"next":"<cursor>"}; pass cursor=<next> for the following page
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:47264/v1/devices/summary
+```
+
+The console's host list uses this API. The overview, Policies and Advisories
+pages still compute over the whole fleet, which takes 3–7 seconds at 10,000
+hosts.
+
+---
+
 ## Backup and restore
 
 Backup (JSON store, PKI, admin token, optional Postgres dump):
