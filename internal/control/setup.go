@@ -68,7 +68,7 @@ type SetupStatus struct {
 	// without the token.
 	SetupOpen bool `json:"setupOpen"`
 	// SecondsRemaining is how long setup stays open, so the page can say so.
-	SecondsRemaining int    `json:"secondsRemaining,omitempty"`
+	SecondsRemaining int `json:"secondsRemaining,omitempty"`
 	// ViaInvite is true when setup is open because the request carried a
 	// valid first-admin invite from `defendsec-apid bootstrap-admin`.
 	ViaInvite bool `json:"viaInvite,omitempty"`
@@ -222,7 +222,7 @@ func (s *Server) createFirstAdmin(w http.ResponseWriter, r *http.Request, now ti
 	s.audit("user:"+u.Username, "first_admin_created", "", map[string]any{
 		"via":           via,
 		"clientAddress": strings.TrimSpace(req.ClientAddress),
-		"detail": setupAuditDetail(st.ViaInvite, s.setupOpenUntil),
+		"detail":        setupAuditDetail(st.ViaInvite, s.setupOpenUntil),
 	})
 	u.PasswordHash = ""
 	writeJSON(w, http.StatusCreated, map[string]any{"user": u, "token": token})
