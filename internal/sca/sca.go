@@ -118,6 +118,11 @@ type Result struct {
 	// Controls travels with the result so an alert raised from it is tagged
 	// without the alerting code needing to reload the pack.
 	Controls []string `json:"controls,omitempty"`
+	// Unknown marks a check that could not be evaluated because the host
+	// did not report what it needs. Such results are not published: an
+	// unknown shown as a failure raises alerts about things nobody
+	// measured, and shown as a pass claims evidence nobody has.
+	Unknown bool `json:"-"`
 }
 
 func LoadPack(path string) (*Pack, error) {
@@ -439,6 +444,13 @@ func EvalInventoryField(check Check, dev presence.Device) Result {
 		res.Detail = fmt.Sprintf("unknown inventory field %q", check.Field)
 		return res
 	}
+	if got == nil && expect != nil {
+		// The host did not report this value — no firewall tool it can
+		// read, say. That is missing evidence, not a failure.
+		res.Unknown = true
+		res.Detail = fmt.Sprintf("%s was not reported by this host", check.Field)
+		return res
+	}
 	res.Pass = valuesEqual(got, expect)
 	if res.Pass {
 		res.Detail = fmt.Sprintf("%s=%v matches expect", check.Field, got)
@@ -468,8 +480,24 @@ func EvalInventoryFieldChecks(pack *Pack, dev presence.Device) []Result {
 			continue
 		}
 		r := EvalInventoryField(check, dev)
+		if r.Unknown {
+			continue
+		}
 		r.PackID = pack.ID
 		out = append(out, r)
+	}
+	return out
+}
+
+// UnknownInventoryFieldChecks lists the pack's inventory checks this host
+// gave no value for, as "pack/check" ids, so alerts raised when unknown was
+// still counted as a failure can be resolved.
+func UnknownInventoryFieldChecks(pack *Pack, dev presence.Device) []string {
+	var out []string
+	for _, check := range pack.Checks {
+		if check.Type == "inventory_field" && EvalInventoryField(check, dev).Unknown {
+			out = append(out, pack.ID+"/"+check.ID)
+		}
 	}
 	return out
 }

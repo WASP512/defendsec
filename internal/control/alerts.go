@@ -417,6 +417,25 @@ func (s *Server) processDriftAlerts(dev presence.Device) {
 	}
 }
 
+// resolveUnknownSca resolves alerts for inventory checks this host gave no
+// value for. Such checks now produce no result; an alert raised when an
+// earlier version counted the missing value as a failure asserted something
+// nobody measured, and would otherwise stay open forever.
+func (s *Server) resolveUnknownSca(dev presence.Device) {
+	packs, err := sca.LoadShippedCached()
+	if err != nil {
+		return
+	}
+	for _, pack := range packs {
+		if dev.Platform != "" && pack.Platform != "" && pack.Platform != dev.Platform {
+			continue
+		}
+		for _, source := range sca.UnknownInventoryFieldChecks(pack, dev) {
+			s.resolveAlert(dev.ID, "sca", source)
+		}
+	}
+}
+
 func (s *Server) processScaAlerts(dev presence.Device, results []sca.Result) {
 	for _, r := range results {
 		r := r

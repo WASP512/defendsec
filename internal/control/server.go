@@ -396,6 +396,7 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 	s.processFimAlerts(events)
 	s.processDriftAlerts(merged)
 	s.processScaAlerts(merged, toScaResults(merged.ScaResults))
+	s.resolveUnknownSca(merged)
 	s.processVulnAlerts(merged)
 	if s.pg != nil {
 		ctx2, cancel := context.WithTimeout(context.Background(), 3*time.Second)
