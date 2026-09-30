@@ -32,7 +32,7 @@ ip -n "$A" tuntap add dev ds-tun-a mode tun
 ip -n "$P" tuntap add dev ds-tun-p mode tun
 
 cat >"$WORK/relay.py" <<'PY'
-import ctypes, fcntl, os, select, struct, sys
+import ctypes, errno, fcntl, os, select, struct, sys
 libc = ctypes.CDLL(None, use_errno=True)
 CLONE_NEWNET, TUNSETIFF, IFF_TUN, IFF_NO_PI = 0x40000000, 0x400454CA, 0x0001, 0x1000
 def tun_in(ns, name):
@@ -48,7 +48,15 @@ p = tun_in(sys.argv[3], sys.argv[4])
 peer = {a: p, p: a}
 while True:
     for fd in select.select([a, p], [], [])[0]:
-        os.write(peer[fd], os.read(fd, 65535))
+        packet = os.read(fd, 65535)
+        try:
+            os.write(peer[fd], packet)
+        except OSError as e:
+            # The far end is not up yet. A kernel with IPv6 sends router
+            # solicitations the moment one side comes up; a real link drops
+            # them, and so does this one, rather than the relay dying.
+            if e.errno != errno.EIO:
+                raise
 PY
 python3 "$WORK/relay.py" "$A" ds-tun-a "$P" ds-tun-p &
 PEER_PIDS=$!
@@ -103,6 +111,9 @@ PY
 ip netns exec "$P" python3 "$WORK/peer.py" $PEER6 &
 PEER_PIDS="$PEER_PIDS $!"
 sleep 1
+for pid in $PEER_PIDS; do
+  kill -0 "$pid" 2>/dev/null || { echo "test harness process $pid exited during setup" >&2; exit 1; }
+done
 
 # A stand-in for the host's own firewall (firewalld, ufw), loaded before any
 # connection opens. It turns connection tracking on, as a real firewall does,
