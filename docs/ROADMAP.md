@@ -1271,6 +1271,36 @@ those aggregates belong in the control plane. Also, apid holds the fleet in memo
 alerting, and Terraform/Ansible modules for provisioning. Be the best-behaved citizen in someone
 else's stack.
 
+*Delivered.* Everything is in OPERATIONS.md under "Forwarding", "Metrics and traces", and
+"Provisioning with Ansible and Terraform".
+
+- **Prometheus:** `/metrics` for agent RPCs, admin API, alerts, fleet, forwarding and process
+  health. It is hand-written against the 0.0.4 text format, with no new dependency. Labels come
+  only from fixed sets, so no host or user identity reaches the metrics system. Checked with
+  Prometheus's own scrape parser and `promlint`: 82 series, no findings.
+- **OpenTelemetry:** traces of every agent RPC and admin request, configured by the standard
+  `OTEL_*` variables and continuing W3C `traceparent`. There is also an `otlp=` forwarding
+  destination that sends events and alerts as OTLP log records. Both use a small OTLP/HTTP JSON
+  encoder rather than the SDK. They were checked by sending real apid traffic to a receiver built
+  on the collector's own OTLP decoder: 112 spans and 120 log records, none rejected. The
+  destination this replaces used to refuse `otlp=` because "an almost-OTLP exporter a collector
+  rejects is worse than none". That is still the standard, and it is why this one was tested
+  against the collector's decoder rather than against itself.
+- **CEF** over the existing syslog transports, with header and extension escaping per the
+  specification. It was received from a real run: 120 events, all well-formed.
+- **Slack and Teams:** alerts only, above a severity floor (default high), at most ten per post.
+  A channel that receives every event is a channel everyone mutes.
+- **Ansible** role for Linux, Windows (MSI) and macOS, and a **Terraform** module that renders
+  first-boot user data for any provider. CI runs `terraform test`, `ansible-lint` and a PowerShell
+  parse on every change. ansible-lint caught a real defect before merge: `get_url` in current
+  ansible-core cannot take a per-request CA, so the verified download would have failed on first
+  use.
+
+*Not verified here:* delivery to real Slack or Teams workspaces, where only the payload shapes are
+tested. The role and module have not been run against a live fleet. A full OpenTelemetry Collector
+binary could not be fetched in the build environment, so the check used the collector's decoder
+library instead.
+
 **5.7 — Supply-chain hardening for DefendSec itself.** A tool making provenance claims must hold
 itself to them: reproducible builds, SLSA provenance attestations, signed releases (cosign),
 published SBOMs. CI already runs TruffleHog secret scanning and govulncheck — extend that to

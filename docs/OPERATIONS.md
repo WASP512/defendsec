@@ -702,12 +702,14 @@ DEFENDSEC_FORWARD='syslog=tcp://collector:514,webhook=https://siem.example/inges
 | Kind | Form | Notes |
 | --- | --- | --- |
 | `syslog` | `tcp://host:514`, `tls://host:6514`, `udp://host:514` | RFC 5424, `local0`, JSON payload, RFC 6587 octet framing. TCP by default — UDP discards silently under load, which is the wrong property for a security record |
+| `cef` | `tcp://host:514`, `tls://host:6514`, `udp://host:514` | The same syslog transport, carrying ArcSight Common Event Format, for SIEMs that parse CEF natively. Header and extension escaping follow the CEF specification, so a pipe in a hostname cannot shift fields |
 | `webhook` | `https://host/path#token` | Batched JSON POST; the token is sent as a bearer credential |
+| `slack` | `https://hooks.slack.com/services/…#min=high` | **Alerts only**, at or above `min` (default `high`), at most ten per post with a count of the rest. Events are never posted: a channel that receives every process execution is a channel everyone mutes |
+| `teams` | `https://….logic.azure.com/workflows/…#min=high` | As `slack`, as an Adaptive Card for a Teams Workflows webhook |
+| `otlp` | `https://collector:4318#TOKEN` or `#Authorization=Bearer%20x,x-tenant=a` | OpenTelemetry log records over OTLP/HTTP JSON to `/v1/logs`. A collector's partial rejection counts as a failure, not a success |
 | `file` | `/var/log/defendsec-events.jsonl` | JSON lines. Useful for proving the pipeline before pointing it at a collector, and for air-gapped hosts |
 
-OpenTelemetry is **not implemented**, and configuring `otlp=` is an error rather than a silent
-no-op. An almost-OTLP exporter a collector rejects is worse than none; syslog and webhook both
-reach an OTel collector today.
+Destination names in the status report never include a webhook secret or token.
 
 **Forwarding is lossy on purpose.** A collector that stops accepting connections must not stop
 DefendSec matching rules or raising alerts — a tool that stops defending because its log shipper
@@ -720,6 +722,64 @@ curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
 
 Every alert is forwarded, not only behavioural ones: for many operators the collector is the
 system of record, and a finding that exists only in DefendSec is one their process will not see.
+
+---
+
+## Metrics and traces
+
+**Prometheus.** `GET /metrics` on the admin listener (`127.0.0.1:47264`), without a
+token, as node_exporter does on loopback. To scrape from elsewhere, set
+`DEFENDSEC_METRICS_ADDR` (e.g. `0.0.0.0:9464`). apid refuses a non-loopback
+address unless `DEFENDSEC_METRICS_TOKEN` is also set, in which case scrapes must
+send it as a bearer token.
+
+| Metric | What |
+| --- | --- |
+| `defendsec_devices{platform,state}` | Enrolled, online and isolated hosts |
+| `defendsec_grpc_requests_total{method,code}`, `defendsec_grpc_request_duration_seconds` | Agent RPCs |
+| `defendsec_admin_http_requests_total{route,code}`, `defendsec_admin_http_request_duration_seconds` | Admin API, by route pattern |
+| `defendsec_alerts_created_total{kind,severity}` | Alerts raised |
+| `defendsec_forward_records_total{outcome}`, `defendsec_forward_destination_healthy{destination}` | Forwarding |
+| `defendsec_build_info{commit}`, `go_goroutines`, `go_memstats_heap_inuse_bytes` | The process |
+
+Labels come from fixed sets. No hostname, device id or user reaches the metrics
+system, which usually has looser access control than DefendSec.
+
+**OpenTelemetry traces.** Set the standard variables and apid traces every agent
+RPC and admin request, continuing a caller's W3C `traceparent`:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4318     # or ..._TRACES_ENDPOINT
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20xyz  # optional
+OTEL_SERVICE_NAME=defendsec-apid                       # default
+OTEL_TRACES_SAMPLER=traceidratio OTEL_TRACES_SAMPLER_ARG=0.1  # default: every trace
+```
+
+Spans carry the RPC method or route, never a device id. Export is batched and
+lossy: a collector that is down costs spans, never agent traffic.
+
+**How this was verified.** Both OTLP paths are DefendSec's own small encoder,
+not the OpenTelemetry SDK. They were checked by sending real traffic from apid
+to a receiver built on the collector's own OTLP JSON decoder
+(`go.opentelemetry.io/collector/pdata`): 112 spans and 120 log records, none
+rejected, with a caller's `traceparent` continued. `/metrics` was parsed by
+Prometheus's scrape parser and linted with `promlint`: 82 series, no findings.
+A full collector binary could not be fetched in the environment where this was
+built, so the first deployment against yours is still worth watching.
+
+## Provisioning with Ansible and Terraform
+
+- `packaging/ansible` — a role that installs, enrolls or removes the agent on
+  Linux, Windows (the MSI) and macOS. Downloads are verified, the secret is
+  `no_log`, and re-running on an enrolled host does nothing. See its README.
+- `packaging/terraform/defendsec-agent` — a module that renders first-boot user
+  data (bash, or `<powershell>` for Windows) to install and enroll the agent on
+  new instances with any provider. The output is sensitive, because it holds the
+  enroll secret.
+
+CI checks both: `terraform validate` and `terraform test`, `ansible-lint` at the
+production profile, and a PowerShell parse of every Windows script. Neither has
+been run against a live fleet in DefendSec's own tests.
 
 ---
 

@@ -108,3 +108,40 @@ jobs:
       - name: npm audit (high+ severity)
         run: npm audit --audit-level=high
         continue-on-error: true
+
+  # Provisioning integrations (roadmap 5.6). Checked here because nothing else
+  # exercises them: a role or module that stops parsing would otherwise be
+  # found by the first operator to use it.
+  provisioning:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform module
+        working-directory: packaging/terraform/defendsec-agent
+        run: |
+          terraform init -backend=false
+          terraform fmt -check -recursive
+          terraform validate
+          terraform test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Ansible role
+        working-directory: packaging/ansible
+        run: |
+          pip install ansible-core ansible-lint
+          ansible-galaxy collection install -r requirements.yml
+          printf '[defendsec_agents]\nh1\n' > /tmp/inventory
+          ansible-playbook -i /tmp/inventory playbooks/agents.yml --syntax-check
+          ansible-lint --offline roles/ playbooks/
+      - name: Scripts parse under PowerShell
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($f in Get-ChildItem packaging/agent/*.ps1) {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errs)
+            if ($errs) { $errs | ForEach-Object { Write-Error "$($f.Name): $_" }; $failed = $true }
+          }
+          if ($failed) { exit 1 }

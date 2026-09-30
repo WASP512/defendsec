@@ -1,0 +1,40 @@
+---
+- name: Install the console certificate for verifying downloads
+  ansible.builtin.copy:
+    src: "{{ defendsec_agent_console_ca }}"
+    dest: /etc/defendsec-console-ca.crt
+    mode: "0644"
+  when: defendsec_agent_console_ca | length > 0
+
+# curl rather than get_url: get_url cannot take a CA file for one request,
+# and trusting the console certificate machine-wide to download a script
+# would be a wider change than the download needs.
+- name: Download the agent installer
+  ansible.builtin.command:
+    argv: >-
+      {{ ['curl', '-fsSL', '-o', '/tmp/defendsec-agent-' ~ defendsec_agent_state ~ '.sh']
+         + (['--cacert', '/etc/defendsec-console-ca.crt'] if defendsec_agent_console_ca | length > 0 else [])
+         + [defendsec_agent_download_base ~ '/' ~ ('install-agent.sh' if defendsec_agent_state == 'present' else 'uninstall-agent.sh')] }}
+  changed_when: false
+
+- name: Install and enroll the agent
+  ansible.builtin.command:
+    argv: >-
+      {{ ['bash', '/tmp/defendsec-agent-present.sh',
+          '--server-http', 'https://' ~ defendsec_agent_server ~ ':' ~ defendsec_agent_http_port,
+          '--server-grpc', defendsec_agent_server ~ ':' ~ defendsec_agent_grpc_port,
+          '--tls-server-name', defendsec_agent_server,
+          '--enroll-secret', defendsec_agent_enroll_secret,
+          '--download-base', defendsec_agent_download_base]
+         + (['--download-ca', '/etc/defendsec-console-ca.crt'] if defendsec_agent_console_ca | length > 0 else []) }}
+    creates: /var/lib/defendsec-agent/device-id
+  become: true
+  no_log: true
+  when: defendsec_agent_state == 'present'
+
+- name: Remove the agent
+  ansible.builtin.command:
+    argv: "{{ ['bash', '/tmp/defendsec-agent-absent.sh'] + (['--purge-data'] if defendsec_agent_purge_data else []) }}"
+    removes: /usr/local/bin/defendsec-agentd
+  become: true
+  when: defendsec_agent_state == 'absent'

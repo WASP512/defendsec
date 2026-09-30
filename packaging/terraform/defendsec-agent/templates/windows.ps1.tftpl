@@ -1,0 +1,20 @@
+<powershell>
+# DefendSec agent enrollment, rendered by the defendsec-agent Terraform module.
+$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+%{ if console_ca != "" ~}
+$pem = @'
+${console_ca}
+'@
+$b64 = ($pem -replace '-----[^-]+-----', '' -replace '\s', '')
+$pinned = New-Object Security.Cryptography.X509Certificates.X509Certificate2(,[Convert]::FromBase64String($b64))
+[Net.ServicePointManager]::ServerCertificateValidationCallback = { param($a, $c, $h, $e) $e -eq 'None' -or $c.GetCertHashString() -eq $pinned.Thumbprint }
+%{ endif ~}
+$msi = Join-Path $env:TEMP 'defendsec-agent.msi'
+Invoke-WebRequest -UseBasicParsing -Uri '${download_base}/defendsec-agent-windows-amd64.msi' -OutFile $msi
+$args = @('/i', $msi, '/qn', '/norestart',
+  'SERVER_HTTP=https://${server}:${http_port}', 'SERVER_GRPC=${server}:${grpc_port}',
+  'TLS_SERVER_NAME=${server}', 'ENROLL_SECRET=${enroll_secret}')
+$p = Start-Process msiexec.exe -ArgumentList $args -Wait -PassThru
+if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "msiexec failed with $($p.ExitCode)" }
+</powershell>

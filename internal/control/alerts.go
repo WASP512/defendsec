@@ -133,6 +133,7 @@ func (s *Server) recordAlert(alert presence.Alert) {
 	if alert.GeneratorVersion == "" {
 		alert.GeneratorVersion = alertmeta.GeneratorVersion
 	}
+	alertsCreated.Inc(alert.Kind, alert.Severity)
 	if err := s.store.InsertAlert(alert); err != nil {
 		s.log.Warn("alert file", "err", err)
 	}

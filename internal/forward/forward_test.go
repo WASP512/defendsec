@@ -382,16 +382,26 @@ func TestParseDestinations(t *testing.T) {
 		"syslog=tcp://hostwithoutport",
 		"webhook=ftp://x",
 		"file=",
+		"slack=http://hooks.slack.com/x", // chat webhooks must be https
+		"teams=https://x.example/w#min=extreme",
+		"cef=udp://nohostport",
+		"otlp=ftp://collector:4318",
 	} {
 		if _, err := ParseDestinations(bad, "t"); err == nil {
 			t.Errorf("%q: accepted", bad)
 		}
 	}
 
-	// OTLP is named rather than ignored, so a misconfiguration is visible.
-	_, err = ParseDestinations("otlp=http://collector:4318", "t")
-	if err == nil || !strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("otlp error = %v", err)
+	// Every 5.6 destination parses, and names never carry secrets.
+	gotDests, err := ParseDestinations("cef=tcp://siem:514,slack=https://hooks.slack.com/services/T/B/SECRET#min=medium,"+
+		"teams=https://x.logic.azure.com/workflows/SECRET,otlp=http://collector:4318#Authorization=Bearer%20tok", "t")
+	if err != nil || len(gotDests) != 4 {
+		t.Fatalf("5.6 destinations: %v %v", gotDests, err)
+	}
+	for _, d := range gotDests {
+		if strings.Contains(d.Name(), "SECRET") || strings.Contains(d.Name(), "tok") {
+			t.Errorf("name leaks a credential: %s", d.Name())
+		}
 	}
 
 	if got, err := ParseDestinations("  ", "t"); err != nil || len(got) != 0 {

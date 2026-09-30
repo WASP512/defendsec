@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"defendsec/internal/telemetry"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -162,6 +164,14 @@ func run(log *slog.Logger) error {
 	})
 
 	svc := control.New(bundle, secretValue, adminToken, *dataDir, store, commands, signer, log)
+	svc.RegisterMetrics(buildCommit)
+
+	// OpenTelemetry traces (roadmap 5.6): off unless an OTLP endpoint is set.
+	tracer, err := telemetry.FromEnv(log)
+	if err != nil {
+		return err
+	}
+	defer tracer.Shutdown(context.Background())
 	if viewer := strings.TrimSpace(os.Getenv("DEFENDSEC_VIEWER_TOKEN")); viewer != "" {
 		svc.SetViewerToken(viewer)
 		log.Info("viewer token enabled (GET-only admin API)")
@@ -297,6 +307,9 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/totp", svc.HandleTOTP)
 	adminMux.HandleFunc("/v1/crypto-posture", svc.HandleCryptoPosture)
 	adminMux.HandleFunc("/v1/retention", svc.HandleRetention)
+	// Prometheus (roadmap 5.6). On the loopback admin listener without a
+	// token, as node_exporter is; DEFENDSEC_METRICS_ADDR serves it elsewhere.
+	adminMux.HandleFunc("/metrics", control.HandleMetrics)
 	adminMux.HandleFunc("/v1/devices", svc.HandleDevices)
 	adminMux.HandleFunc("/v1/devices/summary", svc.HandleDevices)
 
@@ -495,7 +508,7 @@ func run(log *slog.Logger) error {
 
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
-		Handler:           adminMux,
+		Handler:           control.HTTPTracing(tracer, control.HTTPMetrics(adminMux)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	httpSrv := &http.Server{
@@ -579,7 +592,8 @@ func run(log *slog.Logger) error {
 
 	grpcSrv := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(grpcTLS)),
-		grpc.UnaryInterceptor(control.UnaryLogging(log)),
+		grpc.ChainUnaryInterceptor(control.UnaryMetrics, control.UnaryTracing(tracer), control.UnaryLogging(log)),
+		grpc.StreamInterceptor(control.StreamMetrics),
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 30 * time.Second, Timeout: 10 * time.Second}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 10 * time.Second, PermitWithoutStream: true}),
 	)
@@ -664,6 +678,24 @@ func run(log *slog.Logger) error {
 		go func() {
 			log.Warn("pprof listening", "addr", addr)
 			_ = (&http.Server{Addr: addr, Handler: pmux, ReadHeaderTimeout: 5 * time.Second}).ListenAndServe()
+		}()
+	}
+
+	if addr := strings.TrimSpace(os.Getenv("DEFENDSEC_METRICS_ADDR")); addr != "" {
+		token := strings.TrimSpace(os.Getenv("DEFENDSEC_METRICS_TOKEN"))
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return fmt.Errorf("DEFENDSEC_METRICS_ADDR: %w", err)
+		}
+		if ip := net.ParseIP(host); token == "" && (ip == nil || !ip.IsLoopback()) {
+			return fmt.Errorf("DEFENDSEC_METRICS_ADDR %q is not loopback; set DEFENDSEC_METRICS_TOKEN so scrapes are authenticated", addr)
+		}
+		msrv := &http.Server{Addr: addr, ReadHeaderTimeout: 5 * time.Second, Handler: control.MetricsHandler(token)}
+		go func() {
+			log.Info("metrics listening", "addr", addr, "token", token != "")
+			if err := msrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("metrics listener", "err", err)
+			}
 		}()
 	}
 
