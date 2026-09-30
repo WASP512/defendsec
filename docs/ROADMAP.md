@@ -1162,9 +1162,63 @@ complete supported service installer." Ship a real service, MSI packaging, and *
 telemetry as the eBPF analogue, plus BitLocker / Defender / firewall posture. Windows is where the
 endpoints are.
 
+*Delivered, and not yet run on a Windows machine.* See [WINDOWS.md](WINDOWS.md).
+
+- **Service.** `DefendSecAgent` runs as LocalSystem, restarts on failure, logs to a file under
+  ProgramData and to the Event Log, and keeps its state readable by SYSTEM and Administrators only.
+- **Installers.** An MSI built on Linux with `wixl`, which hides the enroll secret from installer
+  logs; the agent removes the secret from its own service configuration once enrolled. Also
+  `install-agent.ps1` / `uninstall-agent.ps1`, with the checksum verified and the console
+  certificate pinned.
+- **Posture, as a control-tagged SCA pack.** BitLocker (protection on, not merely encrypted),
+  Defender (antivirus, real-time, tamper protection, definition age), firewall on for every
+  profile, SMBv1 off, UAC on, and RDP off or requiring NLA.
+- **Inventory:** OS, memory, uptime, serial, model, installed programs, and pending updates from
+  the Windows Update Agent.
+- **Process telemetry.** Process-table sampling by default, with command lines. An ETW consumer is
+  opt-in (`DEFENDSEC_ETW=1`) until it has run on Windows hosts, and falls back to sampling. The
+  coverage view reports whichever sensor is actually running.
+
+What has been checked, and how:
+
+- The Win32 structure layouts are asserted against the SDK sizes.
+- The posture script was run under real PowerShell, on Linux.
+- The MSI tables were inspected with `msiinfo`.
+- Everything cross-compiles and vets for `GOOS=windows`.
+
+Two pre-existing defects surfaced along the way and were fixed. The agent did not compile for
+Windows at all. And installed agents on every platform had no SCA packs, so host-side
+configuration checks never ran outside a source checkout. Packs are now embedded in the binary.
+
+The server was also discarding every agent SCA result that was not `file_regex`, before alerting
+on it. That is fixed too.
+
+**Not done:** network isolation on Windows. The isolate command still says it is Linux-only.
+
 **5.2 — macOS.** EndpointSecurity framework for process and file events (requires an Apple
 developer account and entitlement — start the request early, it is slow), with FileVault, XProtect
 and firewall posture.
+
+*Delivered, except EndpointSecurity, which is waiting on Apple.* See [MACOS.md](MACOS.md).
+
+- **Service:** a launchd daemon, with install and uninstall scripts. `scripts/build-macos-pkg.sh`
+  builds a `.pkg` for MDM, on a Mac.
+- **Posture pack:**
+  - FileVault on (encryption in progress does not pass)
+  - application firewall and stealth mode
+  - SIP fully on (a custom configuration fails)
+  - Gatekeeper
+  - XProtect present, with security-data updates installing automatically
+  - automatic login off
+- **Inventory:** OS, memory, uptime, model, applications, and pending updates.
+- **Process sampling** from `kern.proc.all`, with command lines from `kern.procargs2`.
+- **`kill_process`** works on macOS, with system processes protected.
+
+**EndpointSecurity needs an entitlement only the project owner can request from Apple.** The
+steps, from the request through Full Disk Access and the cgo sensor, are written down in MACOS.md.
+Until it is granted, the coverage page states the sampler's limits.
+
+Not yet run on a Mac by DefendSec's tests: only the parsers and the cross-compile are verified.
 
 **5.3 — HTTPS by default.** Port 47261 shipping plain HTTP by default is a credibility problem for
 a security product, and the paper has to caveat it in four separate places. Generate a self-signed
