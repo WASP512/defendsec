@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net"
 	"os"
 	"os/exec"
@@ -277,10 +278,85 @@ func firewallOn() *bool {
 		return &v
 	}
 	if strings.Contains(fw, "not running") || code == 252 {
+		// firewalld is installed but stopped; nftables rules may still be
+		// loaded some other way, so fall through rather than answer "off".
+		if v, ok := nftFirewall(); ok {
+			return &v
+		}
 		v := false
 		return &v
 	}
+	// Neither ufw nor firewalld: Debian and minimal installs often manage
+	// nftables directly, or have no firewall at all.
+	if v, ok := nftFirewall(); ok {
+		return &v
+	}
 	return nil
+}
+
+func nftFirewall() (bool, bool) {
+	if _, err := exec.LookPath("nft"); err != nil {
+		return false, false
+	}
+	raw := run("nft", "-j", "list", "ruleset")
+	if raw == "" {
+		return false, false
+	}
+	return NftFirewallActive([]byte(raw))
+}
+
+// NftFirewallActive reports whether an nftables ruleset (`nft -j list
+// ruleset`) filters inbound traffic: an input-hook chain whose policy is
+// drop, or that contains a drop or reject rule. ok is false when the output
+// cannot be read. A ruleset with no such chain is a host with no inbound
+// firewall — true of many Docker hosts, whose chains only forward.
+func NftFirewallActive(raw []byte) (active, ok bool) {
+	var doc struct {
+		Nftables []map[string]json.RawMessage `json:"nftables"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil || doc.Nftables == nil {
+		return false, false
+	}
+	type chainKey struct{ family, table, name string }
+	inputChains := map[chainKey]bool{}
+	for _, item := range doc.Nftables {
+		c, ok := item["chain"]
+		if !ok {
+			continue
+		}
+		var ch struct {
+			Family, Table, Name, Hook, Policy string
+		}
+		if json.Unmarshal(c, &ch) != nil || ch.Hook != "input" {
+			continue
+		}
+		if ch.Policy == "drop" {
+			return true, true
+		}
+		inputChains[chainKey{ch.Family, ch.Table, ch.Name}] = true
+	}
+	for _, item := range doc.Nftables {
+		r, ok := item["rule"]
+		if !ok {
+			continue
+		}
+		var rule struct {
+			Family, Table, Chain string
+			Expr                 []map[string]json.RawMessage
+		}
+		if json.Unmarshal(r, &rule) != nil || !inputChains[chainKey{rule.Family, rule.Table, rule.Chain}] {
+			continue
+		}
+		for _, e := range rule.Expr {
+			if _, drop := e["drop"]; drop {
+				return true, true
+			}
+			if _, reject := e["reject"]; reject {
+				return true, true
+			}
+		}
+	}
+	return false, true
 }
 
 func ipAddresses() []string {

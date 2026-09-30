@@ -188,6 +188,17 @@ Keep `47262`/`47263` reachable by agents. Do not expose Postgres, port `47264`, 
 
 ---
 
+## Supported operating systems
+
+The **Supported OS** policy passes hosts on a release their vendor still patches: Ubuntu 22.04+,
+Debian 12+, Fedora 43+, RHEL 8+ (with Rocky, AlmaLinux and CentOS Stream), openSUSE Leap 16+ or
+Tumbleweed, and Windows build 20348+ (Server 2022; Windows 11 is 22000+). Any other system reads as
+*unknown*, not failing. Raise the minimums as releases reach end of life with
+`DEFENDSEC_SUPPORTED_OS` in `/etc/defendsec/console.env`, for example
+`fedora=44,rhel=9,windows=26100`.
+
+---
+
 ## Scale and the device store
 
 With Postgres configured (every packaged install), **Postgres is the primary

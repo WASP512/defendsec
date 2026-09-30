@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { distroOf, supportedOs } from "./supported-os.ts";
+import { distroOf, floorsFrom, supportedOs } from "./supported-os.ts";
 
 const linux = (osName: string, osVersion: string) => supportedOs({ platform: "linux", osName, osVersion });
 
@@ -39,4 +39,14 @@ test("Windows by build number", () => {
 test("distro names", () => {
   assert.equal(distroOf("AlmaLinux"), "rhel");
   assert.equal(distroOf("SUSE Linux Enterprise Server"), "opensuse");
+});
+
+test("minimums can be raised by configuration", () => {
+  const floors = floorsFrom("fedora=44, rhel=9, windows=26100, bogus=1, debian=x");
+  const f = (p: string, osName: string, osVersion: string) => supportedOs({ platform: p, osName, osVersion }, floors);
+  assert.equal(f("linux", "Fedora Linux", "43"), false);
+  assert.equal(f("linux", "Red Hat Enterprise Linux", "8.10"), false);
+  assert.equal(f("linux", "Debian GNU/Linux", "12"), true); // malformed override ignored
+  assert.equal(f("windows", "Windows Server 2022", "10.0.20348"), false);
+  assert.equal(f("windows", "Windows 11", "10.0.26100"), true);
 });

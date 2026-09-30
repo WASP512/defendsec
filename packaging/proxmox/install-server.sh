@@ -158,6 +158,7 @@ install_packages() {
       apt-get install -y --no-install-recommends \
         ca-certificates curl wget git jq make openssl xz-utils tar \
         iptables
+      apt-get install -y --no-install-recommends wixl || true   # builds the Windows MSI; optional
       if [[ "$POSTGRES_MODE" == "native" ]]; then
         apt-get install -y --no-install-recommends postgresql postgresql-contrib
       else
@@ -167,7 +168,25 @@ install_packages() {
       ;;
     fedora|rhel|centos|rocky|almalinux)
       dnf install -y ca-certificates curl wget git jq make openssl xz tar iptables-nft
+      # wixl builds the Windows MSI the server offers for download; optional
+      # (the MSI is also in every release).
+      dnf install -y msitools || true
       if [[ "$POSTGRES_MODE" == "native" ]]; then
+        # RHEL 8's default Postgres module is 10, end of life since 2022,
+        # and RHEL 9's is 13, end of life in 2025. Select a supported stream
+        # — but only on a fresh install: switching streams under an
+        # existing cluster would leave a data directory the new server
+        # cannot open.
+        if [[ "$OS_ID" != "fedora" ]] && ! rpm -q postgresql-server >/dev/null 2>&1 \
+          && dnf module list postgresql >/dev/null 2>&1; then
+          dnf -y module reset postgresql >/dev/null 2>&1 || true
+          for stream in 16 15; do
+            if dnf -y module enable "postgresql:${stream}" >/dev/null 2>&1; then
+              info "Using the postgresql:${stream} module stream"
+              break
+            fi
+          done
+        fi
         dnf install -y postgresql-server postgresql
       else
         dnf install -y docker
@@ -177,6 +196,7 @@ install_packages() {
     opensuse-leap|opensuse-tumbleweed|sles|sled)
       zypper --non-interactive --gpg-auto-import-keys refresh
       zypper --non-interactive install -y ca-certificates curl wget git jq make openssl xz tar iptables
+      zypper --non-interactive install -y msitools || true   # builds the Windows MSI; optional
       if [[ "$POSTGRES_MODE" == "native" ]]; then
         zypper --non-interactive install -y postgresql-server postgresql
       else
