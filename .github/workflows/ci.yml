@@ -124,7 +124,7 @@ jobs:
           terraform fmt -check -recursive
           terraform validate
           terraform test
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Ansible role
