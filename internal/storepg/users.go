@@ -367,6 +367,43 @@ var ErrAccountsExist = errors.New("an account already exists; first-run setup is
 // open the setup page at the same moment both succeed, and first-run setup is
 // exactly the moment somebody might be racing the owner for the fleet.
 func (s *Store) CreateFirstUser(ctx context.Context, id, username, displayName, password string) (identity.User, error) {
+	return s.CreateFirstUserWithInvite(ctx, id, username, displayName, password, "")
+}
+
+// ErrInviteInvalid is returned for a first-admin invite that is unknown,
+// expired or already used.
+var ErrInviteInvalid = errors.New("this setup link is invalid, expired or already used; run defendsec-apid bootstrap-admin on the server for a new one")
+
+// CreateSetupInvite stores a first-admin invite by its hash. Earlier unused
+// invites are revoked, so only the most recently printed link works.
+func (s *Store) CreateSetupInvite(ctx context.Context, tokenHash string, expires time.Time) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, `UPDATE setup_invites SET used_at = now() WHERE used_at IS NULL`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO setup_invites (token_hash, expires_at) VALUES ($1, $2)`, tokenHash, expires); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// SetupInviteValid reports whether an invite could be used now.
+func (s *Store) SetupInviteValid(ctx context.Context, tokenHash string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM setup_invites
+		WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now())`, tokenHash).Scan(&ok)
+	return ok, err
+}
+
+// CreateFirstUserWithInvite creates the first administrator. A non-empty
+// inviteHash must name a valid invite, which is consumed in the same
+// transaction: a failed creation leaves it usable, a successful one cannot
+// be replayed.
+func (s *Store) CreateFirstUserWithInvite(ctx context.Context, id, username, displayName, password, inviteHash string) (identity.User, error) {
 	username = identity.NormalizeUsername(username)
 	if err := identity.ValidUsername(username); err != nil {
 		return identity.User{}, err
@@ -394,6 +431,16 @@ func (s *Store) CreateFirstUser(ctx context.Context, id, username, displayName, 
 	}
 	if n > 0 {
 		return identity.User{}, ErrAccountsExist
+	}
+	if inviteHash != "" {
+		tag, err := tx.Exec(ctx, `UPDATE setup_invites SET used_at = now()
+			WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()`, inviteHash)
+		if err != nil {
+			return identity.User{}, err
+		}
+		if tag.RowsAffected() != 1 {
+			return identity.User{}, ErrInviteInvalid
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO users (id, username, display_name, role, password_hash)

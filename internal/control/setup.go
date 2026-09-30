@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"defendsec/internal/identity"
 	"defendsec/internal/storepg"
 )
 
@@ -68,11 +69,17 @@ type SetupStatus struct {
 	SetupOpen bool `json:"setupOpen"`
 	// SecondsRemaining is how long setup stays open, so the page can say so.
 	SecondsRemaining int    `json:"secondsRemaining,omitempty"`
-	Detail           string `json:"detail"`
+	// ViaInvite is true when setup is open because the request carried a
+	// valid first-admin invite from `defendsec-apid bootstrap-admin`.
+	ViaInvite bool `json:"viaInvite,omitempty"`
+	// InviteInvalid is true when an invite was presented and refused, so
+	// the page can say so rather than silently showing the closed state.
+	InviteInvalid bool   `json:"inviteInvalid,omitempty"`
+	Detail        string `json:"detail"`
 }
 
 // setupStatus reports the current first-run state.
-func (s *Server) setupStatus(ctx context.Context, now time.Time) (SetupStatus, error) {
+func (s *Server) setupStatus(ctx context.Context, now time.Time, invite string) (SetupStatus, error) {
 	if s.pg == nil {
 		return SetupStatus{
 			Detail: "No database is configured, so named accounts are unavailable. Sign in with the admin token.",
@@ -83,15 +90,26 @@ func (s *Server) setupStatus(ctx context.Context, now time.Time) (SetupStatus, e
 		return SetupStatus{}, err
 	}
 	st := SetupStatus{DatabaseConfigured: true, AccountsExist: n > 0}
+	inviteOK := false
+	if invite = strings.TrimSpace(invite); invite != "" && !st.AccountsExist {
+		ok, err := s.pg.SetupInviteValid(ctx, identity.HashSessionToken(invite))
+		if err != nil {
+			return SetupStatus{}, err
+		}
+		inviteOK, st.InviteInvalid = ok, !ok
+	}
 	switch {
 	case st.AccountsExist:
 		st.Detail = "Accounts exist. Sign in with yours."
+	case inviteOK:
+		st.SetupOpen, st.ViaInvite = true, true
+		st.Detail = "This setup link was issued on the server. Create the first administrator."
 	case !s.setupOpenUntil.IsZero() && now.Before(s.setupOpenUntil):
 		st.SetupOpen = true
 		st.SecondsRemaining = int(s.setupOpenUntil.Sub(now).Seconds())
 		st.Detail = "No accounts exist yet. Create the first administrator."
 	default:
-		st.Detail = "No accounts exist yet, and first-run setup has closed. Restart defendsec-apid to reopen it, or sign in with the admin token."
+		st.Detail = "No accounts exist yet, and first-run setup has closed. Run defendsec-apid bootstrap-admin on the server for a one-time setup link."
 	}
 	return st, nil
 }
@@ -105,7 +123,7 @@ func (s *Server) HandleSetup(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	switch r.Method {
 	case http.MethodGet:
-		st, err := s.setupStatus(r.Context(), now)
+		st, err := s.setupStatus(r.Context(), now, r.URL.Query().Get("invite"))
 		if err != nil {
 			s.log.Warn("setup status", "err", err)
 			http.Error(w, "could not read setup status", http.StatusInternalServerError)
@@ -123,19 +141,6 @@ func (s *Server) HandleSetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createFirstAdmin(w http.ResponseWriter, r *http.Request, now time.Time) {
-	st, err := s.setupStatus(r.Context(), now)
-	if err != nil {
-		s.log.Warn("setup status", "err", err)
-		http.Error(w, "could not read setup status", http.StatusInternalServerError)
-		return
-	}
-	if !st.SetupOpen {
-		// Refused with the reason, so the console can tell the operator what
-		// to do rather than showing a bare failure.
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": st.Detail, "status": st})
-		return
-	}
-
 	var req struct {
 		Username    string `json:"username"`
 		DisplayName string `json:"displayName"`
@@ -145,9 +150,31 @@ func (s *Server) createFirstAdmin(w http.ResponseWriter, r *http.Request, now ti
 		// to this port — and recorded so the audit log says where the first
 		// administrator was created from.
 		ClientAddress string `json:"clientAddress"`
+		// Invite is a one-time link token from bootstrap-admin.
+		Invite string `json:"invite"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
+	}
+	st, err := s.setupStatus(r.Context(), now, req.Invite)
+	if err != nil {
+		s.log.Warn("setup status", "err", err)
+		http.Error(w, "could not read setup status", http.StatusInternalServerError)
+		return
+	}
+	if !st.SetupOpen {
+		// Refused with the reason, so the console can tell the operator what
+		// to do rather than showing a bare failure.
+		msg := st.Detail
+		if st.InviteInvalid {
+			msg = storepg.ErrInviteInvalid.Error()
+		}
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": msg, "status": st})
+		return
+	}
+	inviteHash := ""
+	if st.ViaInvite {
+		inviteHash = identity.HashSessionToken(strings.TrimSpace(req.Invite))
 	}
 
 	id, err := newDeviceID()
@@ -155,8 +182,12 @@ func (s *Server) createFirstAdmin(w http.ResponseWriter, r *http.Request, now ti
 		http.Error(w, "id", http.StatusInternalServerError)
 		return
 	}
-	u, err := s.pg.CreateFirstUser(r.Context(), id,
-		req.Username, strings.TrimSpace(req.DisplayName), req.Password)
+	u, err := s.pg.CreateFirstUserWithInvite(r.Context(), id,
+		req.Username, strings.TrimSpace(req.DisplayName), req.Password, inviteHash)
+	if errors.Is(err, storepg.ErrInviteInvalid) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": err.Error()})
+		return
+	}
 	if errors.Is(err, storepg.ErrAccountsExist) {
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error": "An account was created a moment ago, so setup has closed. Sign in with that account.",
@@ -184,13 +215,47 @@ func (s *Server) createFirstAdmin(w http.ResponseWriter, r *http.Request, now ti
 
 	// Its own audit action, so "how did the first administrator come to
 	// exist" is answerable by filtering the ledger.
+	via := "first-run setup"
+	if st.ViaInvite {
+		via = "one-time setup link from bootstrap-admin"
+	}
 	s.audit("user:"+u.Username, "first_admin_created", "", map[string]any{
-		"via":           "first-run setup",
+		"via":           via,
 		"clientAddress": strings.TrimSpace(req.ClientAddress),
-		"detail": fmt.Sprintf(
-			"Created through first-run setup, open until %s. No shared token was used.",
-			s.setupOpenUntil.Format(time.RFC3339)),
+		"detail": setupAuditDetail(st.ViaInvite, s.setupOpenUntil),
 	})
 	u.PasswordHash = ""
 	writeJSON(w, http.StatusCreated, map[string]any{"user": u, "token": token})
+}
+
+func setupAuditDetail(viaInvite bool, openUntil time.Time) string {
+	if viaInvite {
+		return "Created with a one-time setup link printed on the server by bootstrap-admin. No shared token was used."
+	}
+	return fmt.Sprintf("Created through first-run setup, open until %s. No shared token was used.", openUntil.Format(time.RFC3339))
+}
+
+// InviteTTL is how long a bootstrap-admin link stays valid.
+const InviteTTL = time.Hour
+
+// IssueSetupInvite creates a one-time first-admin invite and returns the
+// token to put in the link. Refused once an account exists: the invite's
+// only purpose is to create the first one.
+func IssueSetupInvite(ctx context.Context, pg *storepg.Store, now time.Time) (string, time.Time, error) {
+	n, err := pg.CountUsers(ctx)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if n > 0 {
+		return "", time.Time{}, storepg.ErrAccountsExist
+	}
+	token, hash, err := identity.NewSessionToken()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	expires := now.Add(InviteTTL)
+	if err := pg.CreateSetupInvite(ctx, hash, expires); err != nil {
+		return "", time.Time{}, err
+	}
+	return token, expires, nil
 }

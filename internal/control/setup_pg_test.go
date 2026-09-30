@@ -234,3 +234,57 @@ func TestTheTokenStillCreatesTheFirstAccountWhenSetupIsClosed(t *testing.T) {
 		t.Fatalf("token bootstrap: %d %s", rec.Code, rec.Body)
 	}
 }
+
+// bootstrap-admin: a one-time link issued on the server opens setup even
+// after the window has closed, works once, and only the newest works.
+func TestSetupInviteFromTheServer(t *testing.T) {
+	s := setupServer(t)
+	ctx := context.Background()
+	s.OpenSetupWindow(time.Now().UTC(), 0) // closed
+
+	if st := getSetup(t, s); st.SetupOpen {
+		t.Fatal("setup must be closed without an invite")
+	}
+	first, _, err := IssueSetupInvite(ctx, s.pg, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := IssueSetupInvite(ctx, s.pg, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status := func(invite string) SetupStatus {
+		rec := httptest.NewRecorder()
+		s.HandleSetup(rec, httptest.NewRequest(http.MethodGet, "/v1/setup?invite="+invite, nil))
+		var st SetupStatus
+		_ = json.Unmarshal(rec.Body.Bytes(), &st)
+		return st
+	}
+	if st := status(first); st.SetupOpen || !st.InviteInvalid {
+		t.Fatalf("a replaced invite must not open setup: %+v", st)
+	}
+	if st := status("forged"); st.SetupOpen || !st.InviteInvalid {
+		t.Fatalf("a forged invite must not open setup: %+v", st)
+	}
+	if st := status(second); !st.SetupOpen || !st.ViaInvite {
+		t.Fatalf("the current invite must open setup: %+v", st)
+	}
+
+	// A failed creation (bad password) must not spend the invite.
+	bad := `{"username":"mason","password":"short","invite":"` + second + `"}`
+	if rec := postSetup(t, s, bad); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad password: %d %s", rec.Code, rec.Body)
+	}
+	good := `{"username":"mason","password":"a sufficiently long password","invite":"` + second + `"}`
+	if rec := postSetup(t, s, good); rec.Code != http.StatusCreated {
+		t.Fatalf("invite setup: %d %s", rec.Code, rec.Body)
+	}
+	// Used once; and accounts now exist, so no new invite can be issued.
+	if st := status(second); st.SetupOpen {
+		t.Fatal("setup reopened after the first administrator exists")
+	}
+	if _, _, err := IssueSetupInvite(ctx, s.pg, time.Now()); err == nil {
+		t.Fatal("bootstrap-admin must refuse once an account exists")
+	}
+}

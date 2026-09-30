@@ -140,13 +140,19 @@ bash install-server.sh --help
    characters, and you are signed in as the first administrator. No token is involved.
 3. Setup is open for **30 minutes after the control plane starts**, and only while no account
    exists. That limit is deliberate: an open "create the first admin" form would otherwise hand
-   your fleet to whoever reached it first. If you missed it, restart the control plane — which
-   needs access to the server, the proof of ownership the form cannot ask for — and reload:
+   your fleet to whoever reached it first. If you missed it, the login page says so and shows
+   the way back in: run this **on the server** — access to the server is the proof of ownership
+   the web form cannot ask for — and open the link it prints:
 
    ```bash
-   pct exec 200 -- systemctl restart defendsec-apid   # Proxmox (replace 200 with your CTID)
-   sudo systemctl restart defendsec-apid              # any other VM
+   pct exec 200 -- defendsec-apid bootstrap-admin   # Proxmox (replace 200 with your CTID)
+   sudo defendsec-apid bootstrap-admin              # any other VM
    ```
+
+   The link works once, expires after an hour, and running the command again replaces it. It
+   reads the database and console addresses from `/etc/defendsec/`, needs no restart, and is
+   refused once any account exists. The audit log records which way the first administrator was
+   created.
 
    The admin token still works as a fallback, under **Sign in with the admin token instead**:
 

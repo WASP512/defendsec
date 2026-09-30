@@ -77,6 +77,13 @@ func requireLoopbackAdminAddr(addr string) error {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "bootstrap-admin" {
+		if err := runBootstrapAdmin(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "bootstrap-admin:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(log); err != nil {
 		log.Error("defendsec-apid", "err", err)
