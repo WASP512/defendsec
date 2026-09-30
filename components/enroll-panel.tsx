@@ -6,6 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Check, Copy, Terminal } from "lucide-react";
+import {
+  downloadBaseFor,
+  installCommand as buildInstallCommand,
+  msiCommand,
+} from "@/lib/agent-commands";
 
 export function EnrollPanel({
   enrollSecret,
@@ -16,48 +21,22 @@ export function EnrollPanel({
 }) {
   const [secret, setSecret] = useState(enrollSecret);
   const [snippetTab, setSnippetTab] = useState("install");
-  const [copied, setCopied] = useState<
-    "secret" | "install" | "go" | "py" | null
-  >(null);
+  type CopyKind = "secret" | "install" | "windows" | "msi" | "macos" | "go" | "py";
+  const [copied, setCopied] = useState<CopyKind | null>(null);
   const [rotateError, setRotateError] = useState("");
   const [rotating, setRotating] = useState(false);
 
-  const host = (() => {
-    try {
-      return new URL(serverUrl).hostname || "127.0.0.1";
-    } catch {
-      return "127.0.0.1";
-    }
-  })();
-
-  const downloadBase = (() => {
-    try {
-      const u = new URL(serverUrl);
-      return `${u.protocol}//${u.host}/downloads`;
-    } catch {
-      return `https://${host}:47261/downloads`;
-    }
-  })();
+  const { host, downloadBase } = downloadBaseFor(serverUrl);
 
   // The console serves HTTPS, with a self-signed certificate unless the
-  // operator supplied one. curl cannot verify that by default, so the command
-  // has to say how to — and what skipping it costs. Emitting a bare command
-  // that fails, or one that silently skips verification, both end with the
-  // operator pasting --insecure and never thinking about it again.
+  // operator supplied one. The commands verify it rather than skip it; see
+  // lib/agent-commands.ts.
   const needsCA = downloadBase.startsWith("https://");
-  const installCommand = [
-    `echo "Downloading DefendSec agent installer…" && \\`,
-    `  curl -fL --progress-bar ${needsCA ? "--cacert /tmp/defendsec-console.crt " : ""}"${downloadBase}/install-agent.sh" -o /tmp/install-agent.sh && \\`,
-    `  sudo bash /tmp/install-agent.sh \\`,
-    `  --server-http https://${host}:47262 \\`,
-    `  --server-grpc ${host}:47263 \\`,
-    `  --tls-server-name ${host} \\`,
-    `  --enroll-secret ${secret} \\`,
-    needsCA ? `  --download-ca /tmp/defendsec-console.crt \\` : null,
-    `  --download-base "${downloadBase}"`,
-  ]
-    .filter((line): line is string => line !== null)
-    .join("\n");
+  const cmdOpts = { host, downloadBase, secret };
+  const installCommand = buildInstallCommand("linux", cmdOpts);
+  const windowsCommand = buildInstallCommand("windows", cmdOpts);
+  const macosCommand = buildInstallCommand("macos", cmdOpts);
+  const msi = msiCommand(cmdOpts);
 
   const goCommand = [
     `./bin/defendsec-agentd \\`,
@@ -92,7 +71,7 @@ export function EnrollPanel({
     }
   }
 
-  async function copy(kind: "secret" | "install" | "go" | "py", value: string) {
+  async function copy(kind: CopyKind, value: string) {
     await navigator.clipboard.writeText(value);
     setCopied(kind);
     setTimeout(() => setCopied(null), 1500);
@@ -145,7 +124,10 @@ export function EnrollPanel({
         >
           <div className="flex flex-col gap-3 border-b bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
             <TabsList>
-              <TabsTrigger value="install">Agent install</TabsTrigger>
+              <TabsTrigger value="install">Linux</TabsTrigger>
+              <TabsTrigger value="windows">Windows</TabsTrigger>
+              <TabsTrigger value="msi">Windows MSI</TabsTrigger>
+              <TabsTrigger value="macos">macOS</TabsTrigger>
               <TabsTrigger value="go">Go binary</TabsTrigger>
               <TabsTrigger value="python">Python</TabsTrigger>
             </TabsList>
@@ -162,6 +144,31 @@ export function EnrollPanel({
               description: needsCA
                 ? "Recommended. Copy /var/lib/defendsec/tls/console.crt from the server to /tmp/defendsec-console.crt on this host first — it verifies the download. Without it the binary and its checksum both arrive over an unverified connection, so the checksum proves nothing against an attacker who can intercept it."
                 : "Recommended. Downloads the agent, installs it, and enables systemd.",
+            },
+            {
+              value: "windows",
+              kind: "windows" as const,
+              command: windowsCommand,
+              description:
+                "Installs the DefendSecAgent service. Run in Windows PowerShell as administrator" +
+                (needsCA
+                  ? "; copy /var/lib/defendsec/tls/console.crt from the server first, which the command pins for the download."
+                  : "."),
+            },
+            {
+              value: "msi",
+              kind: "msi" as const,
+              command: msi,
+              description:
+                "For Intune, SCCM or Group Policy: download defendsec-agent-windows-amd64.msi from the Downloads URL and deploy it with these properties. The agent removes the enroll secret from its service configuration once enrolled.",
+            },
+            {
+              value: "macos",
+              kind: "macos" as const,
+              command: macosCommand,
+              description:
+                "Installs a launchd daemon. Process visibility on macOS samples the process table; full execution visibility needs EndpointSecurity (see docs/MACOS.md)." +
+                (needsCA ? " Copy console.crt from the server to /tmp/defendsec-console.crt first." : ""),
             },
             {
               value: "go",

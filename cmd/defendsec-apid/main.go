@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"defendsec/internal/telemetry"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -34,6 +37,7 @@ import (
 	"defendsec/internal/secret"
 	"defendsec/internal/sigma"
 	"defendsec/internal/sign"
+	"defendsec/internal/sso"
 	"defendsec/internal/storepg"
 )
 
@@ -42,6 +46,16 @@ import (
 // so exposing it beyond localhost turns a leaked/guessed admin token into
 // full remote control. Set DEFENDSEC_ALLOW_NONLOOPBACK_ADMIN=1 to override
 // when the operator has their own network isolation in front of it.
+// buildCommit is the source commit this binary was built from, stamped by
+// scripts/build-release.sh (roadmap 5.7).
+//
+// Stamped explicitly rather than left to Go's automatic VCS stamping, which
+// is switched off in release builds: automatic stamping makes the binary
+// depend on a .git directory being present, so a verifier rebuilding from a
+// source tarball gets a different hash than the release. An explicit value is
+// a build input, and reproducing the release means passing the same one.
+var buildCommit = "unknown"
+
 func requireLoopbackAdminAddr(addr string) error {
 	if strings.TrimSpace(os.Getenv("DEFENDSEC_ALLOW_NONLOOPBACK_ADMIN")) == "1" {
 		return nil
@@ -63,6 +77,13 @@ func requireLoopbackAdminAddr(addr string) error {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "bootstrap-admin" {
+		if err := runBootstrapAdmin(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "bootstrap-admin:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(log); err != nil {
 		log.Error("defendsec-apid", "err", err)
@@ -71,6 +92,7 @@ func main() {
 }
 
 func run(log *slog.Logger) error {
+	showVersion := flag.Bool("version", false, "print the build commit and exit")
 	dataDir := flag.String("data-dir", "data", "directory for PKI and presence files")
 	httpAddr := flag.String("http-addr", "0.0.0.0:47262", "HTTPS enroll/health listen address")
 	grpcAddr := flag.String("grpc-addr", "0.0.0.0:47263", "mTLS gRPC listen address")
@@ -80,6 +102,11 @@ func run(log *slog.Logger) error {
 	advertise := flag.String("tls-hostname", strings.TrimSpace(os.Getenv("DEFENDSEC_TLS_HOSTNAME")), "extra hostname/IP SAN for the server certificate (or DEFENDSEC_TLS_HOSTNAME)")
 	dbURL := flag.String("db-url", "", "Postgres URL (or DATABASE_URL / DEFENDSEC_DATABASE_URL)")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(buildCommit)
+		return nil
+	}
 
 	if err := requireLoopbackAdminAddr(*adminAddr); err != nil {
 		return err
@@ -116,6 +143,14 @@ func run(log *slog.Logger) error {
 	}
 
 	store := presence.New(filepath.Join(*dataDir, "defendsec-agents.json"))
+	// Cancelled on shutdown so the export's final flush runs.
+	exportCtx, stopExport := context.WithCancel(context.Background())
+	defer func() {
+		stopExport()
+		if err := store.Flush(); err != nil {
+			log.Error("final export of defendsec-agents.json", "err", err)
+		}
+	}()
 	commands := cmdlog.New(filepath.Join(*dataDir, "commands.json"))
 	// Privileged-action history is kept by age rather than by count
 	// (roadmap 5.5). The default is the CJIS minimum of one year.
@@ -136,6 +171,14 @@ func run(log *slog.Logger) error {
 	})
 
 	svc := control.New(bundle, secretValue, adminToken, *dataDir, store, commands, signer, log)
+	svc.RegisterMetrics(buildCommit)
+
+	// OpenTelemetry traces (roadmap 5.6): off unless an OTLP endpoint is set.
+	tracer, err := telemetry.FromEnv(log)
+	if err != nil {
+		return err
+	}
+	defer tracer.Shutdown(context.Background())
 	if viewer := strings.TrimSpace(os.Getenv("DEFENDSEC_VIEWER_TOKEN")); viewer != "" {
 		svc.SetViewerToken(viewer)
 		log.Info("viewer token enabled (GET-only admin API)")
@@ -156,6 +199,23 @@ func run(log *slog.Logger) error {
 		pg = storepg.New(pool)
 		svc.SetPostgres(pg)
 		log.Info("postgres enabled")
+
+		// Postgres is the primary device store (roadmap 5.5): apid's memory
+		// is seeded from it, and defendsec-agents.json becomes an export
+		// written at most every 30 seconds instead of on every heartbeat.
+		seedCtx, seedCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		devices, err := pg.LoadDevices(seedCtx)
+		seedCancel()
+		if err != nil {
+			return fmt.Errorf("load devices from postgres: %w", err)
+		}
+		if err := store.Seed(devices); err != nil {
+			return fmt.Errorf("seed device state: %w", err)
+		}
+		store.ExportEvery(exportCtx, 30*time.Second, func(err error) {
+			log.Error("export defendsec-agents.json", "err", err)
+		})
+		log.Info("device state loaded from postgres", "devices", len(devices))
 		// One year, the CJIS Policy Area 4 minimum, rather than the 90 days
 		// this used to default to (roadmap 5.5). DefendSec's compliance view
 		// claims to evidence audit retention; a default below the minimum of
@@ -240,6 +300,13 @@ func run(log *slog.Logger) error {
 	// Identity (roadmap 1.0). Login and session are unauthenticated by
 	// necessity; everything else resolves the caller's own session token.
 	adminMux.HandleFunc("/v1/login", svc.HandleLogin)
+	// First-run setup: create the first administrator without the shared
+	// token, while no account exists and only for a window after start.
+	adminMux.HandleFunc("/v1/setup", svc.HandleSetup)
+	// Single sign-on (roadmap 5.4).
+	adminMux.HandleFunc("/v1/sso", svc.HandleSSO)
+	adminMux.HandleFunc("/v1/sso/start", svc.HandleSSO)
+	adminMux.HandleFunc("/v1/sso/finish", svc.HandleSSO)
 	adminMux.HandleFunc("/v1/logout", svc.HandleLogout)
 	adminMux.HandleFunc("/v1/session", svc.HandleSession)
 	adminMux.HandleFunc("/v1/users", svc.HandleUsers)
@@ -247,6 +314,11 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/totp", svc.HandleTOTP)
 	adminMux.HandleFunc("/v1/crypto-posture", svc.HandleCryptoPosture)
 	adminMux.HandleFunc("/v1/retention", svc.HandleRetention)
+	// Prometheus (roadmap 5.6). On the loopback admin listener without a
+	// token, as node_exporter is; DEFENDSEC_METRICS_ADDR serves it elsewhere.
+	adminMux.HandleFunc("/metrics", control.HandleMetrics)
+	adminMux.HandleFunc("/v1/devices", svc.HandleDevices)
+	adminMux.HandleFunc("/v1/devices/summary", svc.HandleDevices)
 
 	// Compliance (roadmap 1.7).
 	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
@@ -382,9 +454,68 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/policy/host-classes", svc.HandleHostClasses)
 	adminMux.HandleFunc("/v1/playbooks", svc.HandlePlaybooks)
 
+	// First-run setup window. Restarting defendsec-apid reopens it while no
+	// account exists, which is the point: restarting requires access to the
+	// server, and that is the proof of ownership an open form cannot ask for.
+	setupWindow := control.DefaultSetupWindow
+	if raw := strings.TrimSpace(os.Getenv("DEFENDSEC_SETUP_WINDOW")); raw != "" {
+		switch strings.ToLower(raw) {
+		case "0", "off", "false", "no":
+			setupWindow = 0
+		default:
+			d, err := time.ParseDuration(raw)
+			if err != nil || d < 0 {
+				// Refused rather than defaulted: a typo here would silently
+				// leave setup open for thirty minutes when the operator
+				// meant to close it.
+				return fmt.Errorf("DEFENDSEC_SETUP_WINDOW=%q is not a duration such as 30m, or off", raw)
+			}
+			setupWindow = d
+		}
+	}
+	svc.OpenSetupWindow(time.Now().UTC(), setupWindow)
+
+	// Single sign-on (roadmap 5.4). Off unless an issuer is set. A partial
+	// or unsafe configuration refuses to start rather than half-working:
+	// an operator who configured SSO believes it is in force.
+	if issuer := strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_ISSUER")); issuer != "" {
+		split := func(v string) []string {
+			var out []string
+			for _, x := range strings.Split(v, ",") {
+				if x = strings.TrimSpace(x); x != "" {
+					out = append(out, x)
+				}
+			}
+			return out
+		}
+		prov, err := sso.New(sso.Config{
+			Issuer:       issuer,
+			ClientID:     strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_CLIENT_ID")),
+			ClientSecret: strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_CLIENT_SECRET")),
+			RedirectURL:  strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_REDIRECT_URL")),
+			GroupsClaim:  strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_GROUPS_CLAIM")),
+			AdminGroups:  split(os.Getenv("DEFENDSEC_SSO_ADMIN_GROUPS")),
+			ViewerGroups: split(os.Getenv("DEFENDSEC_SSO_VIEWER_GROUPS")),
+			DisplayName:  strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_NAME")),
+		})
+		if err != nil {
+			return fmt.Errorf("single sign-on: %w", err)
+		}
+		if pg == nil {
+			return fmt.Errorf("single sign-on is configured but no database is; SSO accounts are stored in Postgres")
+		}
+		svc.SetSSO(prov)
+		log.Info("single sign-on enabled", "issuer", issuer)
+	}
+	if setupWindow > 0 {
+		log.Info("first-run setup open while no accounts exist",
+			"window", setupWindow.String(),
+			"detail", "open the console to create the first administrator; restart defendsec-apid to reopen it")
+	}
+
 	adminSrv := &http.Server{
 		Addr:              *adminAddr,
-		Handler:           adminMux,
+		Handler:           control.HTTPTracing(tracer, control.HTTPMetrics(adminMux)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	httpSrv := &http.Server{
@@ -468,7 +599,8 @@ func run(log *slog.Logger) error {
 
 	grpcSrv := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(grpcTLS)),
-		grpc.UnaryInterceptor(control.UnaryLogging(log)),
+		grpc.ChainUnaryInterceptor(control.UnaryMetrics, control.UnaryTracing(tracer), control.UnaryLogging(log)),
+		grpc.StreamInterceptor(control.StreamMetrics),
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 30 * time.Second, Timeout: 10 * time.Second}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 10 * time.Second, PermitWithoutStream: true}),
 	)
@@ -535,6 +667,42 @@ func run(log *slog.Logger) error {
 		go func() {
 			log.Info("mcp listening", "addr", mcpSrv.Addr)
 			errCh <- mcpSrv.ListenAndServe()
+		}()
+	}
+
+	// Profiling, for diagnosing load (roadmap 5.5). Off unless set, and
+	// refused on anything but a loopback address: profiles expose memory
+	// contents and internal state.
+	if addr := strings.TrimSpace(os.Getenv("DEFENDSEC_PPROF_ADDR")); addr != "" {
+		host, _, err := net.SplitHostPort(addr)
+		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
+			return fmt.Errorf("DEFENDSEC_PPROF_ADDR must be a loopback host:port, got %q", addr)
+		}
+		pmux := http.NewServeMux()
+		pmux.HandleFunc("/debug/pprof/", pprof.Index)
+		pmux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		pmux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		go func() {
+			log.Warn("pprof listening", "addr", addr)
+			_ = (&http.Server{Addr: addr, Handler: pmux, ReadHeaderTimeout: 5 * time.Second}).ListenAndServe()
+		}()
+	}
+
+	if addr := strings.TrimSpace(os.Getenv("DEFENDSEC_METRICS_ADDR")); addr != "" {
+		token := strings.TrimSpace(os.Getenv("DEFENDSEC_METRICS_TOKEN"))
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return fmt.Errorf("DEFENDSEC_METRICS_ADDR: %w", err)
+		}
+		if ip := net.ParseIP(host); token == "" && (ip == nil || !ip.IsLoopback()) {
+			return fmt.Errorf("DEFENDSEC_METRICS_ADDR %q is not loopback; set DEFENDSEC_METRICS_TOKEN so scrapes are authenticated", addr)
+		}
+		msrv := &http.Server{Addr: addr, ReadHeaderTimeout: 5 * time.Second, Handler: control.MetricsHandler(token)}
+		go func() {
+			log.Info("metrics listening", "addr", addr, "token", token != "")
+			if err := msrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("metrics listener", "err", err)
+			}
 		}()
 	}
 

@@ -1,0 +1,20 @@
+---
+# DefendSec agent role (roadmap 5.6). Required: defendsec_agent_server and,
+# for state=present, defendsec_agent_enroll_secret (keep it in Ansible Vault).
+
+# Hostname or IP of the DefendSec server; must match its certificate.
+defendsec_agent_server: ""
+defendsec_agent_enroll_secret: ""
+defendsec_agent_http_port: 47262
+defendsec_agent_grpc_port: 47263
+# Where installers and binaries are downloaded from; defaults to the server.
+defendsec_agent_download_base: "https://{{ defendsec_agent_server }}:47261/downloads"
+# Path, on the Ansible controller, to the console certificate
+# (/var/lib/defendsec/tls/console.crt on the server). Required when the
+# console uses its self-signed certificate: downloads are verified, never
+# skipped.
+defendsec_agent_console_ca: ""
+# present or absent.
+defendsec_agent_state: present
+# With state=absent, also delete the agent's certificate and key.
+defendsec_agent_purge_data: false

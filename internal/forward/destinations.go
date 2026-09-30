@@ -33,6 +33,9 @@ type SyslogDestination struct {
 	address string
 	tag     string
 	tlsConf *tls.Config
+	// cef renders the message as ArcSight Common Event Format instead of
+	// JSON, for SIEMs that parse CEF natively (roadmap 5.6).
+	cef bool
 
 	mu   sync.Mutex
 	conn net.Conn
@@ -81,7 +84,22 @@ func hostOnly(hostport string) string {
 }
 
 // Name identifies the destination.
-func (d *SyslogDestination) Name() string { return "syslog:" + d.network + "://" + d.address }
+func (d *SyslogDestination) Name() string {
+	if d.cef {
+		return "cef:" + d.network + "://" + d.address
+	}
+	return "syslog:" + d.network + "://" + d.address
+}
+
+// NewCEF is a syslog destination whose messages are CEF.
+func NewCEF(raw, tag string) (*SyslogDestination, error) {
+	d, err := NewSyslog(raw, tag)
+	if err != nil {
+		return nil, err
+	}
+	d.cef = true
+	return d, nil
+}
 
 func (d *SyslogDestination) dial(ctx context.Context) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
@@ -151,6 +169,9 @@ func (d *SyslogDestination) format(r Record) string {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		encoded = []byte(`{"summary":"` + strings.ReplaceAll(r.Summary, `"`, `'`) + `"}`)
+	}
+	if d.cef {
+		encoded = []byte(CEF(r))
 	}
 
 	msg := fmt.Sprintf("<%d>1 %s %s %s - - - %s",
@@ -352,6 +373,26 @@ func ParseDestinations(raw, tag string) ([]Destination, error) {
 				return nil, err
 			}
 			out = append(out, d)
+		case "cef":
+			d, err := NewCEF(ref, tag)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, d)
+		case "slack", "teams":
+			target, opts, _ := strings.Cut(ref, "#")
+			d, err := NewChat(kind, target, opts)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, d)
+		case "otlp", "otel":
+			target, opts, _ := strings.Cut(ref, "#")
+			d, err := NewOTLPLogs(target, opts)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, d)
 		case "webhook":
 			target, token, _ := strings.Cut(ref, "#")
 			d, err := NewWebhook(target, token)
@@ -365,14 +406,8 @@ func ParseDestinations(raw, tag string) ([]Destination, error) {
 				return nil, err
 			}
 			out = append(out, d)
-		case "otlp", "otel":
-			// Named rather than silently ignored: an operator configuring
-			// OTLP should be told it is not implemented, not left wondering
-			// why nothing arrives.
-			return nil, fmt.Errorf(
-				"OpenTelemetry forwarding is not implemented yet; use syslog or webhook, both of which reach an OTel collector")
 		default:
-			return nil, fmt.Errorf("unknown forward target kind %q, want syslog, webhook or file", kind)
+			return nil, fmt.Errorf("unknown forward target kind %q, want syslog, cef, webhook, slack, teams, otlp or file", kind)
 		}
 	}
 	return out, nil

@@ -167,8 +167,25 @@ prepare_release() {
   done
   [[ "$(<"${work}/VERSION")" == "$version" ]] || die "VERSION asset does not match requested release"
   safe_extract_console "${work}/${console_name}" "${work}/console"
+  # Agent downloads for other platforms and the uninstallers. Optional, so
+  # updating to a release that predates them still works; verified whenever
+  # present, like everything else.
+  local optional
+  for optional in "${OPTIONAL_DOWNLOADS[@]}"; do
+    url="$(asset_url "${work}/release.json" "$optional")" || continue
+    download "$url" "${work}/${optional}"
+    verify_file "${work}/${sums_name}" "$optional" "${work}/${optional}"
+  done
   printf '%s\n%s\n' "$version" "$apid_name"
 }
+
+OPTIONAL_DOWNLOADS=(
+  defendsec-agentd-windows-amd64.exe defendsec-agentd-windows-arm64.exe
+  defendsec-agentd-darwin-amd64 defendsec-agentd-darwin-arm64
+  defendsec-agent-windows-amd64.msi
+  uninstall-agent.sh install-agent.ps1 uninstall-agent.ps1
+  install-agent-macos.sh uninstall-agent-macos.sh
+)
 
 apply_release() {
   [[ "$(id -u)" -eq 0 ]] || die "server updates must run as root"
@@ -210,9 +227,13 @@ apply_release() {
   install -m 0755 "${work}/defendsec-agentd-linux-amd64" "${DATA_DIR}/downloads/"
   install -m 0755 "${work}/defendsec-agentd-linux-arm64" "${DATA_DIR}/downloads/"
   install -m 0644 "${work}/install-agent.sh" "${DATA_DIR}/downloads/"
+  local optional
+  for optional in "${OPTIONAL_DOWNLOADS[@]}"; do
+    [[ -f "${work}/${optional}" ]] && install -m 0644 "${work}/${optional}" "${DATA_DIR}/downloads/"
+  done
   (
     cd "${DATA_DIR}/downloads"
-    sha256sum defendsec-agentd-linux-amd64 defendsec-agentd-linux-arm64 install-agent.sh >SHA256SUMS
+    sha256sum defendsec-agent* install-agent* uninstall-agent* >SHA256SUMS
   )
   chown -R defendsec:defendsec "${DATA_DIR}/downloads"
   printf '%s\n' "$version" >"${INSTALL_ROOT}/VERSION"

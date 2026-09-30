@@ -1,6 +1,7 @@
 package presence
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -65,6 +66,10 @@ type ScaResult struct {
 	Severity string `json:"severity"`
 	Pass     bool   `json:"pass"`
 	Detail   string `json:"detail"`
+	// Controls are the framework controls the check names. Carried with the
+	// result so the alert raised from it is tagged with them rather than
+	// only with the generic SCA signal.
+	Controls []string `json:"controls,omitempty"`
 }
 
 type Alert struct {
@@ -125,9 +130,52 @@ type Device struct {
 	ScaResults        []ScaResult `json:"scaResults,omitempty"`
 }
 
+// File is the device, FIM-event and alert state apid holds for mTLS agents.
+//
+// # Memory first, disk as export (roadmap 5.5)
+//
+// The state is read from disk once and then held in memory. Before this,
+// every heartbeat read, parsed and rewrote the whole file: at 10,000 hosts
+// heartbeating every 20 seconds that is 500 full rewrites of a file tens of
+// megabytes long per second, and the fleet size was bounded by how fast one
+// JSON document could be serialised.
+//
+// Without Postgres, writes are still synchronous — the file is the only
+// durable copy, and a crash must not lose an acknowledged change. With
+// Postgres, the database is the durable copy (every change is written there
+// by the control server), the file is seeded from it at start, and the JSON
+// becomes an export written at most every ExportEvery.
+// maxFileAlerts bounds the alerts held in the file. With Postgres
+// configured, alerts are also written there without this cap.
+const maxFileAlerts = 5000
+
 type File struct {
 	path string
 	mu   sync.Mutex
+
+	cache       *snapshot
+	exportEvery time.Duration
+	dirty       bool
+	flushMu     sync.Mutex // one export at a time
+	// index maps a device id to its position in the cached slice. It is a
+	// hint, verified on use and rebuilt when stale, so no mutation can make
+	// it return the wrong device.
+	index map[string]int
+}
+
+// deviceIndex finds a device's position, or -1. Caller holds f.mu.
+func (f *File) deviceIndex(devs []Device, id string) int {
+	if i, ok := f.index[id]; ok && i < len(devs) && devs[i].ID == id {
+		return i
+	}
+	f.index = make(map[string]int, len(devs))
+	for i, d := range devs {
+		f.index[d.ID] = i
+	}
+	if i, ok := f.index[id]; ok {
+		return i
+	}
+	return -1
 }
 
 type snapshot struct {
@@ -148,16 +196,13 @@ func (f *File) Upsert(dev Device) error {
 	if err != nil {
 		return err
 	}
-	found := false
-	for i, existing := range doc.Devices {
-		if existing.ID == dev.ID {
-			doc.Devices[i] = mergeHeartbeat(existing, dev)
-			found = true
-			break
-		}
-	}
-	if !found {
+	if i := f.deviceIndex(doc.Devices, dev.ID); i >= 0 {
+		doc.Devices[i] = mergeHeartbeat(doc.Devices[i], dev)
+	} else {
 		doc.Devices = append(doc.Devices, dev)
+		if f.index != nil {
+			f.index[dev.ID] = len(doc.Devices) - 1
+		}
 	}
 	doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	return f.write(doc)
@@ -209,14 +254,10 @@ func (f *File) ApplyInventory(dev Device) ([]FimEvent, error) {
 	if err != nil {
 		return nil, err
 	}
-	idx := -1
+	idx := f.deviceIndex(doc.Devices, dev.ID)
 	var old Device
-	for i, existing := range doc.Devices {
-		if existing.ID == dev.ID {
-			idx = i
-			old = existing
-			break
-		}
+	if idx >= 0 {
+		old = doc.Devices[idx]
 	}
 	merged := mergeHeartbeat(old, dev)
 	merged.ID = dev.ID
@@ -321,10 +362,8 @@ func (f *File) Get(id string) (Device, bool) {
 	if err != nil {
 		return Device{}, false
 	}
-	for _, existing := range doc.Devices {
-		if existing.ID == id {
-			return existing, true
-		}
+	if i := f.deviceIndex(doc.Devices, id); i >= 0 {
+		return doc.Devices[i], true
 	}
 	return Device{}, false
 }
@@ -413,9 +452,14 @@ func (f *File) InsertAlert(alert Alert) error {
 	if alert.Status == "" {
 		alert.Status = "open"
 	}
-	doc.Alerts = append([]Alert{alert}, doc.Alerts...)
-	if len(doc.Alerts) > 5000 {
-		doc.Alerts = doc.Alerts[:5000]
+	// Appended, oldest first. Prepending copied every alert on every insert,
+	// and at fleet scale that copying was most of apid's CPU (measured by
+	// the 5.5 load test).
+	doc.Alerts = append(doc.Alerts, alert)
+	// Trimmed in batches, so reaching the cap does not reintroduce a full
+	// copy on every insert.
+	if n := len(doc.Alerts); n > maxFileAlerts+maxFileAlerts/10 {
+		doc.Alerts = append([]Alert(nil), doc.Alerts[n-maxFileAlerts:]...)
 	}
 	doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	return f.write(doc)
@@ -432,7 +476,8 @@ func (f *File) ListAlerts(status, kind, deviceID string, limit int) []Alert {
 		limit = 200
 	}
 	var out []Alert
-	for _, a := range doc.Alerts {
+	for i := len(doc.Alerts) - 1; i >= 0; i-- { // newest first
+		a := doc.Alerts[i]
 		if status != "" && a.Status != status {
 			continue
 		}
@@ -539,6 +584,18 @@ func newID() string {
 }
 
 func (f *File) read() (snapshot, error) {
+	if f.cache != nil {
+		return *f.cache, nil
+	}
+	doc, err := f.readDisk()
+	if err != nil {
+		return doc, err
+	}
+	f.cache = &doc
+	return doc, nil
+}
+
+func (f *File) readDisk() (snapshot, error) {
 	raw, err := os.ReadFile(f.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -559,10 +616,104 @@ func (f *File) read() (snapshot, error) {
 	if doc.Alerts == nil {
 		doc.Alerts = []Alert{}
 	}
+	// Files written before alerts were stored oldest-first hold them newest
+	// first. Stable, so equal timestamps keep their relative order.
+	sort.SliceStable(doc.Alerts, func(i, j int) bool { return doc.Alerts[i].CreatedAt < doc.Alerts[j].CreatedAt })
 	return doc, nil
 }
 
 func (f *File) write(doc snapshot) error {
+	f.cache = &doc
+	if f.exportEvery > 0 {
+		f.dirty = true
+		return nil
+	}
+	return f.writeDisk(doc)
+}
+
+// ExportEvery switches the file to export mode: changes are held in memory
+// and written at most once per interval, and once more when ctx ends. Only
+// for use when another store (Postgres) is the durable copy.
+func (f *File) ExportEvery(ctx context.Context, every time.Duration, onErr func(error)) {
+	f.mu.Lock()
+	f.exportEvery = every
+	f.mu.Unlock()
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				if err := f.Flush(); err != nil && onErr != nil {
+					onErr(err)
+				}
+				return
+			case <-t.C:
+				if err := f.Flush(); err != nil && onErr != nil {
+					onErr(err)
+				}
+			}
+		}
+	}()
+}
+
+// Flush writes pending changes to disk.
+//
+// The snapshot is copied under the lock and serialised outside it: at 10,000
+// devices the JSON is tens of megabytes, and marshalling it while holding
+// the lock stalled every heartbeat for the duration. The copy is of the
+// top-level slices; their elements are replaced, never mutated through a
+// shared inner slice, so the copy is a consistent view.
+func (f *File) Flush() error {
+	f.flushMu.Lock()
+	defer f.flushMu.Unlock()
+	f.mu.Lock()
+	if !f.dirty || f.cache == nil {
+		f.mu.Unlock()
+		return nil
+	}
+	doc := *f.cache
+	doc.Devices = append([]Device(nil), doc.Devices...)
+	doc.FimEvents = append([]FimEvent(nil), doc.FimEvents...)
+	doc.Alerts = append([]Alert(nil), doc.Alerts...)
+	f.dirty = false
+	f.mu.Unlock()
+	if err := f.writeDisk(doc); err != nil {
+		f.mu.Lock()
+		f.dirty = true
+		f.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// Seed replaces the device list with devices from the durable store, keeping
+// FIM events and alerts from the file. Devices the file has and the store
+// does not are kept, so a Postgres that lost rows does not also erase the
+// export's copy of them.
+func (f *File) Seed(devices []Device) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, err := f.read()
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(devices))
+	merged := make([]Device, 0, len(devices)+len(doc.Devices))
+	for _, d := range devices {
+		seen[d.ID] = true
+		merged = append(merged, d)
+	}
+	for _, d := range doc.Devices {
+		if !seen[d.ID] {
+			merged = append(merged, d)
+		}
+	}
+	doc.Devices = merged
+	return f.write(doc)
+}
+
+func (f *File) writeDisk(doc snapshot) error {
 	if err := os.MkdirAll(filepath.Dir(f.path), 0o755); err != nil {
 		return err
 	}

@@ -1,0 +1,16 @@
+---
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - defendsec_agent_server | length > 0
+      - defendsec_agent_state in ['present', 'absent']
+      - defendsec_agent_state == 'absent' or defendsec_agent_enroll_secret | length > 0
+    fail_msg: >-
+      Set defendsec_agent_server, and defendsec_agent_enroll_secret for state=present.
+    quiet: true
+
+- name: Include the tasks for this platform
+  ansible.builtin.include_tasks: "{{ item }}"
+  with_first_found:
+    - "{{ ansible_facts['os_family'] | lower }}.yml"
+    - "{{ 'windows' if ansible_facts['os_family'] == 'Windows' else ('darwin' if ansible_facts['os_family'] == 'Darwin' else 'linux') }}.yml"

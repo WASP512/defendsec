@@ -21,14 +21,32 @@ import (
 	"defendsec/internal/evidence"
 )
 
+// buildCommit is the source commit this binary was built from, stamped by
+// scripts/build-release.sh (roadmap 5.7).
+//
+// Stamped explicitly rather than left to Go's automatic VCS stamping, which
+// is switched off in release builds: automatic stamping makes the binary
+// depend on a .git directory being present, so a verifier rebuilding from a
+// source tarball gets a different hash than the release. An explicit value is
+// a build input, and reproducing the release means passing the same one.
+var buildCommit = "unknown"
+
 func main() {
 	asJSON := flag.Bool("json", false, "emit the report as JSON")
+	showVersion := flag.Bool("version", false, "print the build commit and exit")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: defendsec-verify [--json] <bundle.json>\n\n")
 		fmt.Fprintf(os.Stderr, "Verifies a DefendSec evidence bundle using only its own contents.\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	// Worth having on this binary above all the others: an auditor handed a
+	// verifier needs to be able to say which build they ran.
+	if *showVersion {
+		fmt.Println(buildCommit)
+		return
+	}
 
 	if flag.NArg() != 1 {
 		flag.Usage()

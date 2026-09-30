@@ -521,6 +521,10 @@ build_binaries() {
       go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd ./cmd/defendsec-agentd
       GOOS=linux GOARCH=amd64 go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-linux-amd64 ./cmd/defendsec-agentd
       GOOS=linux GOARCH=arm64 go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-linux-arm64 ./cmd/defendsec-agentd
+      for target in windows/amd64/.exe windows/arm64/.exe darwin/amd64/ darwin/arm64/; do
+        IFS=/ read -r os arch ext <<<\"\$target\"
+        GOOS=\$os GOARCH=\$arch go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-\$os-\$arch\$ext ./cmd/defendsec-agentd
+      done
     "
   else
     info "Skipping build (--skip-build)"
@@ -655,21 +659,30 @@ EOF
   chmod 600 "${DATA_DIR}/admin-token.txt"
 
   mkdir -p "$DOWNLOADS_DIR"
-  local agent_arch
-  for agent_arch in amd64 arm64; do
-    if [[ -f "${INSTALL_ROOT}/bin/defendsec-agentd-linux-${agent_arch}" ]]; then
-      install -m 0755 "${INSTALL_ROOT}/bin/defendsec-agentd-linux-${agent_arch}" \
-        "${DOWNLOADS_DIR}/defendsec-agentd-linux-${agent_arch}"
+  local agent_bin
+  for agent_bin in defendsec-agentd-linux-amd64 defendsec-agentd-linux-arm64 \
+    defendsec-agentd-windows-amd64.exe defendsec-agentd-windows-arm64.exe \
+    defendsec-agentd-darwin-amd64 defendsec-agentd-darwin-arm64; do
+    if [[ -f "${INSTALL_ROOT}/bin/${agent_bin}" ]]; then
+      install -m 0755 "${INSTALL_ROOT}/bin/${agent_bin}" "${DOWNLOADS_DIR}/${agent_bin}"
     fi
   done
-  if [[ -f "${INSTALL_ROOT}/packaging/agent/install.sh" ]]; then
-    install -m 0644 "${INSTALL_ROOT}/packaging/agent/install.sh" \
-      "${DOWNLOADS_DIR}/install-agent.sh"
+  # Installers and uninstallers for every platform (published name <- source).
+  local pair
+  for pair in install-agent.sh:install.sh uninstall-agent.sh:uninstall.sh \
+    install-agent.ps1:install-agent.ps1 uninstall-agent.ps1:uninstall-agent.ps1 \
+    install-agent-macos.sh:install-agent-macos.sh uninstall-agent-macos.sh:uninstall-agent-macos.sh; do
+    if [[ -f "${INSTALL_ROOT}/packaging/agent/${pair#*:}" ]]; then
+      install -m 0644 "${INSTALL_ROOT}/packaging/agent/${pair#*:}" "${DOWNLOADS_DIR}/${pair%%:*}"
+    fi
+  done
+  if command -v wixl >/dev/null 2>&1 && [[ -f "${DOWNLOADS_DIR}/defendsec-agentd-windows-amd64.exe" ]]; then
+    "${INSTALL_ROOT}/scripts/build-msi.sh" "${DOWNLOADS_DIR}/defendsec-agentd-windows-amd64.exe" \
+      "${DOWNLOADS_DIR}/defendsec-agent-windows-amd64.msi" "$(cat "${INSTALL_ROOT}/VERSION" 2>/dev/null || echo 0.0.0)" || true
   fi
   (
     cd "$DOWNLOADS_DIR"
-    sha256sum defendsec-agentd-linux-amd64 defendsec-agentd-linux-arm64 install-agent.sh \
-      >SHA256SUMS
+    sha256sum defendsec-agent* install-agent* uninstall-agent* >SHA256SUMS
   )
   chown -R defendsec:defendsec "$DOWNLOADS_DIR"
 }
@@ -811,7 +824,10 @@ DefendSec server install complete.
 
   Enroll secret: ${DATA_DIR}/defendsec.json
 
-Open the console with the admin token, then copy the agent command from Enroll.
+Open the console within 30 minutes and create your administrator account —
+no token needed. If you miss the window, restart it with
+  systemctl restart defendsec-apid
+or sign in with the admin token above. Then copy the agent command from Enroll.
 
 Docs: ${INSTALL_ROOT}/docs/INSTALL.md
 EOF

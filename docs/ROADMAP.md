@@ -1162,9 +1162,63 @@ complete supported service installer." Ship a real service, MSI packaging, and *
 telemetry as the eBPF analogue, plus BitLocker / Defender / firewall posture. Windows is where the
 endpoints are.
 
+*Delivered, and not yet run on a Windows machine.* See [WINDOWS.md](WINDOWS.md).
+
+- **Service.** `DefendSecAgent` runs as LocalSystem, restarts on failure, logs to a file under
+  ProgramData and to the Event Log, and keeps its state readable by SYSTEM and Administrators only.
+- **Installers.** An MSI built on Linux with `wixl`, which hides the enroll secret from installer
+  logs; the agent removes the secret from its own service configuration once enrolled. Also
+  `install-agent.ps1` / `uninstall-agent.ps1`, with the checksum verified and the console
+  certificate pinned.
+- **Posture, as a control-tagged SCA pack.** BitLocker (protection on, not merely encrypted),
+  Defender (antivirus, real-time, tamper protection, definition age), firewall on for every
+  profile, SMBv1 off, UAC on, and RDP off or requiring NLA.
+- **Inventory:** OS, memory, uptime, serial, model, installed programs, and pending updates from
+  the Windows Update Agent.
+- **Process telemetry.** Process-table sampling by default, with command lines. An ETW consumer is
+  opt-in (`DEFENDSEC_ETW=1`) until it has run on Windows hosts, and falls back to sampling. The
+  coverage view reports whichever sensor is actually running.
+
+What has been checked, and how:
+
+- The Win32 structure layouts are asserted against the SDK sizes.
+- The posture script was run under real PowerShell, on Linux.
+- The MSI tables were inspected with `msiinfo`.
+- Everything cross-compiles and vets for `GOOS=windows`.
+
+Two pre-existing defects surfaced along the way and were fixed. The agent did not compile for
+Windows at all. And installed agents on every platform had no SCA packs, so host-side
+configuration checks never ran outside a source checkout. Packs are now embedded in the binary.
+
+The server was also discarding every agent SCA result that was not `file_regex`, before alerting
+on it. That is fixed too.
+
+**Not done:** network isolation on Windows. The isolate command still says it is Linux-only.
+
 **5.2 — macOS.** EndpointSecurity framework for process and file events (requires an Apple
 developer account and entitlement — start the request early, it is slow), with FileVault, XProtect
 and firewall posture.
+
+*Delivered, except EndpointSecurity, which is waiting on Apple.* See [MACOS.md](MACOS.md).
+
+- **Service:** a launchd daemon, with install and uninstall scripts. `scripts/build-macos-pkg.sh`
+  builds a `.pkg` for MDM, on a Mac.
+- **Posture pack:**
+  - FileVault on (encryption in progress does not pass)
+  - application firewall and stealth mode
+  - SIP fully on (a custom configuration fails)
+  - Gatekeeper
+  - XProtect present, with security-data updates installing automatically
+  - automatic login off
+- **Inventory:** OS, memory, uptime, model, applications, and pending updates.
+- **Process sampling** from `kern.proc.all`, with command lines from `kern.procargs2`.
+- **`kill_process`** works on macOS, with system processes protected.
+
+**EndpointSecurity needs an entitlement only the project owner can request from Apple.** The
+steps, from the request through Full Disk Access and the cgo sensor, are written down in MACOS.md.
+Until it is granted, the coverage page states the sampler's limits.
+
+Not yet run on a Mac by DefendSec's tests: only the parsers and the cross-compile are verified.
 
 **5.3 — HTTPS by default.** Port 47261 shipping plain HTTP by default is a credibility problem for
 a security product, and the paper has to caveat it in four separate places. Generate a self-signed
@@ -1194,6 +1248,34 @@ exactly when TLS was on. The caveats in README.md and INSTALL.md are gone.
 **5.4 — Enterprise identity (SSO/OIDC).** Completes Phase 1.0. Group-to-role mapping, session
 management, and per-user attribution throughout the ledger.
 
+*Delivered as OIDC; SAML and SCIM are not.* Authorization code flow with PKCE, a browser-bound
+state, and an ID-token nonce — each closing a different replay: PKCE a stolen code, state a forged
+callback (login CSRF), nonce a replayed token. The ID token's signature, issuer, audience and
+expiry are verified against the provider's published keys, and tests exercise each rejection
+against a fake provider that signs real tokens: a forged signature, another client's audience, an
+expired token, the wrong issuer, a mismatched nonce.
+
+Three decisions worth recording. **Roles come only from mapped groups, and a user in none is
+refused** rather than given a default role — deny-by-default applies to who may sign in, and
+"everyone in the directory is a viewer" should be decided on purpose. A configuration with no
+groups mapped refuses to start. **Accounts are linked by (issuer, subject), never by username or
+email**, which can be reassigned at the IdP; an SSO user whose name collides with an existing local
+account is refused with a message saying so, because matching by name would let whoever holds that
+name at the IdP take over the local account. **The role is rewritten from the IdP's groups at every
+sign-in**, so removal from the admin group takes effect next time, while a local disable holds
+whatever the IdP says — the control plane can always withdraw access.
+
+SSO accounts store a password hash of `!sso`, which is not a valid encoding and so cannot verify
+against any password; there is a test trying several. Local accounts and the admin token keep
+working alongside SSO, so an IdP outage never locks an operator out, and discovery happens on first
+use so an IdP that is briefly down does not stop the control plane starting.
+
+*What it does not do:* no directory sync. Removal at the IdP takes effect at the next sign-in or
+when the 12-hour session expires; it does not end a session already open. Disabling the account in
+DefendSec does. Verified end to end against a real apid and console with the fake provider running
+as a separate TLS service: redirect, callback, session, audit entry, and forged callbacks refused
+before any code exchange.
+
 **5.5 — Scale past the homelab, and meet retention minimums.** Two hard caps today:
 `internal/cmdlog` keeps a **500-record ring buffer** — silently discarding privileged-action
 history regardless of age, which is exactly the record CJIS Policy Area 4 requires kept for a year
@@ -1211,18 +1293,141 @@ evidence CJIS Policy Area 4, and a 500-record cap could push a month of signed a
 file in an afternoon while the console reported the control as satisfied. `GET /v1/retention`
 reports the windows in force *and how much history is actually held*, because retention
 configuration does not create history that was never recorded: a one-year policy on a system
-installed last month evidences one month, and an assessor will ask. The Postgres-primary move,
-pagination and the 10k-host load test remain.
+installed last month evidences one month, and an assessor will ask.
+
+*The scale half, delivered and measured — see [LOADTEST.md](LOADTEST.md).* 10,000 simulated
+agents, each with its own key, mTLS connection and 80-package inventory, heartbeating on the real
+schedule against a real apid and Postgres, for five minutes: **zero errors**. Heartbeats: p99
+9.7 ms. Inventory reports: p50 62 ms, p99 715 ms. Paging through all 10,000 hosts: under 600 ms.
+
+The first 10k run also had zero errors, and was not acceptable: inventory reports took **68
+seconds** at the median. Profiling found that the alert list was being copied on every insert,
+that every configuration check made its own round trip to ask whether its alert was open, and that
+every heartbeat rewrote an 81 MB state file. Those are fixed:
+
+- Postgres is the primary device store. apid seeds its memory from it at start, and heartbeats
+  update only liveness columns. `defendsec-agents.json` is now an export, written every 30 seconds
+  outside the lock, plus once on shutdown. Without Postgres, writes stay synchronous, since the
+  file is then the only copy.
+- `GET /v1/devices` pages with a keyset cursor, so the last page costs what the first does. It
+  filters in the database by search (hostname, serial, user, OS, IP), platform and
+  online/offline/isolated status. `/v1/devices/summary` counts without listing. Without Postgres
+  the same semantics run in memory.
+- The console's host list and the overview's host table are the control plane's pages. The
+  overview used to send every host to the browser, which was 42 MB at 10,000 hosts.
+
+**Not yet at scale:** the overview, Policies and Advisories pages still compute over the whole
+fleet in the console, and take 3–7 seconds at 10,000 hosts. That is down from 26 seconds, but
+those aggregates belong in the control plane. Also, apid holds the fleet in memory: 1.9 GB RSS at
+10,000 hosts. That is fine for the target size, and it is the next ceiling after this one.
 
 **5.6 — Integrations.** Prometheus metrics, OTel traces, syslog/CEF export, webhook and Slack/Teams
 alerting, and Terraform/Ansible modules for provisioning. Be the best-behaved citizen in someone
 else's stack.
+
+*Delivered.* Everything is in OPERATIONS.md under "Forwarding", "Metrics and traces", and
+"Provisioning with Ansible and Terraform".
+
+- **Prometheus:** `/metrics` for agent RPCs, admin API, alerts, fleet, forwarding and process
+  health. It is hand-written against the 0.0.4 text format, with no new dependency. Labels come
+  only from fixed sets, so no host or user identity reaches the metrics system. Checked with
+  Prometheus's own scrape parser and `promlint`: 82 series, no findings.
+- **OpenTelemetry:** traces of every agent RPC and admin request, configured by the standard
+  `OTEL_*` variables and continuing W3C `traceparent`. There is also an `otlp=` forwarding
+  destination that sends events and alerts as OTLP log records. Both use a small OTLP/HTTP JSON
+  encoder rather than the SDK. They were checked by sending real apid traffic to a receiver built
+  on the collector's own OTLP decoder: 112 spans and 120 log records, none rejected. The
+  destination this replaces used to refuse `otlp=` because "an almost-OTLP exporter a collector
+  rejects is worse than none". That is still the standard, and it is why this one was tested
+  against the collector's decoder rather than against itself.
+- **CEF** over the existing syslog transports, with header and extension escaping per the
+  specification. It was received from a real run: 120 events, all well-formed.
+- **Slack and Teams:** alerts only, above a severity floor (default high), at most ten per post.
+  A channel that receives every event is a channel everyone mutes.
+- **Ansible** role for Linux, Windows (MSI) and macOS, and a **Terraform** module that renders
+  first-boot user data for any provider. CI runs `terraform test`, `ansible-lint` and a PowerShell
+  parse on every change. ansible-lint caught a real defect before merge: `get_url` in current
+  ansible-core cannot take a per-request CA, so the verified download would have failed on first
+  use.
+
+*Not verified here:* delivery to real Slack or Teams workspaces, where only the payload shapes are
+tested. The role and module have not been run against a live fleet. A full OpenTelemetry Collector
+binary could not be fetched in the build environment, so the check used the collector's decoder
+library instead.
 
 **5.7 — Supply-chain hardening for DefendSec itself.** A tool making provenance claims must hold
 itself to them: reproducible builds, SLSA provenance attestations, signed releases (cosign),
 published SBOMs. CI already runs TruffleHog secret scanning and govulncheck — extend that to
 release artifacts. This is also a natural marketing artifact: *verify our binaries with the same
 tooling we give you for your fleet.*
+
+*Delivered, with one part unverifiable until a tag is pushed — see the end of this section.*
+
+**The most valuable thing here was not a new feature.** The `postgres-integration` job ran only
+`./internal/storepg/... ./db/migrations/...`, and the unit job ran `go test ./...` without a
+database. `internal/control` grew database-backed tests long after that job was written, so every
+guarantee they cover — per-user attribution, an agent being unable to sign its own authority,
+autonomy staying inside its blast-radius ceiling — had tests that passed locally and **silently
+skipped on every pull request.** A guarantee whose test never runs is not a guarantee, and this one
+had been reported as tested for three phases.
+
+Fixed, and then made unrepeatable: `internal/supplychain` scans the repository for packages whose
+tests read `TEST_DATABASE_URL` and asserts the CI job covers each one. The guard was checked by
+reintroducing the gap and confirming it fails. It is careful about two traps — the unit job's
+`./...` must not count as integration coverage (that is precisely how the original gap hid), and a
+path prefix that is not a path boundary must not match.
+
+**Reproducible builds, measured rather than claimed.** `-trimpath` and `CGO_ENABLED=0` were already
+in the release script. The missing flag was `-buildvcs=false`: Go stamps the git commit and dirty
+flag into a main package by default, which makes the binary depend on a `.git` directory being
+present. Measured, not assumed — the same source built with and without `.git` produced different
+hashes, so the reproducibility claim would have failed for exactly the person most likely to test
+it, somebody rebuilding from a released source tarball. The commit is not lost: it is stamped
+explicitly into `main.buildCommit`, which is deterministic because it is a build input rather than
+something the toolchain discovers, and every binary now reports it (`--version`, or the startup log
+for `defendsec-web`). `-X` against a symbol that does not exist is silently ignored, so a test
+asserts every `cmd/*` declares the variable.
+
+`scripts/check-reproducible.sh` builds each release target twice — the second time from a copy of
+the tree at a different path with no `.git` — and fails if any hash differs. Building twice in the
+same checkout would have passed while the interesting case failed. It runs on every pull request,
+because reproducibility breaks by someone dropping a build flag and that is a code review away from
+shipping. Two tests keep the release script and the check in step, so the check cannot drift into
+verifying something the release does not do.
+
+**SBOMs are generated from the built binaries, not the source tree.** That is the more honest
+source: it describes what is inside the artifact somebody downloaded, including the exact module
+versions the linker chose, rather than what `go.mod` would resolve to on a different day. The two
+can disagree, and only one of them is what the operator is running. Generated with
+`cyclonedx-gomod` for Go and `npm sbom` for the console, and a missing tool fails the release rather
+than shipping one quietly without them.
+
+**Signing and provenance.** One cosign keyless signature over `SHA256SUMS` rather than one per
+artifact — the manifest already binds every file by hash, so signing it covers the release and
+gives an operator one thing to verify instead of twenty. Keyless means no long-lived key to lose or
+steal, and nothing the operator must fetch from a second channel they would have to trust
+separately. GitHub's build-provenance attestation records which workflow, at which commit, produced
+those bytes.
+
+**`scripts/verify-release.sh` is written for somebody who does not trust us.** Four checks in
+increasing order of what they prove: checksums, signature, provenance, and an optional rebuild from
+source — the last being the only one that requires no trust at all. Each check that cannot run is
+skipped with a statement of what went unverified, and the summary lists them; a verification script
+reporting success for checks it did not run is worse than none.
+
+Writing it caught two bugs that would have failed the first real release. `sha256sum --check` only
+verifies files *listed* in the manifest, so an artifact absent from `SHA256SUMS` passed verification
+untouched — add a file or drop a line and the check still reported success. The directory is now
+compared against the manifest in both directions. And the SBOMs were initially written to
+`dist/sbom/`, recorded in `SHA256SUMS` with that path: a GitHub release is a flat list of files, so
+that path could never have existed after download and the checksum check would have failed on every
+release for a reason that has nothing to do with integrity.
+
+*What is not verified here.* The reproducibility check, the SBOM generation and the verify script
+were all run locally and pass. The workflow changes — cosign signing, the provenance attestation and
+the post-publish verification — cannot be exercised without pushing a tag, so they are written
+carefully and remain unproven until the next release. The release workflow verifies its own output
+the way an operator would as its final step, which is where a mistake in them will surface.
 
 ---
 

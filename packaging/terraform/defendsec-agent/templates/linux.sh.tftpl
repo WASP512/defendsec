@@ -1,0 +1,24 @@
+#!/bin/bash
+# DefendSec agent enrollment, rendered by the defendsec-agent Terraform module.
+set -euo pipefail
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+cacert=()
+%{ if console_ca != "" ~}
+cat >"$work/console.crt" <<'PEM'
+${console_ca}
+PEM
+cacert=(--cacert "$work/console.crt")
+%{ endif ~}
+curl -fsSL $${cacert[@]+"$${cacert[@]}"} '${download_base}/install-agent.sh' -o "$work/install-agent.sh"
+bash "$work/install-agent.sh" \
+  --server-http 'https://${server}:${http_port}' \
+  --server-grpc '${server}:${grpc_port}' \
+  --tls-server-name '${server}' \
+  --enroll-secret '${enroll_secret}' \
+  --download-base '${download_base}' \
+%{ if console_ca != "" ~}
+  --download-ca "$work/console.crt"
+%{ else ~}
+  ;
+%{ endif ~}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,7 +29,17 @@ func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
-	cfg.MaxConns = 10
+	// 20 by default: inventory processing at fleet scale is round-trip
+	// bound (roadmap 5.5 load test). DEFENDSEC_DB_MAX_CONNS overrides it;
+	// keep it under Postgres's max_connections less other clients.
+	cfg.MaxConns = 20
+	if v := strings.TrimSpace(os.Getenv("DEFENDSEC_DB_MAX_CONNS")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 2 || n > 500 {
+			return nil, fmt.Errorf("DEFENDSEC_DB_MAX_CONNS must be a number from 2 to 500, got %q", v)
+		}
+		cfg.MaxConns = int32(n)
+	}
 	cfg.MinConns = 1
 	cfg.MaxConnLifetime = time.Hour
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)

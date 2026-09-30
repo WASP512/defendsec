@@ -315,8 +315,11 @@ Console:    https://${IP:-<ct-ip>}:47261
 Enroll TLS: https://${IP:-<ct-ip>}:47262
 gRPC:       ${IP:-<ct-ip>}:47263
 
-Admin token: pct exec ${CTID} -- cat /var/lib/defendsec/admin-token.txt
-Sign in, then copy the separate agent command from the Enroll page.
+Open the console within 30 minutes and create your administrator account.
+No token needed. Missed the window? Reopen it with:
+  pct exec ${CTID} -- systemctl restart defendsec-apid
+Fallback admin token: pct exec ${CTID} -- cat /var/lib/defendsec/admin-token.txt
+Then copy the agent command from the Enroll page.
 
 Enter CT:   pct enter ${CTID}
 EOF

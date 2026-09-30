@@ -167,3 +167,27 @@ func controlIDs(ids []string) []string {
 	}
 	return ids
 }
+
+// OpenAlertKeys returns "kind\x00source" for every open or acknowledged
+// alert on a device, in one query. Inventory processing checks and resolves
+// alerts for every configuration check; asking the database once per check
+// was the dominant cost of an inventory report at fleet scale (roadmap 5.5
+// load test).
+func (s *Store) OpenAlertKeys(ctx context.Context, deviceID string) (map[string]bool, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT kind, source_id FROM alerts
+		WHERE device_id=$1 AND status IN ('open', 'acknowledged')`, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var kind, source string
+		if err := rows.Scan(&kind, &source); err != nil {
+			return nil, err
+		}
+		out[kind+"\x00"+source] = true
+	}
+	return out, rows.Err()
+}

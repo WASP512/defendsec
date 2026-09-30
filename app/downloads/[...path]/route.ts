@@ -2,16 +2,14 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { NextResponse } from "next/server";
 import { dataPath } from "@/lib/data-paths";
+import { AGENT_DOWNLOADS } from "@/lib/agent-commands";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ALLOWED = new Set([
-  "install-agent.sh",
-  "SHA256SUMS",
-  "defendsec-agentd-linux-amd64",
-  "defendsec-agentd-linux-arm64",
-]);
+
+
+const ALLOWED = new Set<string>(AGENT_DOWNLOADS);
 
 function downloadsDir(): string {
   return (
@@ -41,9 +39,11 @@ export async function GET(
   }
   const body = readFileSync(full);
   const contentType =
-    name.endsWith(".sh") || name === "SHA256SUMS"
+    name.endsWith(".sh") || name.endsWith(".ps1") || name === "SHA256SUMS"
       ? "text/plain; charset=utf-8"
-      : "application/octet-stream";
+      : name.endsWith(".msi")
+        ? "application/x-msi"
+        : "application/octet-stream";
   return new NextResponse(body, {
     headers: {
       "Content-Type": contentType,

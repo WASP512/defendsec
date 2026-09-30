@@ -188,6 +188,41 @@ Keep `47262`/`47263` reachable by agents. Do not expose Postgres, port `47264`, 
 
 ---
 
+## Scale and the device store
+
+With Postgres configured (every packaged install), **Postgres is the primary
+device store**. apid loads the fleet from it at start and holds it in memory.
+Heartbeats update only liveness columns. `defendsec-agents.json` is an export,
+written every 30 seconds and on shutdown, so it can trail the database by up
+to 30 seconds after a crash. Restore from the Postgres dump in a backup, not
+from that file. Without Postgres, the file is the only copy and is written on
+every change.
+
+Measured at 10,000 hosts on 4 vCPU: heartbeat p99 under 10 ms, inventory
+reports p50 62 ms, and 1.9 GB of apid memory. See [LOADTEST.md](LOADTEST.md)
+for the full result, what it found, and how to rerun it against your own
+hardware.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `DEFENDSEC_DB_MAX_CONNS` | 20 | apid's Postgres pool size. Raise it for large fleets, and keep it under `max_connections` minus your other clients. |
+| `DEFENDSEC_PPROF_ADDR` | off | A loopback `host:port` for Go's profiler, to diagnose load. apid refuses any non-loopback address. |
+
+The fleet API pages and filters in the database:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  'http://127.0.0.1:47264/v1/devices?limit=100&platform=windows&status=offline&q=web'
+# → {"devices":[…],"total":N,"next":"<cursor>"}; pass cursor=<next> for the following page
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:47264/v1/devices/summary
+```
+
+The console's host list uses this API. The overview, Policies and Advisories
+pages still compute over the whole fleet, which takes 3–7 seconds at 10,000
+hosts.
+
+---
+
 ## Backup and restore
 
 Backup (JSON store, PKI, admin token, optional Postgres dump):
@@ -667,12 +702,14 @@ DEFENDSEC_FORWARD='syslog=tcp://collector:514,webhook=https://siem.example/inges
 | Kind | Form | Notes |
 | --- | --- | --- |
 | `syslog` | `tcp://host:514`, `tls://host:6514`, `udp://host:514` | RFC 5424, `local0`, JSON payload, RFC 6587 octet framing. TCP by default — UDP discards silently under load, which is the wrong property for a security record |
+| `cef` | `tcp://host:514`, `tls://host:6514`, `udp://host:514` | The same syslog transport, carrying ArcSight Common Event Format, for SIEMs that parse CEF natively. Header and extension escaping follow the CEF specification, so a pipe in a hostname cannot shift fields |
 | `webhook` | `https://host/path#token` | Batched JSON POST; the token is sent as a bearer credential |
+| `slack` | `https://hooks.slack.com/services/…#min=high` | **Alerts only**, at or above `min` (default `high`), at most ten per post with a count of the rest. Events are never posted: a channel that receives every process execution is a channel everyone mutes |
+| `teams` | `https://….logic.azure.com/workflows/…#min=high` | As `slack`, as an Adaptive Card for a Teams Workflows webhook |
+| `otlp` | `https://collector:4318#TOKEN` or `#Authorization=Bearer%20x,x-tenant=a` | OpenTelemetry log records over OTLP/HTTP JSON to `/v1/logs`. A collector's partial rejection counts as a failure, not a success |
 | `file` | `/var/log/defendsec-events.jsonl` | JSON lines. Useful for proving the pipeline before pointing it at a collector, and for air-gapped hosts |
 
-OpenTelemetry is **not implemented**, and configuring `otlp=` is an error rather than a silent
-no-op. An almost-OTLP exporter a collector rejects is worse than none; syslog and webhook both
-reach an OTel collector today.
+Destination names in the status report never include a webhook secret or token.
 
 **Forwarding is lossy on purpose.** A collector that stops accepting connections must not stop
 DefendSec matching rules or raising alerts — a tool that stops defending because its log shipper
@@ -685,6 +722,64 @@ curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
 
 Every alert is forwarded, not only behavioural ones: for many operators the collector is the
 system of record, and a finding that exists only in DefendSec is one their process will not see.
+
+---
+
+## Metrics and traces
+
+**Prometheus.** `GET /metrics` on the admin listener (`127.0.0.1:47264`), without a
+token, as node_exporter does on loopback. To scrape from elsewhere, set
+`DEFENDSEC_METRICS_ADDR` (e.g. `0.0.0.0:9464`). apid refuses a non-loopback
+address unless `DEFENDSEC_METRICS_TOKEN` is also set, in which case scrapes must
+send it as a bearer token.
+
+| Metric | What |
+| --- | --- |
+| `defendsec_devices{platform,state}` | Enrolled, online and isolated hosts |
+| `defendsec_grpc_requests_total{method,code}`, `defendsec_grpc_request_duration_seconds` | Agent RPCs |
+| `defendsec_admin_http_requests_total{route,code}`, `defendsec_admin_http_request_duration_seconds` | Admin API, by route pattern |
+| `defendsec_alerts_created_total{kind,severity}` | Alerts raised |
+| `defendsec_forward_records_total{outcome}`, `defendsec_forward_destination_healthy{destination}` | Forwarding |
+| `defendsec_build_info{commit}`, `go_goroutines`, `go_memstats_heap_inuse_bytes` | The process |
+
+Labels come from fixed sets. No hostname, device id or user reaches the metrics
+system, which usually has looser access control than DefendSec.
+
+**OpenTelemetry traces.** Set the standard variables and apid traces every agent
+RPC and admin request, continuing a caller's W3C `traceparent`:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4318     # or ..._TRACES_ENDPOINT
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20xyz  # optional
+OTEL_SERVICE_NAME=defendsec-apid                       # default
+OTEL_TRACES_SAMPLER=traceidratio OTEL_TRACES_SAMPLER_ARG=0.1  # default: every trace
+```
+
+Spans carry the RPC method or route, never a device id. Export is batched and
+lossy: a collector that is down costs spans, never agent traffic.
+
+**How this was verified.** Both OTLP paths are DefendSec's own small encoder,
+not the OpenTelemetry SDK. They were checked by sending real traffic from apid
+to a receiver built on the collector's own OTLP JSON decoder
+(`go.opentelemetry.io/collector/pdata`): 112 spans and 120 log records, none
+rejected, with a caller's `traceparent` continued. `/metrics` was parsed by
+Prometheus's scrape parser and linted with `promlint`: 82 series, no findings.
+A full collector binary could not be fetched in the environment where this was
+built, so the first deployment against yours is still worth watching.
+
+## Provisioning with Ansible and Terraform
+
+- `packaging/ansible` — a role that installs, enrolls or removes the agent on
+  Linux, Windows (the MSI) and macOS. Downloads are verified, the secret is
+  `no_log`, and re-running on an enrolled host does nothing. See its README.
+- `packaging/terraform/defendsec-agent` — a module that renders first-boot user
+  data (bash, or `<powershell>` for Windows) to install and enroll the agent on
+  new instances with any provider. The output is sensitive, because it holds the
+  enroll secret.
+
+CI checks both: `terraform validate` and `terraform test`, `ansible-lint` at the
+production profile, and a PowerShell parse of every Windows script. Neither has
+been run against a live fleet in DefendSec's own tests.
 
 ---
 
@@ -1245,3 +1340,132 @@ never a human who did not authorise it.
 
 When a proposal waits instead of running, the ledger records **which switch was off**, so an
 operator who expected autonomy does not have to read two configuration sources to find out why.
+
+---
+
+## Verifying a DefendSec release
+
+DefendSec asks you to verify signatures and provenance across your fleet. It holds itself to the
+same standard, and you should check rather than take our word for it.
+
+```bash
+# Download a release
+gh release download v1.2.3 --repo WASP512/defendsec --dir defendsec-v1.2.3
+
+# Verify it
+./scripts/verify-release.sh --repo WASP512/defendsec defendsec-v1.2.3
+
+# Or the strongest check: rebuild from source and compare
+./scripts/verify-release.sh --repo WASP512/defendsec --tag v1.2.3 --reproduce defendsec-v1.2.3
+```
+
+Four checks, in increasing order of what they prove:
+
+| Check | What it proves | Needs |
+|---|---|---|
+| Checksums | The files match the manifest, and no file is *missing* from it | nothing |
+| Signature | The manifest was signed by our release workflow | `cosign` |
+| Provenance | GitHub attests which workflow and commit built these bytes | `gh` |
+| Rebuild | The bytes are what this source produces — **requires no trust in us** | `go`, `git` |
+
+Any check that cannot run is skipped and named in the summary. The script reports what it did *not*
+verify rather than implying a clean bill of health.
+
+### Checking a signature by hand
+
+```bash
+cosign verify-blob \
+  --certificate SHA256SUMS.pem \
+  --signature SHA256SUMS.sig \
+  --certificate-identity-regexp '^https://github.com/WASP512/defendsec/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS
+```
+
+Signing is **keyless**: the identity is the release workflow itself, so there is no long-lived key
+for us to lose or an attacker to steal, and nothing you have to fetch from a second channel you
+would then have to trust separately. One signature covers the whole release, because `SHA256SUMS`
+already binds every file by hash.
+
+### Reproducing a build yourself
+
+```bash
+git clone --depth 1 --branch v1.2.3 https://github.com/WASP512/defendsec.git src
+COMMIT=$(git -C src rev-parse HEAD)
+rm -rf src/.git          # deliberately: a build must not depend on VCS metadata
+cd src && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+  go build -trimpath -buildvcs=false -ldflags "-s -w -X main.buildCommit=$COMMIT" \
+    -o /tmp/defendsec-apid ./cmd/defendsec-apid
+sha256sum /tmp/defendsec-apid   # compare against SHA256SUMS
+```
+
+Three things make this work, and the third is the one usually missed:
+
+- `-trimpath` — the build directory is not embedded, so the hash does not depend on where you built.
+- `CGO_ENABLED=0` — no host toolchain or libc involved.
+- `-buildvcs=false` — Go otherwise stamps the git commit into a main package, which makes the binary
+  depend on `.git` existing. Without this flag, building from a source tarball gives a different
+  hash than our CI produced. The commit is stamped explicitly instead, so nothing is lost.
+
+`./scripts/check-reproducible.sh` runs this comparison against every release target and is part of
+CI, so a dropped flag fails a pull request rather than surfacing at release time.
+
+### SBOMs
+
+Every release ships a CycloneDX SBOM per binary plus one for the console, checksummed alongside
+everything else. They are generated **from the built binaries**, not from the source tree — an SBOM
+should describe what is inside the artifact you downloaded, including the exact module versions the
+linker chose, rather than what `go.mod` would resolve to on a different day. The two can disagree,
+and only one of them is what you are running.
+
+```bash
+# Which version of a dependency is actually in the binary you have
+jq -r '.components[] | "\(.name) \(.version)"' defendsec-apid-linux-amd64.cdx.json | sort
+
+# Go's own view, straight from the binary, with no SBOM needed
+go version -m defendsec-apid-linux-amd64
+```
+
+### Which build am I running?
+
+```bash
+defendsec-apid --version      # prints the source commit
+defendsec-agentd --version    # prints the agent version and commit
+defendsec-verify --version
+```
+
+`defendsec-web` reports it in its startup log, having no flags of its own.
+
+---
+
+## Single sign-on (OIDC)
+
+DefendSec can sign operators in through any OpenID Connect provider: Microsoft Entra ID, Okta,
+Google Workspace, Keycloak, Authentik, and so on.
+
+1. At your IdP, register an application (confidential client, authorization code flow) with the
+   redirect URL `https://<console-host>:47261/api/sso/callback`. Include a **groups** claim in the ID
+   token.
+2. Create two groups, for example `defendsec-admins` and `defendsec-viewers`.
+3. Set the `DEFENDSEC_SSO_*` variables in `/etc/defendsec/apid.env` (see `apid.env.example`) and
+   restart `defendsec-apid`. The login page shows **Sign in with <name>**.
+
+For Microsoft Entra ID the issuer is `https://login.microsoftonline.com/<tenant-id>/v2.0`, and group
+claims arrive as object IDs unless you configure them otherwise — map the IDs.
+
+**How roles work.** Only the groups you map grant access. Someone in neither group is refused and
+the refusal is recorded (`sso_refused`), rather than getting a default role. The role is recalculated
+from the IdP's groups every time someone signs in, so removing a person from the admin group takes
+effect at their next sign-in.
+
+**What SSO does not do.** There is no directory sync. Removing someone at the IdP does not end a
+session that is already open; it ends at the next sign-in or when the session expires (12 hours). To
+cut someone off immediately, disable their account under **Accounts** — that holds regardless of what
+the IdP says.
+
+**Accounts are never matched by name.** If a local account called `mason` already exists and an SSO
+user called `mason` signs in, they are refused with a message saying so. Rename or remove the local
+account first if they are the same person.
+
+**Keep a way in.** Local accounts and the admin token keep working alongside SSO, so an IdP outage
+does not lock you out. Keeping one local administrator is recommended.

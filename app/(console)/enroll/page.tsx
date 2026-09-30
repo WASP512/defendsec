@@ -1,9 +1,9 @@
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { EnrollPanel } from "@/components/enroll-panel";
 import { isReadOnlySession } from "@/lib/auth";
 import { ensureStore } from "@/lib/store";
 import { PageHeader } from "@/components/console-ui";
+import { consoleURL } from "@/lib/console-url";
 
 export const dynamic = "force-dynamic";
 
@@ -12,12 +12,7 @@ export default async function EnrollPage() {
     redirect("/");
   }
   const store = await ensureStore();
-  const headerList = await headers();
-  const host = headerList.get("x-forwarded-host") ?? headerList.get("host") ?? "127.0.0.1:47261";
-  const proto = headerList.get("x-forwarded-proto") ?? "http";
-  const serverUrl =
-    process.env.DEFENDSEC_PUBLIC_CONSOLE_URL?.trim().replace(/\/+$/, "") ||
-    `${proto}://${host}`;
+  const serverUrl = await consoleURL();
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -25,7 +20,7 @@ export default async function EnrollPage() {
         title="Enroll a host"
         description={
           <>
-          Run the Agent install command on each host you want to inventory. Do not re-run the
+          Run the install command for its platform on each host you want to inventory. Do not re-run the
           Proxmox server helper on those machines.
           </>
         }
@@ -33,8 +28,8 @@ export default async function EnrollPage() {
       <EnrollPanel enrollSecret={store.enrollSecret} serverUrl={serverUrl} />
       <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
         <li>
-          Copy <strong>Agent install</strong> and run it with sudo on the host. The command downloads
-          the agent from this server and enables systemd.
+          Copy the command for the host&apos;s platform and run it there as root or administrator.
+          It downloads the agent from this server, verifies it, and installs it as a service.
         </li>
         <li>
           <code className="text-foreground">--tls-server-name</code> must match the server hostname

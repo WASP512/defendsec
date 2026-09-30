@@ -21,6 +21,9 @@ import { AcceptBaseline } from "@/components/accept-baseline";
 import { ResponsePanel } from "@/components/response-panel";
 import { loadCommands } from "@/lib/commands";
 import { isReadOnlySession } from "@/lib/auth";
+import { UninstallPanel } from "@/components/uninstall-panel";
+import { consoleURL } from "@/lib/console-url";
+import { downloadBaseFor } from "@/lib/agent-commands";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +46,7 @@ export default async function DeviceDetailPage({
   );
   const commandLog = mtlsId ? await loadCommands(mtlsId) : [];
   const readOnly = await isReadOnlySession();
+  const { downloadBase } = downloadBaseFor(await consoleURL());
   const alertDeviceId = mtlsId || device.id;
   let openAlertCount = 0;
   if (databaseURL()) {
@@ -274,6 +278,11 @@ export default async function DeviceDetailPage({
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Uninstall the agent</h2>
+        <UninstallPanel platform={device.platform} downloadBase={downloadBase} />
       </section>
     </div>
   );

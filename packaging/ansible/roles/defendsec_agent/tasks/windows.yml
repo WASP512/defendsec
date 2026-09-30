@@ -1,0 +1,50 @@
+---
+# Windows uses the MSI, so the install is registered with Windows Installer
+# and removable from Apps & features like any other package.
+- name: Trust the console certificate for this download
+  ansible.windows.win_copy:
+    src: "{{ defendsec_agent_console_ca }}"
+    dest: C:\Windows\Temp\defendsec-console-ca.crt
+  when: defendsec_agent_console_ca | length > 0
+
+- name: Download the agent MSI
+  ansible.windows.win_powershell:
+    script: |
+      param($Url, $Dest, $Ca)
+      $ErrorActionPreference = 'Stop'
+      if ($Ca) {
+        $pinned = New-Object Security.Cryptography.X509Certificates.X509Certificate2($Ca)
+        [Net.ServicePointManager]::ServerCertificateValidationCallback = {
+          param($a, $c, $h, $e) $e -eq 'None' -or $c.GetCertHashString() -eq $pinned.Thumbprint
+        }.GetNewClosure()
+      }
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Dest
+    parameters:
+      Url: "{{ defendsec_agent_download_base }}/defendsec-agent-windows-amd64.msi"
+      Dest: C:\Windows\Temp\defendsec-agent.msi
+      Ca: "{{ 'C:\\Windows\\Temp\\defendsec-console-ca.crt' if defendsec_agent_console_ca | length > 0 else '' }}"
+  when: defendsec_agent_state == 'present'
+
+- name: Install and enroll the agent
+  ansible.windows.win_package:
+    path: C:\Windows\Temp\defendsec-agent.msi
+    state: present
+    arguments:
+      - SERVER_HTTP=https://{{ defendsec_agent_server }}:{{ defendsec_agent_http_port }}
+      - SERVER_GRPC={{ defendsec_agent_server }}:{{ defendsec_agent_grpc_port }}
+      - TLS_SERVER_NAME={{ defendsec_agent_server }}
+      - ENROLL_SECRET={{ defendsec_agent_enroll_secret }}
+  no_log: true
+  when: defendsec_agent_state == 'present'
+
+- name: Remove the agent
+  ansible.windows.win_powershell:
+    script: |
+      param($Purge)
+      $u = Join-Path $env:ProgramFiles 'DefendSec\uninstall-agent.ps1'
+      if (-not (Test-Path $u)) { $Ansible.Changed = $false; return }
+      if ($Purge) { & $u -PurgeData } else { & $u }
+    parameters:
+      Purge: "{{ defendsec_agent_purge_data | bool }}"
+  when: defendsec_agent_state == 'absent'
