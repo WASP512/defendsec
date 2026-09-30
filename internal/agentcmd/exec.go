@@ -87,10 +87,29 @@ func Isolate(dir string) (State, error) {
 			st.Message = "isolated flag set; network drop failed: " + err.Error()
 		} else {
 			st.Mode = "net"
-			st.Message = isolateDescription
+			st.Message = isolateDescription()
 		}
 	}
 	return st, SaveState(dir, st)
+}
+
+// ReapplyIsolation restores network isolation at agent start. Linux
+// firewall rules do not survive a reboot, so without this a rebooted host
+// was quietly un-isolated while the console still showed it isolated.
+// Windows Firewall rules persist, and re-applying there would record the
+// isolated profiles as the ones to restore, so it is Linux only.
+func ReapplyIsolation(dir string) (State, bool, error) {
+	st := LoadState(dir)
+	if runtime.GOOS != "linux" || !st.Isolated || st.Mode != "net" {
+		return st, false, nil
+	}
+	if err := applyNetIsolate(dir); err != nil {
+		st.Message = "isolation could not be re-applied after restart: " + err.Error()
+		st.Mode = "flag"
+		return st, true, SaveState(dir, st)
+	}
+	st.Message = isolateDescription() + " (re-applied at agent start)"
+	return st, true, SaveState(dir, st)
 }
 
 func Release(dir string) (State, error) {

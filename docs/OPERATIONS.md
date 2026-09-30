@@ -285,6 +285,19 @@ DEFENDSEC_DATA_DIR="$PWD/data" DATABASE_URL=postgres://... ./scripts/backup.sh
 - Open FIM drift and SCA findings can auto-resolve when the host returns to baseline.
 - Host mutation is always Ed25519-signed: isolate, release, kill-by-name, live query, agent update, allowlisted scripts, quarantine path.
 - Isolate only drops network if the agent is root **and** `DEFENDSEC_ISOLATE_NET=1`. Otherwise it is a flag in the console.
+- **What network isolation allows** (Linux and Windows): the control plane — so the agent can
+  always reconnect and receive *release* — and nothing else, inbound or outbound. On Linux it also
+  allows loopback, DHCP (so the host keeps its address) and IPv6 neighbour discovery. Connections
+  that were open when the host was isolated are cut: accepting "established" traffic would have
+  kept the attacker's session alive.
+- On Linux it is an nftables table (`inet defendsec_isolate`), covering IPv4 and IPv6, replaced
+  atomically and effective alongside firewalld or ufw. Where `nft` is unavailable it falls back to
+  `iptables` and `ip6tables`, and refuses to isolate rather than leave IPv6 open. Isolation is
+  re-applied when the agent starts, so a reboot does not quietly release a host the console shows
+  as isolated. `scripts/test-isolation-netns.sh` checks all of this against real traffic in
+  network namespaces, and runs in CI.
+- On Windows, connections already open when isolation starts are not cut, because Windows
+  Firewall evaluates connections when they are made.
 
 ---
 

@@ -145,3 +145,19 @@ jobs:
             if ($errs) { $errs | ForEach-Object { Write-Error "$($f.Name): $_" }; $failed = $true }
           }
           if ($failed) { exit 1 }
+
+  # Host isolation against real traffic, in network namespaces: control
+  # plane reachable, everything else blocked in both directions and both
+  # address families, an existing session cut, rules restored after a
+  # reboot and removed on release — for the nftables and iptables backends.
+  isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install netfilter tools
+        run: sudo apt-get update && sudo apt-get install -y nftables iptables iproute2
+      - name: Isolation in network namespaces
+        run: sudo -E env "PATH=$PATH" ./scripts/test-isolation-netns.sh

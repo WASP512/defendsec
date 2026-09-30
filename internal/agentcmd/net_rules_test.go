@@ -89,3 +89,51 @@ Ok.
 		}
 	}
 }
+
+func TestNftRulesetAllowsOnlyTheControlPlane(t *testing.T) {
+	r := nftRuleset(endpoint{IPs: []string{"10.0.0.5", "fd00::5"}, Ports: []int{47262, 47263}})
+	for _, want := range []string{
+		"table inet defendsec_isolate {}\ndelete table inet defendsec_isolate\n", // atomic replace
+		"policy drop;",
+		"ip daddr { 10.0.0.5 } tcp dport { 47262, 47263 } accept",
+		"ip saddr { 10.0.0.5 } tcp sport { 47262, 47263 } accept",
+		"ip6 daddr { fd00::5 } tcp dport { 47262, 47263 } accept",
+		"chain input",
+	} {
+		if !strings.Contains(r, want) {
+			t.Errorf("missing %q in\n%s", want, r)
+		}
+	}
+	// Established sessions in general must not survive: that is the
+	// attacker's shell.
+	if strings.Contains(r, "ct state") {
+		t.Errorf("ruleset accepts tracked connections:\n%s", r)
+	}
+	if strings.Contains(nftRuleset(endpoint{IPs: []string{"10.0.0.5"}, Ports: []int{47263}}), "ip6 daddr") {
+		t.Error("no IPv6 control plane, no IPv6 accept rule")
+	}
+}
+
+func TestIptablesRulesPerFamily(t *testing.T) {
+	ep := endpoint{IPs: []string{"10.0.0.5", "fd00::5"}, Ports: []int{47262, 47263}}
+	join := func(rs [][]string) string {
+		var out []string
+		for _, r := range rs {
+			out = append(out, strings.Join(r, " "))
+		}
+		return strings.Join(out, "\n")
+	}
+	v4, v6 := join(iptablesChainRules(ep, false)), join(iptablesChainRules(ep, true))
+	if !strings.Contains(v4, "-d 10.0.0.5 -m multiport --dports 47262,47263 -j ACCEPT") || strings.Contains(v4, "fd00::5") {
+		t.Errorf("v4:\n%s", v4)
+	}
+	if !strings.Contains(v6, "-d fd00::5") || strings.Contains(v6, "10.0.0.5") || !strings.Contains(v6, "icmp6-adm-prohibited") {
+		t.Errorf("v6:\n%s", v6)
+	}
+	if strings.Contains(v4+v6, "conntrack") {
+		t.Error("iptables rules accept tracked connections")
+	}
+	if !strings.HasSuffix(v4, iptInChain+" -j DROP") {
+		t.Error("inbound must end in DROP")
+	}
+}

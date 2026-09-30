@@ -8,7 +8,7 @@ import (
 	"runtime"
 )
 
-const isolateDescription = ""
+func isolateDescription() string { return "" }
 
 func privileged() bool { return os.Geteuid() == 0 }
 
