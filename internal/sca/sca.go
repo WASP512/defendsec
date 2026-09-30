@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"defendsec/internal/controls"
+	"defendsec/internal/posture"
 	"defendsec/internal/presence"
 )
 
@@ -79,6 +80,12 @@ type Check struct {
 	// ExitCode, when set, is the exit status the command must return. A
 	// pointer so requiring zero is distinguishable from not caring.
 	ExitCode *int `yaml:"exit_code"`
+
+	// --- posture (roadmap 5.1, 5.2) ---
+	// Probe names one of the Windows or macOS posture probes in
+	// internal/posture. The probe is collected once per report by the native
+	// tools, not per check.
+	Probe string `yaml:"probe"`
 }
 
 type Pack struct {
@@ -210,6 +217,10 @@ func (c *Check) validate() error {
 		}
 		if c.Enabled == nil && c.Active == nil {
 			return fmt.Errorf("systemd_unit needs enabled or active")
+		}
+	case "posture":
+		if !posture.KnownProbe(c.Probe) {
+			return fmt.Errorf("posture check names unknown probe %q", c.Probe)
 		}
 	case "command":
 		if len(c.Command) == 0 {
@@ -517,14 +528,26 @@ func knownControls(ids []controls.ID) error {
 
 // PacksDir returns the shipped pack directory, searching the same relative
 // locations the individual loaders do.
+//
+// DEFENDSEC_SCA_PACKS_DIR and the directory beside the executable are checked
+// too: a Windows service starts in System32 and a launchd daemon in /, so a
+// relative path alone would find nothing there and silently run no checks.
 func PacksDir() string {
-	return firstExistingDir("packs/sca",
+	var exeDir string
+	if exe, err := os.Executable(); err == nil {
+		exeDir = filepath.Join(filepath.Dir(exe), "packs", "sca")
+	}
+	return firstExistingDir(os.Getenv("DEFENDSEC_SCA_PACKS_DIR"), "packs/sca",
+		exeDir,
 		filepath.Join("..", "packs", "sca"),
 		filepath.Join("..", "..", "packs", "sca"))
 }
 
 func firstExistingDir(paths ...string) string {
 	for _, p := range paths {
+		if p == "" {
+			continue
+		}
 		if info, err := os.Stat(p); err == nil && info.IsDir() {
 			return p
 		}

@@ -52,23 +52,33 @@ var agentVersion = "dev"
 var buildCommit = "unknown"
 
 func main() {
+	// Under the Windows service control manager the process is driven by
+	// service events rather than signals, and has no console to log to.
+	if handled := runAsPlatformService(); handled {
+		return
+	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if err := run(log); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, log, os.Args[1:]); err != nil {
 		log.Error("defendsec-agentd", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger) error {
+func run(ctx context.Context, log *slog.Logger, args []string) error {
+	flag := flag.NewFlagSet("defendsec-agentd", flag.ExitOnError)
 	serverHTTP := flag.String("server-http", "https://127.0.0.1:47262", "control plane HTTPS base URL")
 	serverGRPC := flag.String("server-grpc", "127.0.0.1:47263", "control plane gRPC host:port")
 	enrollSecret := flag.String("enroll-secret", os.Getenv("DEFENDSEC_ENROLL_SECRET"), "enroll secret")
 	enrollFile := flag.String("enroll-secret-file", "", "file containing the enroll secret")
-	stateDir := flag.String("state-dir", "data/agent-mtls", "where to store CA, client cert, and key")
+	stateDir := flag.String("state-dir", defaultStateDir(), "where to store CA, client cert, and key")
 	tlsServerName := flag.String("tls-server-name", "localhost", "SNI / hostname to verify on the server certificate")
 	heartbeatEvery := flag.Duration("heartbeat", 20*time.Second, "unary heartbeat interval")
 	showVersion := flag.Bool("version", false, "print the agent version and build commit, then exit")
-	flag.Parse()
+	if err := flag.Parse(args); err != nil {
+		return err
+	}
 
 	if *showVersion {
 		fmt.Printf("%s %s\n", agentVersion, buildCommit)
@@ -115,9 +125,6 @@ func run(log *slog.Logger) error {
 	}
 	defer conn.Close()
 	client := defendsecv1.NewAgentControlClient(conn)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	go runStream(ctx, log, client, pub, deviceID, *stateDir)
 	go runInventory(ctx, log, client, *stateDir)
@@ -556,7 +563,7 @@ func inventoryReport(log *slog.Logger, snap hostinv.Snapshot, stateDir string) *
 	for _, item := range snap.Fim {
 		rep.Fim = append(rep.Fim, &defendsecv1.FimFile{Path: item.Path, Sha256: item.SHA256, Size: item.Size, Mtime: item.Mtime})
 	}
-	if snap.Platform == "linux" {
+	if snap.Platform == "linux" || snap.Posture != nil {
 		// Every pack in the directory, rather than two named here. A pack
 		// that only runs when somebody remembers to add it to this list is a
 		// pack that silently stops running when they do not.
@@ -568,11 +575,16 @@ func inventoryReport(log *slog.Logger, snap hostinv.Snapshot, stateDir string) *
 			packs = nil
 		}
 		for _, pack := range packs {
+			if pack.Platform != "" && pack.Platform != snap.Platform {
+				continue
+			}
 			// Every host-side check type, not just file_regex (roadmap 3.7).
 			// Bounded, because a pack with a slow command must not stall the
 			// inventory report behind it.
 			evalCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			results := sca.LocalHost().EvalPack(evalCtx, pack)
+			host := sca.LocalHost()
+			host.Posture = snap.Posture
+			results := host.EvalPack(evalCtx, pack)
 			cancel()
 			for _, r := range results {
 				rep.ScaResults = append(rep.ScaResults, &defendsecv1.ScaResult{

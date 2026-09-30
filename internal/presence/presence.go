@@ -65,6 +65,10 @@ type ScaResult struct {
 	Severity string `json:"severity"`
 	Pass     bool   `json:"pass"`
 	Detail   string `json:"detail"`
+	// Controls are the framework controls the check names. Carried with the
+	// result so the alert raised from it is tagged with them rather than
+	// only with the generic SCA signal.
+	Controls []string `json:"controls,omitempty"`
 }
 
 type Alert struct {

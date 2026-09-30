@@ -376,27 +376,27 @@ func (s *Server) processScaAlerts(dev presence.Device, results []sca.Result) {
 }
 
 func (s *Server) evaluateSca(dev presence.Device, agentResults []presence.ScaResult) []presence.ScaResult {
-	var packs []*sca.Pack
-	if pack, err := sca.LoadDefaultLinuxSSH(); err == nil {
-		packs = append(packs, pack)
-	} else {
-		s.log.Warn("sca pack", "err", err)
+	// Every pack the server knows, not two named here. The server's copy is
+	// authoritative for a check's title, severity and controls; the agent is
+	// authoritative only for whether it passed on that host.
+	packs, err := sca.LoadDir(sca.PacksDir())
+	if err != nil {
+		s.log.Warn("sca packs", "err", err)
+		packs = nil
 	}
-	if pack, err := sca.LoadDefaultLinuxHost(); err == nil {
-		packs = append(packs, pack)
+	index := map[string]sca.Check{}
+	for _, pack := range packs {
+		for _, check := range pack.Checks {
+			index[pack.ID+"/"+check.ID] = check
+		}
 	}
-	agentByKey := map[string]presence.ScaResult{}
-	for _, r := range agentResults {
-		agentByKey[r.PackID+"/"+r.CheckID] = r
-		agentByKey[r.CheckID] = r
-	}
+
 	var merged []presence.ScaResult
 	seen := map[string]bool{}
+
+	// Inventory-field checks are evaluated here, from what the host reported.
 	for _, pack := range packs {
-		if pack == nil {
-			continue
-		}
-		if dev.Platform != "" && pack.Platform != "" && pack.Platform != "linux" && pack.Platform != dev.Platform {
+		if dev.Platform != "" && pack.Platform != "" && pack.Platform != dev.Platform {
 			continue
 		}
 		for _, r := range sca.EvalInventoryFieldChecks(pack, dev) {
@@ -408,30 +408,34 @@ func (s *Server) evaluateSca(dev presence.Device, agentResults []presence.ScaRes
 			merged = append(merged, presence.ScaResult{
 				PackID: r.PackID, CheckID: r.CheckID, Title: r.Title,
 				Severity: r.Severity, Pass: r.Pass, Detail: r.Detail,
+				Controls: r.Controls,
 			})
 		}
-		for _, check := range pack.Checks {
-			if check.Type != "file_regex" {
-				continue
-			}
-			key := pack.ID + "/" + check.ID
-			if seen[key] {
-				continue
-			}
-			if r, ok := agentByKey[key]; ok {
-				seen[key] = true
-				merged = append(merged, r)
-				continue
-			}
-			if r, ok := agentByKey[check.ID]; ok {
-				seen[key] = true
-				r.PackID = pack.ID
-				merged = append(merged, r)
-			}
-		}
 	}
-	if len(merged) == 0 {
-		return agentResults
+
+	// Every result the agent evaluated, whatever its check type.
+	//
+	// This used to keep only file_regex results, so sysctl, mount-option,
+	// file-mode, command and platform-posture checks were evaluated on the
+	// host and then discarded here, before any alert could be raised. The
+	// console showed those checks as never failing because they never
+	// arrived.
+	for _, r := range agentResults {
+		key := r.PackID + "/" + r.CheckID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if check, ok := index[key]; ok {
+			if check.Title != "" {
+				r.Title = check.Title
+			}
+			if check.Severity != "" {
+				r.Severity = check.Severity
+			}
+			r.Controls = check.Controls
+		}
+		merged = append(merged, r)
 	}
 	return merged
 }

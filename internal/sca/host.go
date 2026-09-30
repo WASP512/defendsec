@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
+
+	"defendsec/internal/posture"
 )
 
 // Host is the machine a check runs against.
@@ -27,6 +28,9 @@ type Host struct {
 	LookupGroup func(name string) (gid uint32, err error)
 	// Runner executes commands. Nil means the default, allowlisted runner.
 	Runner Runner
+	// Posture is the Windows or macOS posture report collected for this
+	// run. Nil on Linux, where posture checks do not apply.
+	Posture posture.Report
 }
 
 // LocalHost is the real machine.
@@ -121,7 +125,7 @@ func (h *Host) EvalFileMode(check Check) Result {
 	}
 
 	if check.Owner != "" || check.Group != "" {
-		stat, ok := info.Sys().(*syscall.Stat_t)
+		stat, ok := fileOwner(info)
 		if !ok {
 			res.Detail = "ownership is not available on this platform"
 			return res

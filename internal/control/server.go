@@ -398,6 +398,7 @@ func toScaResults(in []presence.ScaResult) []sca.Result {
 		out[i] = sca.Result{
 			PackID: r.PackID, CheckID: r.CheckID, Title: r.Title,
 			Severity: r.Severity, Pass: r.Pass, Detail: r.Detail,
+			Controls: r.Controls,
 		}
 	}
 	return out

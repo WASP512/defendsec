@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"defendsec/internal/posture"
 )
 
 type Software struct {
@@ -53,6 +55,9 @@ type Snapshot struct {
 	PendingUpdates []Update
 	PatchInventory string
 	Fim            []FimFile
+	// Posture is the Windows or macOS posture report (roadmap 5.1, 5.2),
+	// handed to the SCA engine's posture checks. Nil on Linux.
+	Posture posture.Report
 }
 
 // HostIdentity is a cheap hostname/OS snapshot for heartbeats (no package queries).
@@ -100,7 +105,53 @@ func Collect() Snapshot {
 	snap.PendingUpdates = updates
 	snap.PatchInventory = status
 	snap.Fim = fimFiles()
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		applyPlatformInventory(&snap)
+	}
 	return snap
+}
+
+// applyPlatformInventory overlays what the Windows and macOS collectors found.
+// The Linux-shaped collectors above return zero values on these platforms, so
+// a value here only ever replaces an absence.
+func applyPlatformInventory(snap *Snapshot) {
+	ctx := context.Background()
+	rep, facts, err := posture.Collect(ctx)
+	if err == nil {
+		snap.Posture = rep
+		if facts.OSName != "" {
+			snap.OSName = facts.OSName
+		}
+		if facts.OSVersion != "" {
+			snap.OSVersion = facts.OSVersion
+		}
+		if facts.MemoryMb > 0 {
+			snap.MemoryMb = facts.MemoryMb
+		}
+		if facts.UptimeSeconds > 0 {
+			snap.UptimeSeconds = facts.UptimeSeconds
+		}
+		if facts.Serial != "" {
+			snap.Serial = facts.Serial
+		}
+		if facts.HardwareModel != "" {
+			snap.HardwareModel = facts.HardwareModel
+		}
+		snap.DiskEncryption = facts.DiskEncryption
+		snap.Firewall = facts.Firewall
+		for _, sw := range facts.Software {
+			snap.Software = append(snap.Software, Software{Name: sw.Name, Version: sw.Version})
+		}
+	}
+	inv := posture.CollectInventory(ctx)
+	for _, sw := range inv.Software {
+		snap.Software = append(snap.Software, Software{Name: sw.Name, Version: sw.Version})
+	}
+	snap.PendingUpdates = nil
+	for _, u := range inv.Updates {
+		snap.PendingUpdates = append(snap.PendingUpdates, Update{Name: u.Name, Available: u.Available})
+	}
+	snap.PatchInventory = inv.UpdateStatus
 }
 
 func run(name string, args ...string) string {
