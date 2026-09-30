@@ -34,6 +34,7 @@ import (
 	"defendsec/internal/secret"
 	"defendsec/internal/sigma"
 	"defendsec/internal/sign"
+	"defendsec/internal/sso"
 	"defendsec/internal/storepg"
 )
 
@@ -259,6 +260,10 @@ func run(log *slog.Logger) error {
 	// First-run setup: create the first administrator without the shared
 	// token, while no account exists and only for a window after start.
 	adminMux.HandleFunc("/v1/setup", svc.HandleSetup)
+	// Single sign-on (roadmap 5.4).
+	adminMux.HandleFunc("/v1/sso", svc.HandleSSO)
+	adminMux.HandleFunc("/v1/sso/start", svc.HandleSSO)
+	adminMux.HandleFunc("/v1/sso/finish", svc.HandleSSO)
 	adminMux.HandleFunc("/v1/logout", svc.HandleLogout)
 	adminMux.HandleFunc("/v1/session", svc.HandleSession)
 	adminMux.HandleFunc("/v1/users", svc.HandleUsers)
@@ -421,6 +426,39 @@ func run(log *slog.Logger) error {
 		}
 	}
 	svc.OpenSetupWindow(time.Now().UTC(), setupWindow)
+
+	// Single sign-on (roadmap 5.4). Off unless an issuer is set. A partial
+	// or unsafe configuration refuses to start rather than half-working:
+	// an operator who configured SSO believes it is in force.
+	if issuer := strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_ISSUER")); issuer != "" {
+		split := func(v string) []string {
+			var out []string
+			for _, x := range strings.Split(v, ",") {
+				if x = strings.TrimSpace(x); x != "" {
+					out = append(out, x)
+				}
+			}
+			return out
+		}
+		prov, err := sso.New(sso.Config{
+			Issuer:       issuer,
+			ClientID:     strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_CLIENT_ID")),
+			ClientSecret: strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_CLIENT_SECRET")),
+			RedirectURL:  strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_REDIRECT_URL")),
+			GroupsClaim:  strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_GROUPS_CLAIM")),
+			AdminGroups:  split(os.Getenv("DEFENDSEC_SSO_ADMIN_GROUPS")),
+			ViewerGroups: split(os.Getenv("DEFENDSEC_SSO_VIEWER_GROUPS")),
+			DisplayName:  strings.TrimSpace(os.Getenv("DEFENDSEC_SSO_NAME")),
+		})
+		if err != nil {
+			return fmt.Errorf("single sign-on: %w", err)
+		}
+		if pg == nil {
+			return fmt.Errorf("single sign-on is configured but no database is; SSO accounts are stored in Postgres")
+		}
+		svc.SetSSO(prov)
+		log.Info("single sign-on enabled", "issuer", issuer)
+	}
 	if setupWindow > 0 {
 		log.Info("first-run setup open while no accounts exist",
 			"window", setupWindow.String(),

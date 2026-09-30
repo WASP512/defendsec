@@ -1194,6 +1194,34 @@ exactly when TLS was on. The caveats in README.md and INSTALL.md are gone.
 **5.4 — Enterprise identity (SSO/OIDC).** Completes Phase 1.0. Group-to-role mapping, session
 management, and per-user attribution throughout the ledger.
 
+*Delivered as OIDC; SAML and SCIM are not.* Authorization code flow with PKCE, a browser-bound
+state, and an ID-token nonce — each closing a different replay: PKCE a stolen code, state a forged
+callback (login CSRF), nonce a replayed token. The ID token's signature, issuer, audience and
+expiry are verified against the provider's published keys, and tests exercise each rejection
+against a fake provider that signs real tokens: a forged signature, another client's audience, an
+expired token, the wrong issuer, a mismatched nonce.
+
+Three decisions worth recording. **Roles come only from mapped groups, and a user in none is
+refused** rather than given a default role — deny-by-default applies to who may sign in, and
+"everyone in the directory is a viewer" should be decided on purpose. A configuration with no
+groups mapped refuses to start. **Accounts are linked by (issuer, subject), never by username or
+email**, which can be reassigned at the IdP; an SSO user whose name collides with an existing local
+account is refused with a message saying so, because matching by name would let whoever holds that
+name at the IdP take over the local account. **The role is rewritten from the IdP's groups at every
+sign-in**, so removal from the admin group takes effect next time, while a local disable holds
+whatever the IdP says — the control plane can always withdraw access.
+
+SSO accounts store a password hash of `!sso`, which is not a valid encoding and so cannot verify
+against any password; there is a test trying several. Local accounts and the admin token keep
+working alongside SSO, so an IdP outage never locks an operator out, and discovery happens on first
+use so an IdP that is briefly down does not stop the control plane starting.
+
+*What it does not do:* no directory sync. Removal at the IdP takes effect at the next sign-in or
+when the 12-hour session expires; it does not end a session already open. Disabling the account in
+DefendSec does. Verified end to end against a real apid and console with the fake provider running
+as a separate TLS service: redirect, callback, session, audit entry, and forged callbacks refused
+before any code exchange.
+
 **5.5 — Scale past the homelab, and meet retention minimums.** Two hard caps today:
 `internal/cmdlog` keeps a **500-record ring buffer** — silently discarding privileged-action
 history regardless of age, which is exactly the record CJIS Policy Area 4 requires kept for a year

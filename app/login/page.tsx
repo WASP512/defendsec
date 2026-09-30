@@ -1,6 +1,6 @@
 import { LoginForm } from "@/components/login-form";
 import { isAuthenticatedSession, isDevFallbackToken } from "@/lib/auth";
-import { apidSetupStatus } from "@/lib/identity";
+import { apidSetupStatus, apidSSOStatus } from "@/lib/identity";
 import { loginState } from "@/lib/login-state";
 import { Anchor, LockKeyhole, ShieldCheck } from "lucide-react";
 import { redirect } from "next/navigation";
@@ -15,6 +15,7 @@ export default async function LoginPage({
     totp?: string;
     setupError?: string;
     created?: string;
+    ssoError?: string;
   }>;
 }) {
   if (await isAuthenticatedSession()) {
@@ -24,7 +25,8 @@ export default async function LoginPage({
   // Decided from the control plane's own unauthenticated setup status, rather
   // than from a signed-in endpoint whose 401 used to be read as "accounts
   // exist" — which hid first-run setup on every fresh install.
-  const state = loginState(await apidSetupStatus());
+  const [setup, sso] = await Promise.all([apidSetupStatus(), apidSSOStatus()]);
+  const state = loginState(setup);
   const isSetup = state.kind === "setup";
   return (
     <main className="grid min-h-full bg-muted/30 lg:grid-cols-[1.1fr_0.9fr]">
@@ -77,6 +79,8 @@ export default async function LoginPage({
               totpRequired={params.totp === "1"}
               setupError={params.setupError}
               created={params.created === "1"}
+              sso={sso}
+              ssoError={params.ssoError}
             />
           </div>
           <p className="mt-4 text-center text-xs text-muted-foreground">

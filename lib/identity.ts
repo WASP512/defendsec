@@ -259,3 +259,38 @@ export async function apidCryptoPosture(token: string): Promise<CryptoPosture> {
   }
   return (await res.json()) as CryptoPosture;
 }
+
+// Single sign-on (roadmap 5.4).
+
+export type SSOStatus = { enabled: boolean; displayName?: string };
+
+export async function apidSSOStatus(): Promise<SSOStatus> {
+  try {
+    const res = await apid("/v1/sso", { method: "GET" });
+    if (!res.ok) return { enabled: false };
+    return (await res.json()) as SSOStatus;
+  } catch {
+    return { enabled: false };
+  }
+}
+
+export type SSOFlow = { authUrl: string; state: string; nonce: string; verifier: string };
+
+export async function apidSSOStart(): Promise<SSOFlow | { error: string }> {
+  const res = await apid("/v1/sso/start", { method: "POST" });
+  const body = (await res.json().catch(() => ({}))) as SSOFlow & { error?: string };
+  if (!res.ok) return { error: body.error ?? `Control plane returned ${res.status}.` };
+  return body;
+}
+
+export async function apidSSOFinish(input: {
+  code: string;
+  verifier: string;
+  nonce: string;
+  clientAddress: string;
+}): Promise<{ token: string } | { error: string }> {
+  const res = await apid("/v1/sso/finish", { method: "POST", body: JSON.stringify(input) });
+  const body = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
+  if (res.ok && body.token) return { token: body.token };
+  return { error: body.error ?? `Control plane returned ${res.status}.` };
+}

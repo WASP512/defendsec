@@ -189,6 +189,26 @@ function TokenForm({
   );
 }
 
+function SSOButton({ name, error }: { name: string; error?: string }) {
+  return (
+    <div className="space-y-2">
+      {/* A link, not a form: the start route redirects to the identity provider. */}
+      <a
+        href="/api/sso/start"
+        className="flex h-10 w-full items-center justify-center rounded-md border bg-background text-sm font-medium hover:bg-muted"
+      >
+        Sign in with {name}
+      </a>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <span className="h-px flex-1 bg-border" />
+        or
+        <span className="h-px flex-1 bg-border" />
+      </div>
+    </div>
+  );
+}
+
 export function LoginForm({
   state,
   showDevHint,
@@ -198,7 +218,11 @@ export function LoginForm({
   totpRequired,
   setupError,
   created,
+  sso,
+  ssoError,
 }: {
+  sso?: { enabled: boolean; displayName?: string };
+  ssoError?: string;
   state: LoginState;
   showDevHint: boolean;
   failed: boolean;
@@ -208,10 +232,17 @@ export function LoginForm({
   setupError?: string;
   created?: boolean;
 }) {
+  const ssoButton = sso?.enabled ? (
+    <SSOButton name={sso.displayName || "single sign-on"} error={ssoError} />
+  ) : ssoError ? (
+    <p className="text-sm text-destructive">{ssoError}</p>
+  ) : null;
+
   switch (state.kind) {
     case "setup":
       return (
         <div className="space-y-5">
+          {ssoButton}
           <SetupForm minutesRemaining={state.minutesRemaining} error={setupError} />
           <TokenForm showDevHint={showDevHint} failed={failed} />
         </div>
@@ -220,6 +251,7 @@ export function LoginForm({
     case "setup-closed":
       return (
         <div className="space-y-5">
+          {ssoButton}
           <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
             <p className="font-medium">First-run setup has closed.</p>
             <p className="mt-1 text-muted-foreground">
@@ -261,6 +293,7 @@ export function LoginForm({
     case "signin":
       return (
         <div className="space-y-5">
+          {ssoButton}
           <SignInForm
             failed={failed}
             locked={locked}

@@ -36,6 +36,7 @@ import (
 	"defendsec/internal/sca"
 	"defendsec/internal/sigma"
 	"defendsec/internal/sign"
+	"defendsec/internal/sso"
 	"defendsec/internal/storepg"
 )
 
@@ -87,6 +88,10 @@ type Server struct {
 	// setupOpenUntil is when first-run setup closes. Zero means it is not
 	// open at all. See setup.go.
 	setupOpenUntil time.Time
+
+	// sso is the optional OIDC provider (roadmap 5.4). Nil means SSO is not
+	// configured; local accounts and the admin token work either way.
+	sso *sso.Provider
 }
 
 // SetAnchoring configures checkpoint anchoring. Called at startup rather than

@@ -1340,3 +1340,37 @@ defendsec-verify --version
 ```
 
 `defendsec-web` reports it in its startup log, having no flags of its own.
+
+---
+
+## Single sign-on (OIDC)
+
+DefendSec can sign operators in through any OpenID Connect provider: Microsoft Entra ID, Okta,
+Google Workspace, Keycloak, Authentik, and so on.
+
+1. At your IdP, register an application (confidential client, authorization code flow) with the
+   redirect URL `https://<console-host>:47261/api/sso/callback`. Include a **groups** claim in the ID
+   token.
+2. Create two groups, for example `defendsec-admins` and `defendsec-viewers`.
+3. Set the `DEFENDSEC_SSO_*` variables in `/etc/defendsec/apid.env` (see `apid.env.example`) and
+   restart `defendsec-apid`. The login page shows **Sign in with <name>**.
+
+For Microsoft Entra ID the issuer is `https://login.microsoftonline.com/<tenant-id>/v2.0`, and group
+claims arrive as object IDs unless you configure them otherwise — map the IDs.
+
+**How roles work.** Only the groups you map grant access. Someone in neither group is refused and
+the refusal is recorded (`sso_refused`), rather than getting a default role. The role is recalculated
+from the IdP's groups every time someone signs in, so removing a person from the admin group takes
+effect at their next sign-in.
+
+**What SSO does not do.** There is no directory sync. Removing someone at the IdP does not end a
+session that is already open; it ends at the next sign-in or when the session expires (12 hours). To
+cut someone off immediately, disable their account under **Accounts** — that holds regardless of what
+the IdP says.
+
+**Accounts are never matched by name.** If a local account called `mason` already exists and an SSO
+user called `mason` signs in, they are refused with a message saying so. Rename or remove the local
+account first if they are the same person.
+
+**Keep a way in.** Local accounts and the admin token keep working alongside SSO, so an IdP outage
+does not lock you out. Keeping one local administrator is recommended.
