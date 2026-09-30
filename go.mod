@@ -1,6 +1,6 @@
 module defendsec
 
-go 1.26.0
+go 1.26.8
 
 require (
 	github.com/cilium/ebpf v0.22.0
@@ -11,7 +11,7 @@ require (
 	golang.org/x/crypto v0.57.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.48.0
-	google.golang.org/grpc v1.84.0
+	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 )

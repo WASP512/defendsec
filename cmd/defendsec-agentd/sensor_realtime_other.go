@@ -9,7 +9,5 @@ import (
 	"defendsec/internal/sensor"
 )
 
-// platformRealtimeSensor: macOS's realtime path is EndpointSecurity, which
-// needs an Apple-granted entitlement DefendSec does not yet hold. See
-// docs/MACOS.md.
+// platformRealtimeSensor is Windows-only (ETW); Linux uses eBPF directly.
 func platformRealtimeSensor(*slog.Logger, string, string, *events.Tree) sensor.Sensor { return nil }

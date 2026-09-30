@@ -24,7 +24,7 @@ type DeviceQuery struct {
 	// Q matches hostname, serial, username, OS name, or an IP address,
 	// case-insensitively, as a substring.
 	Q string
-	// Platform is linux, windows, darwin, or empty for any.
+	// Platform is linux, windows, or empty for any.
 	Platform string
 	// Status is online, offline, isolated, or empty for any.
 	Status string
@@ -103,9 +103,9 @@ func (q *DeviceQuery) Normalize() error {
 		return fmt.Errorf("search is longer than 200 characters")
 	}
 	switch q.Platform {
-	case "", "linux", "windows", "darwin":
+	case "", "linux", "windows":
 	default:
-		return fmt.Errorf("platform must be linux, windows or darwin")
+		return fmt.Errorf("platform must be linux or windows")
 	}
 	switch q.Status {
 	case "", "online", "offline", "isolated":

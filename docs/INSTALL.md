@@ -228,7 +228,8 @@ DEFENDSEC_COOKIE_SECURE=false
 
 Do **not** run the Proxmox helper on the machines you want to inventory.
 
-On each Linux host (amd64 or arm64):
+On each Linux host (amd64 or arm64) running Ubuntu 22.04+, Debian 12+, Fedora, RHEL 8+ (or Rocky,
+AlmaLinux, CentOS Stream) or openSUSE Leap 16+ / Tumbleweed:
 
 1. Sign in to the console as admin.
 2. Open **Enroll**.
@@ -258,6 +259,12 @@ The agent installer:
 - writes `/etc/defendsec/enroll-secret` and `agentd.env`
 - enables `defendsec-agentd.service`
 
+The installer uses whichever package manager the host has — apt, dnf, yum or zypper. On Fedora,
+RHEL and openSUSE nothing needs opening on the agent: it only connects out. The server installer
+opens ports 47261–47263 in firewalld or ufw when either is active. Configuration checks adapt to
+the distro: they use its own package names, check SELinux on Fedora, RHEL and openSUSE and
+AppArmor on Ubuntu and Debian, and skip checks that do not apply.
+
 Then open **Hosts**. The machine should appear within about a minute.
 
 ### Windows hosts
@@ -280,13 +287,6 @@ msiexec /i defendsec-agent-windows-amd64.msi /qn ^
 The secret reaches the service as an argument; the agent deletes it from the
 service configuration as soon as it has enrolled. See [WINDOWS.md](WINDOWS.md)
 for what the Windows agent collects and what it cannot yet do.
-
-### macOS hosts
-
-The **macOS** tab installs a launchd daemon (`com.defendsec.agentd`) with the
-secret in `/Library/Application Support/DefendSec/enroll-secret` (root, 0600) and
-the log in `/Library/Logs/DefendSec/agentd.log`. See [MACOS.md](MACOS.md),
-including how full process visibility (EndpointSecurity) is enabled.
 
 ### After you sign in
 
@@ -381,7 +381,6 @@ from your server's `/downloads`:
 | --- | --- | --- |
 | Linux | `sudo bash uninstall-agent.sh` | `--purge-data` |
 | Windows | `C:\Program Files\DefendSec\uninstall-agent.ps1` (installed with the agent), or Settings → Apps → DefendSec Agent for an MSI install | `-PurgeData` |
-| macOS | `sudo defendsec-agent-uninstall` (installed with the agent) | `--purge-data` |
 
 Without a server to download from:
 
@@ -431,7 +430,7 @@ Open `47261–47263` from your admin network and from agents. Leave `47264` and 
 
 ## Notes for operators
 
-- Debian 12’s packaged Go 1.19 and Node 18 are too old. The installer downloads upstream Go and Node into `/usr/local` and checks the published SHA256. Pin with `GO_VERSION=go1.24.6` / `NODE_VERSION=v22.20.0` if you need specific builds.
+- Debian 12’s packaged Go 1.19 and Node 18 are too old. The installer downloads upstream Go and Node into `/usr/local` and checks the published SHA256. Pin with `GO_VERSION=go1.26.8` (at least the `go` line in go.mod) / `NODE_VERSION=v22.20.0` if you need specific builds.
 - Postgres is **native packages** by default so Proxmox LXC does not need Docker. Use `--postgres docker` only if you know you want it (`nesting=1` is already set on the CT).
 - Sample demo hosts are **off** in production. Set `DEFENDSEC_ENABLE_SAMPLE_DATA=true` in `console.env` only if you want them.
 

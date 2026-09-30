@@ -10,7 +10,8 @@
 | Process events | Process-table sampling by default; ETW opt-in | See below. |
 | `kill_process` | Toolhelp + TerminateProcess | Names match case-insensitively with or without `.exe`. Core system processes (`lsass`, `csrss`, `wininit`, `winlogon`, `services`, `smss`, `svchost`, `MsMpEng`) are refused. |
 | Isolation | Windows Firewall (`netsh advfirewall`) | Needs `DEFENDSEC_ISOLATE_NET=1`, as on Linux. Before changing anything it records each profile's state and policy. It then allows outbound TCP only to the control plane and blocks inbound, overriding allow rules such as RDP, and sets block-outbound. Release deletes its rules and restores the recorded profiles. A domain GPO that manages the firewall can override this. |
-| File integrity | The same hash-based FIM as Linux, over Windows paths. | |
+| File integrity | The same hash-based FIM as Linux | Watches `hosts` and `services`, Group Policy machine scripts and `System32\Tasks` (scheduled tasks) by default; add paths with `DEFENDSEC_FIM_PATHS`. |
+| Live queries | PowerShell and the process table | `processes` (with command lines), `listening_ports` (TCP listeners and UDP endpoints, with owning process), `users` (local accounts), `logged_in_users` (`quser`), `crontab` = scheduled tasks with their actions, `systemd_units` = services with their binary paths, `mounts` = volumes, `os_info`. Output is cast to plain types in the script and parsed by tested code; the scripts are checked to parse under PowerShell in CI. |
 
 A posture probe that cannot run — a cmdlet missing on Home edition, Defender
 absent because another antivirus is installed — is reported as *unknown* and

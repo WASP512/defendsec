@@ -38,6 +38,13 @@ const LIVE_QUERIES = [
   "os_info",
 ] as const;
 
+// What a query answers on Windows, where the Linux name does not fit.
+const WINDOWS_MEANING: Partial<Record<(typeof LIVE_QUERIES)[number], string>> = {
+  crontab: "scheduled tasks on Windows",
+  systemd_units: "services on Windows",
+  mounts: "volumes on Windows",
+};
+
 type SavedQuery = {
   id: string;
   name: string;
@@ -346,7 +353,12 @@ export function ResponsePanel({
               </SelectTrigger>
               <SelectContent>
                 {LIVE_QUERIES.map((item) => (
-                  <SelectItem key={item} value={item}>{item}</SelectItem>
+                  <SelectItem key={item} value={item}>
+                    {item}
+                    {WINDOWS_MEANING[item] ? (
+                      <span className="ml-1 text-muted-foreground">({WINDOWS_MEANING[item]})</span>
+                    ) : null}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>

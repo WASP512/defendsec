@@ -1,4 +1,4 @@
-export type Platform = "darwin" | "windows" | "linux" | "unknown";
+export type Platform = "windows" | "linux" | "unknown";
 
 export type SoftwareItem = {
   name: string;

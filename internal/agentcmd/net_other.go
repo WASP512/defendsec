@@ -1,4 +1,4 @@
-//go:build !linux && !windows && !darwin
+//go:build !linux && !windows
 
 package agentcmd
 
@@ -8,7 +8,7 @@ import (
 	"runtime"
 )
 
-const isolateDescription = ""
+func isolateDescription() string { return "" }
 
 func privileged() bool { return os.Geteuid() == 0 }
 

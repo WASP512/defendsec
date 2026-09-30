@@ -188,6 +188,17 @@ Keep `47262`/`47263` reachable by agents. Do not expose Postgres, port `47264`, 
 
 ---
 
+## Supported operating systems
+
+The **Supported OS** policy passes hosts on a release their vendor still patches: Ubuntu 22.04+,
+Debian 12+, Fedora 43+, RHEL 8+ (with Rocky, AlmaLinux and CentOS Stream), openSUSE Leap 16+ or
+Tumbleweed, and Windows build 20348+ (Server 2022; Windows 11 is 22000+). Any other system reads as
+*unknown*, not failing. Raise the minimums as releases reach end of life with
+`DEFENDSEC_SUPPORTED_OS` in `/etc/defendsec/console.env`, for example
+`fedora=44,rhel=9,windows=26100`.
+
+---
+
 ## Scale and the device store
 
 With Postgres configured (every packaged install), **Postgres is the primary
@@ -285,6 +296,23 @@ DEFENDSEC_DATA_DIR="$PWD/data" DATABASE_URL=postgres://... ./scripts/backup.sh
 - Open FIM drift and SCA findings can auto-resolve when the host returns to baseline.
 - Host mutation is always Ed25519-signed: isolate, release, kill-by-name, live query, agent update, allowlisted scripts, quarantine path.
 - Isolate only drops network if the agent is root **and** `DEFENDSEC_ISOLATE_NET=1`. Otherwise it is a flag in the console.
+- **What network isolation allows** (Linux and Windows): the control plane — so the agent can
+  always reconnect and receive *release* — and nothing else, inbound or outbound. On Linux it also
+  allows loopback, DHCP (so the host keeps its address) and IPv6 neighbour discovery. Connections
+  that were open when the host was isolated are cut: accepting "established" traffic would have
+  kept the attacker's session alive.
+- On Linux it is an nftables table (`inet defendsec_isolate`), covering IPv4 and IPv6, replaced
+  atomically and effective alongside firewalld or ufw. Where `nft` is unavailable it falls back to
+  `iptables` and `ip6tables`, and refuses to isolate rather than leave IPv6 open. Isolation is
+  re-applied when the agent starts, so a reboot does not quietly release a host the console shows
+  as isolated. If that fails, the agent logs an error, the host's isolation message says network
+  isolation is not in effect, and it tries again at every start until it succeeds or the host is
+  released. A control plane configured by name is resolved when isolation is applied, and those
+  addresses are kept (`isolate-resolved.json` in the state directory) for a restart while isolated,
+  when DNS is blocked; they are deleted on release. `scripts/test-isolation-netns.sh` checks all of this against real traffic in
+  network namespaces, and runs in CI.
+- On Windows, connections already open when isolation starts are not cut, because Windows
+  Firewall evaluates connections when they are made.
 
 ---
 
@@ -770,7 +798,7 @@ built, so the first deployment against yours is still worth watching.
 ## Provisioning with Ansible and Terraform
 
 - `packaging/ansible` — a role that installs, enrolls or removes the agent on
-  Linux, Windows (the MSI) and macOS. Downloads are verified, the secret is
+  Linux (Ubuntu, Debian, Fedora, RHEL, openSUSE) and Windows (the MSI). Downloads are verified, the secret is
   `no_log`, and re-running on an enrolled host does nothing. See its README.
 - `packaging/terraform/defendsec-agent` — a module that renders first-boot user
   data (bash, or `<powershell>` for Windows) to install and enroll the agent on

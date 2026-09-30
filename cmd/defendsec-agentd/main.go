@@ -100,6 +100,13 @@ func run(ctx context.Context, log *slog.Logger, args []string) error {
 	if err := os.MkdirAll(*stateDir, 0o700); err != nil {
 		return err
 	}
+	if st, reapplied, err := agentcmd.ReapplyIsolation(*stateDir); reapplied {
+		if err != nil || st.Mode != "net" {
+			log.Error("host is marked isolated but network isolation could not be re-applied", "detail", st.Message, "err", err)
+		} else {
+			log.Warn("network isolation re-applied at start", "detail", st.Message)
+		}
+	}
 
 	if err := ensureEnrolled(log, *serverHTTP, *tlsServerName, *stateDir, secret); err != nil {
 		return err

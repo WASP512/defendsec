@@ -11,6 +11,16 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    ignore:
+      # typescript-eslint (inside eslint-config-next) refuses to load under
+      # TypeScript 7, so the bump breaks `npm run lint` outright. It has been
+      # merged and reverted twice. Lift this once typescript-eslint supports 7.
+      - dependency-name: "typescript"
+        versions: [">=7"]
+      # eslint-plugin-react (also inside eslint-config-next) supports eslint up
+      # to 9 and crashes on load under 10 (context.getFilename was removed).
+      - dependency-name: "eslint"
+        versions: [">=10"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

@@ -285,3 +285,25 @@ func TestShippedPacksExerciseTheNewCheckTypes(t *testing.T) {
 	}
 	t.Logf("shipped check types: %v", used)
 }
+
+// An unreported value is missing evidence, not a failure (a Debian host
+// with neither ufw nor firewalld reports no firewall state).
+func TestInventoryFieldUnknownIsNotAFailure(t *testing.T) {
+	pack := &Pack{ID: "p", Checks: []Check{
+		{ID: "fw", Type: "inventory_field", Field: "firewall", Expect: "true"},
+		{ID: "enc", Type: "inventory_field", Field: "diskEncryption", Expect: "true"},
+	}}
+	on := true
+	dev := presence.Device{Firewall: &on} // disk encryption not reported
+	got := EvalInventoryFieldChecks(pack, dev)
+	if len(got) != 1 || got[0].CheckID != "fw" || !got[0].Pass {
+		t.Fatalf("results %+v", got)
+	}
+	if u := UnknownInventoryFieldChecks(pack, dev); len(u) != 1 || u[0] != "p/enc" {
+		t.Fatalf("unknown %v", u)
+	}
+	off := false
+	if r := EvalInventoryFieldChecks(pack, presence.Device{Firewall: &off, DiskEncryption: &off}); len(r) != 2 || r[0].Pass || r[1].Pass {
+		t.Fatalf("a reported false must still fail: %+v", r)
+	}
+}

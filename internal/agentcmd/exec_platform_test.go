@@ -3,7 +3,7 @@ package agentcmd
 import "testing"
 
 func TestProtectedNamesIgnoreCaseAndExe(t *testing.T) {
-	for _, n := range []string{"LSASS.EXE", "lsass", "csrss.exe", "launchd", "defendsec-agentd.exe"} {
+	for _, n := range []string{"LSASS.EXE", "lsass", "csrss.exe", "defendsec-agentd.exe"} {
 		if _, err := KillByName(n); err == nil || !contains(err.Error(), "protected") {
 			t.Errorf("%s: want protected refusal, got %v", n, err)
 		}

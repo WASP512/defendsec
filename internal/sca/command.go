@@ -63,7 +63,7 @@ const (
 // operator can make, and the docs say what it costs.
 var DefaultAllowedCommands = []string{
 	"systemctl", "dpkg-query", "rpm", "sysctl", "mount", "findmnt",
-	"stat", "getent", "id", "sestatus", "getenforce", "auditctl",
+	"stat", "getent", "id", "sestatus", "getenforce", "aa-enabled", "auditctl",
 	"grep", "awk", "modprobe", "lsmod", "ss", "sshd", "iptables-save", "nft",
 }
 

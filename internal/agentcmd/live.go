@@ -71,6 +71,11 @@ func ParseAgentUpdatePayload(raw []byte) (AgentUpdatePayload, error) {
 }
 
 func RunLiveQuery(query string) (string, error) {
+	if runtime.GOOS == "windows" {
+		if out, ok, err := runWindowsLiveQuery(query); ok {
+			return out, err
+		}
+	}
 	switch query {
 	case "processes":
 		return listProcesses()
@@ -308,7 +313,7 @@ func listUsers() (string, error) {
 }
 
 func listLoggedInUsers() (string, error) {
-	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "linux" {
 		out, err := exec.Command("who").CombinedOutput()
 		text := strings.TrimSpace(string(out))
 		if err == nil && text != "" {

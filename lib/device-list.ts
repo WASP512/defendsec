@@ -3,7 +3,7 @@
 
 export type DeviceListQuery = {
   q: string;
-  platform: "" | "linux" | "windows" | "darwin";
+  platform: "" | "linux" | "windows";
   status: "" | "online" | "offline" | "isolated";
   cursor: string;
   // Cursors of the pages before this one, so Previous works with a
@@ -36,7 +36,7 @@ export type DevicePage = { devices: DeviceSummary[]; next?: string; total: numbe
 
 export const PAGE_SIZE = 50;
 
-const PLATFORMS = new Set(["linux", "windows", "darwin"]);
+const PLATFORMS = new Set(["linux", "windows"]);
 const STATUSES = new Set(["online", "offline", "isolated"]);
 const CURSOR_RE = /^[A-Za-z0-9_-]{1,400}$/;
 

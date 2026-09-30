@@ -2,8 +2,6 @@ import { ONLINE_WINDOW_MS, type Platform } from "./types";
 
 export function platformLabel(platform: Platform) {
   switch (platform) {
-    case "darwin":
-      return "macOS";
     case "windows":
       return "Windows";
     case "linux":

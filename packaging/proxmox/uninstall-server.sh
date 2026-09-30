@@ -48,6 +48,18 @@ rm -rf /etc/systemd/system/defendsec-apid.service.d /etc/systemd/system/defendse
 systemctl daemon-reload
 systemctl reset-failed defendsec-apid defendsec-console 2>/dev/null || true
 
+# Close the ports install-server.sh opened, in whichever firewall it used.
+if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+  info "Closing DefendSec ports in firewalld"
+  for port in 47261 47262 47263; do
+    firewall-cmd --permanent --remove-port="${port}/tcp" >/dev/null 2>&1 || true
+  done
+  firewall-cmd --reload >/dev/null 2>&1 || true
+elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  info "Closing DefendSec ports in ufw"
+  ufw delete allow 47261:47263/tcp >/dev/null 2>&1 || true
+fi
+
 if command -v docker >/dev/null 2>&1; then
   if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx defendsec-postgres; then
     info "Removing Docker Postgres container defendsec-postgres"

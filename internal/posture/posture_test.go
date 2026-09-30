@@ -107,96 +107,6 @@ func TestParseWindowsRejectsGarbage(t *testing.T) {
 	}
 }
 
-func ok(out string) MacCommand { return MacCommand{Out: out} }
-
-func macHealthy() MacInputs {
-	return MacInputs{
-		FDESetup:   ok("FileVault is On.\n"),
-		Firewall:   ok("Firewall is enabled. (State = 1)\n"),
-		Stealth:    ok("Firewall stealth mode is on\n"),
-		CSRUtil:    ok("System Integrity Protection status: enabled.\n"),
-		Spctl:      ok("assessments enabled\n"),
-		XProtect:   ok("5287\n"),
-		ConfigData: MacCommand{Out: "The domain/default pair does not exist", Exit: 1},
-		Critical:   ok("1\n"),
-		AutoLogin:  MacCommand{Out: "The domain/default pair does not exist", Exit: 1},
-		SwVers:     ok("ProductName:\t\tmacOS\nProductVersion:\t\t14.5\nBuildVersion:\t\t23F79\n"),
-		MemSize:    ok("17179869184\n"),
-		Model:      ok("Mac14,2\n"),
-		BootTime:   ok("{ sec = 1700000000, usec = 0 } Tue Nov 14 22:13:20 2023\n"),
-		NowUnix:    1700003600,
-	}
-}
-
-func TestParseMacHealthy(t *testing.T) {
-	rep, facts := ParseMac(macHealthy())
-	if len(rep) != 8 {
-		t.Errorf("got %d probes, want 8", len(rep))
-	}
-	for id, f := range rep {
-		if f.State != Pass {
-			t.Errorf("%s = %v (%s), want pass", id, f.State, f.Detail)
-		}
-	}
-	if facts.OSVersion != "14.5" || facts.MemoryMb != 16384 || facts.UptimeSeconds != 3600 || facts.HardwareModel != "Mac14,2" {
-		t.Errorf("facts: %+v", facts)
-	}
-}
-
-func TestParseMacFailures(t *testing.T) {
-	in := macHealthy()
-	in.FDESetup = ok("FileVault is Off.\n")
-	in.Firewall = ok("Firewall is disabled. (State = 0)\n")
-	in.Stealth = ok("Firewall stealth mode is off\n")
-	in.CSRUtil = ok("System Integrity Protection status: enabled (Custom Configuration).\n\nConfiguration:\n\tKext Signing: disabled\n")
-	in.Spctl = ok("assessments disabled\n")
-	in.XProtect = MacCommand{Exit: 1}
-	in.ConfigData = ok("0\n")
-	in.AutoLogin = ok("alice\n")
-	rep, facts := ParseMac(in)
-	for id, f := range rep {
-		if f.State != Fail {
-			t.Errorf("%s = %v (%s), want fail", id, f.State, f.Detail)
-		}
-	}
-	if facts.DiskEncryption == nil || *facts.DiskEncryption {
-		t.Error("filevault off should report false")
-	}
-}
-
-func TestParseMacEncryptionInProgressIsNotProtection(t *testing.T) {
-	in := macHealthy()
-	in.FDESetup = ok("FileVault is On.\nEncryption in progress: Percent completed = 40.1\n")
-	rep, _ := ParseMac(in)
-	if rep[MacFileVault].State != Fail {
-		t.Errorf("got %v", rep[MacFileVault])
-	}
-}
-
-func TestParseMacToolsThatCannotRunAreUnknown(t *testing.T) {
-	in := macHealthy()
-	in.FDESetup = MacCommand{Err: "fdesetup could not be run: permission denied"}
-	in.Critical = MacCommand{Err: "defaults missing"}
-	rep, facts := ParseMac(in)
-	if rep[MacFileVault].State != Unknown || rep[MacSecurityUpdates].State != Unknown {
-		t.Errorf("got %v / %v", rep[MacFileVault], rep[MacSecurityUpdates])
-	}
-	if facts.DiskEncryption != nil {
-		t.Error("unknown must stay nil")
-	}
-}
-
-func TestParseMacUpdates(t *testing.T) {
-	modern := "Software Update Tool\n\nFinding available software\nSoftware Update found the following new or updated software:\n* Label: macOS Sonoma 14.6-23G80\n\tTitle: macOS Sonoma 14.6, Version: 14.6, Size: 1024000K, Recommended: YES, Action: restart,\n* Label: Safari17.6\n\tTitle: Safari, Version: 17.6, Size: 150000K, Recommended: YES,\n"
-	ups := ParseMacUpdates(modern)
-	if len(ups) != 2 || ups[0].Name != "macOS Sonoma 14.6" || ups[0].Available != "14.6" || ups[1].Name != "Safari" {
-		t.Errorf("modern: %+v", ups)
-	}
-	if ups := ParseMacUpdates("Software Update Tool\n\nFinding available software\nNo new software available.\n"); ups != nil {
-		t.Errorf("none: %+v", ups)
-	}
-}
-
 func TestParseWindowsUpdates(t *testing.T) {
 	ups, err := ParseWindowsUpdates([]byte(`{"title":"2024-06 Cumulative Update","kb":"5039212"}`))
 	if err != nil || len(ups) != 1 || ups[0].Available != "KB5039212" {
@@ -205,13 +115,6 @@ func TestParseWindowsUpdates(t *testing.T) {
 	ups, err = ParseWindowsUpdates([]byte(""))
 	if err != nil || ups != nil {
 		t.Errorf("empty: %+v %v", ups, err)
-	}
-}
-
-func TestParseMacApps(t *testing.T) {
-	sw, err := ParseMacApps([]byte(`{"SPApplicationsDataType":[{"_name":"Safari","version":"17.5"},{"_name":"Safari","version":"17.5"},{"_name":"Xcode","version":"15.4"}]}`))
-	if err != nil || len(sw) != 2 {
-		t.Errorf("%+v %v", sw, err)
 	}
 }
 

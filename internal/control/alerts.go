@@ -417,6 +417,81 @@ func (s *Server) processDriftAlerts(dev presence.Device) {
 	}
 }
 
+// resolveUnknownSca resolves alerts for inventory checks this host gave no
+// value for. Such checks now produce no result; an alert raised when an
+// earlier version counted the missing value as a failure asserted something
+// nobody measured, and would otherwise stay open forever.
+func (s *Server) resolveUnknownSca(dev presence.Device) {
+	packs, err := sca.LoadShippedCached()
+	if err != nil {
+		return
+	}
+	for _, pack := range packs {
+		if dev.Platform != "" && pack.Platform != "" && pack.Platform != dev.Platform {
+			continue
+		}
+		for _, source := range sca.UnknownInventoryFieldChecks(pack, dev) {
+			s.resolveAlert(dev.ID, "sca", source)
+		}
+	}
+}
+
+// resolveOutOfScopeSca resolves alerts for distro-scoped checks that do not
+// apply to this host. The agent skips a check scoped to other distros and
+// reports nothing for it, so an alert raised before the check was scoped
+// (the Debian package name failing on every RPM host, say) would never see a
+// pass and would stay open.
+//
+// A missing result alone is not proof: the agent also skips every scoped
+// check when it cannot tell the host's distro, and a report can be
+// incomplete. So a check's alert is resolved only when the same report
+// carries a result for a check in its pack scoped to distros disjoint from
+// its own. That result shows the agent knew the host's family, and that the
+// family is not one the missing check applies to.
+func (s *Server) resolveOutOfScopeSca(dev presence.Device, reported []presence.ScaResult) {
+	if len(reported) == 0 {
+		return
+	}
+	packs, err := sca.LoadShippedCached()
+	if err != nil {
+		return
+	}
+	ran := map[string]bool{}
+	for _, r := range reported {
+		ran[r.PackID+"/"+r.CheckID] = true
+	}
+	disjoint := func(a, b []string) bool {
+		for _, x := range a {
+			for _, y := range b {
+				if x == y {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	for _, pack := range packs {
+		var familyShown [][]string // distro lists of scoped checks that ran
+		for _, check := range pack.Checks {
+			if len(check.Distros) > 0 && ran[pack.ID+"/"+check.ID] {
+				familyShown = append(familyShown, check.Distros)
+			}
+		}
+		for _, check := range pack.Checks {
+			source := pack.ID + "/" + check.ID
+			if len(check.Distros) == 0 || !sca.IsHostCheck(check.Type) || ran[source] {
+				continue
+			}
+			for _, shown := range familyShown {
+				if disjoint(shown, check.Distros) {
+					s.resolveAlert(dev.ID, "sca", source)
+					break
+				}
+			}
+		}
+	}
+}
+
 func (s *Server) processScaAlerts(dev presence.Device, results []sca.Result) {
 	for _, r := range results {
 		r := r

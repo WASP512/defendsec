@@ -34,7 +34,7 @@ type MtlsFile = {
 };
 
 function asPlatform(value: string | undefined): Platform {
-  if (value === "darwin" || value === "windows" || value === "linux") return value;
+  if (value === "windows" || value === "linux") return value;
   return "unknown";
 }
 

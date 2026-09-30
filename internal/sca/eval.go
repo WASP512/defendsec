@@ -72,8 +72,9 @@ func (h *Host) Eval(ctx context.Context, check Check) Result {
 // EvalPack runs every host check in a pack.
 func (h *Host) EvalPack(ctx context.Context, pack *Pack) []Result {
 	var out []Result
+	distro := h.distro()
 	for _, check := range pack.Checks {
-		if !IsHostCheck(check.Type) {
+		if !IsHostCheck(check.Type) || !check.appliesTo(distro) {
 			continue
 		}
 		if check.Type == "posture" {

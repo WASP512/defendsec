@@ -1,14 +1,17 @@
 package agentcmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-// Isolation on Windows and macOS (roadmap 5.1, 5.2). The commands and rules
+// Isolation on Windows (roadmap 5.1). The commands and rules
 // are built by pure functions so they are tested on every platform; only
 // running them is platform-specific.
 
@@ -73,6 +76,49 @@ func resolveControlPlane(lookup func(string) ([]string, error)) (endpoint, error
 	}
 	sort.Strings(ep.IPs)
 	sort.Ints(ep.Ports)
+	return ep, nil
+}
+
+// resolvedPath holds the control-plane addresses the current isolation was
+// built from, by host name.
+func resolvedPath(dir string) string { return filepath.Join(dir, "isolate-resolved.json") }
+
+// resolveControlPlaneIn resolves as resolveControlPlane does and remembers the
+// answers in dir. Once a host is isolated its DNS is blocked, so an agent
+// restarted while isolated cannot resolve a named control plane again;
+// where a lookup fails, the addresses remembered from the isolation already
+// in place are used. The file is removed on release, so it never outlives
+// the isolation it describes.
+func resolveControlPlaneIn(dir string, lookup func(string) ([]string, error)) (endpoint, error) {
+	remembered := map[string][]string{}
+	if raw, err := os.ReadFile(resolvedPath(dir)); err == nil {
+		_ = json.Unmarshal(raw, &remembered)
+	}
+	used := map[string][]string{}
+	ep, err := resolveControlPlane(func(host string) ([]string, error) {
+		addrs, err := lookup(host)
+		if err == nil && len(addrs) > 0 {
+			used[host] = addrs
+			return addrs, nil
+		}
+		if old := remembered[host]; len(old) > 0 {
+			used[host] = old
+			return old, nil
+		}
+		return addrs, err
+	})
+	if err != nil {
+		return ep, err
+	}
+	if len(used) > 0 {
+		raw, err := json.Marshal(used)
+		if err != nil {
+			return ep, err
+		}
+		if err := os.WriteFile(resolvedPath(dir), raw, 0o600); err != nil {
+			return ep, err
+		}
+	}
 	return ep, nil
 }
 
@@ -167,28 +213,4 @@ func windowsReleaseCommands(saved []windowsProfile) [][]string {
 		}
 	}
 	return cmds
-}
-
-// pfRules isolates a macOS host: loopback and the control plane, nothing
-// else. Existing pf states (the agent's live connection) are kept.
-func pfRules(ep endpoint) string {
-	var b strings.Builder
-	b.WriteString("# DefendSec host isolation. Removed on release.\n")
-	b.WriteString("pass quick on lo0 all\n")
-	fmt.Fprintf(&b, "pass out quick proto tcp to { %s } port { %s } keep state\n",
-		strings.Join(ep.IPs, " "), strings.Join(strings.Split(joinPorts(ep.Ports), ","), " "))
-	b.WriteString("block drop quick all\n")
-	return b.String()
-}
-
-// parsePfToken reads the reference token `pfctl -E` prints, so release
-// drops only this enable reference rather than turning pf off for anyone
-// else using it.
-func parsePfToken(out string) string {
-	for _, line := range strings.Split(out, "\n") {
-		if k, v, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "Token" {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
 }
