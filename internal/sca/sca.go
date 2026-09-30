@@ -2,7 +2,9 @@ package sca
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -14,6 +16,7 @@ import (
 	"defendsec/internal/controls"
 	"defendsec/internal/posture"
 	"defendsec/internal/presence"
+	"defendsec/packs"
 )
 
 type Check struct {
@@ -114,6 +117,10 @@ func LoadPack(path string) (*Pack, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parsePack(raw)
+}
+
+func parsePack(raw []byte) (*Pack, error) {
 	var pack Pack
 	if err := yaml.Unmarshal(raw, &pack); err != nil {
 		return nil, err
@@ -564,7 +571,22 @@ func LoadDir(dir string) ([]*Pack, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("no pack directory")
 	}
-	matches, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	return loadFS(os.DirFS(dir), ".", dir)
+}
+
+// LoadShipped loads the pack directory when one is present (so an operator
+// can add or override packs) and otherwise the packs compiled into the
+// binary. Before this, an agent installed by the installers — which copy
+// only the binary — found no directory and ran no configuration checks.
+func LoadShipped() ([]*Pack, error) {
+	if dir := PacksDir(); dir != "" {
+		return LoadDir(dir)
+	}
+	return loadFS(packs.SCA, "sca", "embedded packs")
+}
+
+func loadFS(fsys fs.FS, dir, label string) ([]*Pack, error) {
+	matches, err := fs.Glob(fsys, path.Join(dir, "*.yaml"))
 	if err != nil {
 		return nil, err
 	}
@@ -572,15 +594,20 @@ func LoadDir(dir string) ([]*Pack, error) {
 
 	seen := map[string]string{}
 	out := make([]*Pack, 0, len(matches))
-	for _, path := range matches {
-		pack, err := LoadPack(path)
+	for _, name := range matches {
+		raw, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return nil, err
 		}
-		if prev, dup := seen[pack.ID]; dup {
-			return nil, fmt.Errorf("duplicate pack id %q in %s and %s", pack.ID, prev, path)
+		where := filepath.Join(label, path.Base(name))
+		pack, err := parsePack(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", where, err)
 		}
-		seen[pack.ID] = path
+		if prev, dup := seen[pack.ID]; dup {
+			return nil, fmt.Errorf("duplicate pack id %q in %s and %s", pack.ID, prev, where)
+		}
+		seen[pack.ID] = where
 		out = append(out, pack)
 	}
 	return out, nil

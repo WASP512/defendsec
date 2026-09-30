@@ -115,7 +115,7 @@ func (s *Server) HandleCheckCoverage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	packs, err := sca.LoadDir(sca.PacksDir())
+	packs, err := sca.LoadShipped()
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"packs": []any{},

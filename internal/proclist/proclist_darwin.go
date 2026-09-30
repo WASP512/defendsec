@@ -33,3 +33,13 @@ func List() ([]Proc, error) {
 
 // Terminate sends SIGTERM.
 func Terminate(pid int32) error { return syscall.Kill(int(pid), syscall.SIGTERM) }
+
+// CommandLine reads kern.procargs2. It returns another user's arguments only
+// to root, which the agent runs as.
+func CommandLine(pid int32) string {
+	raw, err := unix.SysctlRaw("kern.procargs2", int(pid))
+	if err != nil || len(raw) < 4 {
+		return ""
+	}
+	return parseProcArgs2(raw)
+}

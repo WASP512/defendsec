@@ -567,7 +567,7 @@ func inventoryReport(log *slog.Logger, snap hostinv.Snapshot, stateDir string) *
 		// Every pack in the directory, rather than two named here. A pack
 		// that only runs when somebody remembers to add it to this list is a
 		// pack that silently stops running when they do not.
-		packs, err := sca.LoadDir(sca.PacksDir())
+		packs, err := sca.LoadShipped()
 		if err != nil {
 			// Loud, and no partial run: a half-loaded set reports a clean
 			// result for a benchmark half of which never executed.

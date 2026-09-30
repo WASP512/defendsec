@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DefendSec agent MSI (roadmap 5.1). Built with wixl (msitools) by
+  scripts/build-msi.sh, so the release can be produced on Linux.
+
+  Install silently with the enrollment values as properties:
+
+    msiexec /i defendsec-agent-windows-amd64.msi /qn ^
+      SERVER_HTTP=https://SERVER:47262 SERVER_GRPC=SERVER:47263 ^
+      TLS_SERVER_NAME=SERVER ENROLL_SECRET=SECRET
+
+  The enroll secret reaches the service as an argument, because an MSI built
+  without custom actions has no other way to hand it over. The agent removes
+  it from the service configuration once it has enrolled (see
+  scrubEnrollSecret in cmd/defendsec-agentd/service_windows.go); until then
+  it is readable by administrators, as the Linux secret file is by root.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="DefendSec Agent" Language="1033" Version="$(var.Version)"
+           Manufacturer="DefendSec" UpgradeCode="6F0E4B1C-5D9A-4C47-9E0B-3B8C2D7A4E51">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
+             Description="DefendSec host agent" />
+    <MajorUpgrade DowngradeErrorMessage="A newer DefendSec Agent is already installed." />
+    <Media Id="1" Cabinet="agent.cab" EmbedCab="yes" />
+
+    <Property Id="SERVER_HTTP" Secure="yes" />
+    <Property Id="SERVER_GRPC" Secure="yes" />
+    <Property Id="TLS_SERVER_NAME" Secure="yes" />
+    <Property Id="ENROLL_SECRET" Secure="yes" />
+    <!-- Keeps the secret out of verbose msiexec logs. -->
+    <Property Id="MsiHiddenProperties" Value="ENROLL_SECRET" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="DefendSec">
+          <Component Id="AgentBinary" Guid="A3E1B7C2-8F44-4D0A-9B61-2C5E7F10D823" Win64="yes">
+            <File Id="AgentExe" Name="defendsec-agentd.exe" Source="$(var.AgentExe)" KeyPath="yes" />
+            <ServiceInstall Id="AgentService" Name="DefendSecAgent" DisplayName="DefendSec Agent"
+                            Description="DefendSec mTLS host agent" Type="ownProcess" Start="auto"
+                            ErrorControl="normal" Account="LocalSystem"
+                            Arguments="-server-http &quot;[SERVER_HTTP]&quot; -server-grpc &quot;[SERVER_GRPC]&quot; -tls-server-name &quot;[TLS_SERVER_NAME]&quot; -enroll-secret &quot;[ENROLL_SECRET]&quot;" />
+            <ServiceControl Id="AgentServiceControl" Name="DefendSecAgent" Start="install"
+                            Stop="both" Remove="uninstall" Wait="yes" />
+          </Component>
+          <Component Id="Uninstaller" Guid="D5B2C8E4-1A7F-4E3B-8C90-6F4A2B1E7D35" Win64="yes">
+            <File Id="UninstallPs1" Name="uninstall-agent.ps1" Source="$(var.UninstallPs1)" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Agent" Level="1">
+      <ComponentRef Id="AgentBinary" />
+      <ComponentRef Id="Uninstaller" />
+    </Feature>
+  </Product>
+</Wix>

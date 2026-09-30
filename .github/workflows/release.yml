@@ -34,8 +34,12 @@ jobs:
           GOTOOLCHAIN: auto
         run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
 
+      - name: Install MSI tooling
+        run: sudo apt-get update && sudo apt-get install -y wixl msitools
+
       - name: Build verified release bundle
         env:
+          REQUIRE_MSI: "1"
           VERSION: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
         run: ./scripts/build-release.sh

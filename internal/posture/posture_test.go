@@ -1,6 +1,7 @@
 package posture
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -211,5 +212,25 @@ func TestParseMacApps(t *testing.T) {
 	sw, err := ParseMacApps([]byte(`{"SPApplicationsDataType":[{"_name":"Safari","version":"17.5"},{"_name":"Safari","version":"17.5"},{"_name":"Xcode","version":"15.4"}]}`))
 	if err != nil || len(sw) != 2 {
 		t.Errorf("%+v %v", sw, err)
+	}
+}
+
+// Output of WindowsScript itself, run by PowerShell 7 on Linux where none of
+// the Windows cmdlets or registry keys exist. It proves the script parses,
+// isolates each failing section, and still emits JSON the parser accepts —
+// with every probe Unknown rather than a guess.
+func TestWindowsScriptOutputWithNoCmdlets(t *testing.T) {
+	raw, err := os.ReadFile("testdata/windows-script-no-cmdlets.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, _, err := ParseWindows(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range Probes["windows"] {
+		if rep[id].State != Unknown {
+			t.Errorf("%s = %v, want unknown", id, rep[id].State)
+		}
 	}
 }

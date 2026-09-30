@@ -22,7 +22,17 @@ type ListSensor struct {
 	// List is the process source; nil means the platform's.
 	List func() ([]proclist.Proc, error)
 
+	// CommandLine reads a process's arguments; nil means the platform's.
+	CommandLine func(pid int32) string
+
 	known map[int32]uint64
+}
+
+func (s *ListSensor) commandLine(pid int32) string {
+	if s.CommandLine != nil {
+		return s.CommandLine(pid)
+	}
+	return proclist.CommandLine(pid)
 }
 
 // NewListSensor creates a process-table sensor.
@@ -37,7 +47,7 @@ func (s *ListSensor) Name() string { return "process-table-poll" }
 func (s *ListSensor) Describe() Capability {
 	lim := []string{
 		"Samples the process table every " + s.interval().String() + ", so a process that starts and exits between samples is never seen.",
-		"Records the executable and its parent, not the command line: reading another process's arguments on Windows means reading its memory, which this sensor does not do.",
+		"Reads the command line after the process has started, so a process that exits first, or rewrites its own arguments, is recorded without them or as rewritten.",
 		"Observes process execution only. Network connections, file writes and module loads are not visible.",
 	}
 	switch runtime.GOOS {
@@ -105,6 +115,7 @@ func (s *ListSensor) Scan(now time.Time, sink func(*events.Event)) {
 			Kind: events.KindProcess, At: now, PID: p.PID, PPID: p.PPID,
 		}
 		ev.Set(events.FieldImage, p.Image)
+		ev.Set(events.FieldCommandLine, s.commandLine(p.PID))
 		ev.Set(events.FieldProcessID, p.PID)
 		ev.Set(events.FieldParentProcessID, p.PPID)
 		ev.Set("OriginalFileName", baseName(p.Image))
@@ -116,7 +127,7 @@ func (s *ListSensor) Scan(now time.Time, sink func(*events.Event)) {
 			ev.Set(events.FieldUser, lookupUser(p.UID))
 		}
 		if s.Tree != nil {
-			s.Tree.Observe(ev.PID, ev.PPID, p.Image, "", ev.String(events.FieldUser), now)
+			s.Tree.Observe(ev.PID, ev.PPID, p.Image, ev.String(events.FieldCommandLine), ev.String(events.FieldUser), now)
 		}
 		if sink != nil {
 			sink(ev)
@@ -140,4 +151,3 @@ func baseName(p string) string {
 	}
 	return filepath.Base(p)
 }
-

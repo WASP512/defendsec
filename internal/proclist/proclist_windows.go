@@ -53,3 +53,26 @@ func Terminate(pid int32) error {
 	defer windows.CloseHandle(h)
 	return windows.TerminateProcess(h, 1)
 }
+
+// CommandLine reads a process's command line through
+// ProcessCommandLineInformation (Windows 8.1+), which needs only
+// PROCESS_QUERY_LIMITED_INFORMATION and does not read the target's memory.
+// Returns "" when the process has exited or refuses the query.
+func CommandLine(pid int32) string {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return ""
+	}
+	defer windows.CloseHandle(h)
+	buf := make([]byte, 8192)
+	var n uint32
+	if err := windows.NtQueryInformationProcess(h, windows.ProcessCommandLineInformation,
+		unsafe.Pointer(&buf[0]), uint32(len(buf)), &n); err != nil {
+		return ""
+	}
+	us := (*windows.NTUnicodeString)(unsafe.Pointer(&buf[0]))
+	if us.Buffer == nil || us.Length == 0 {
+		return ""
+	}
+	return windows.UTF16ToString(unsafe.Slice(us.Buffer, us.Length/2))
+}

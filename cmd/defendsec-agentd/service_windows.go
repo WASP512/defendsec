@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
+	"golang.org/x/sys/windows/svc/mgr"
 )
 
 // ServiceName is what the MSI and install-agent.ps1 register.
@@ -71,6 +72,8 @@ func (s *agentService) Execute(args []string, reqs <-chan svc.ChangeRequest, sta
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	configureService(s.log)
+
 	// The SCM passes the service name as args[0] and start parameters after
 	// it; the configured command line arrives through os.Args.
 	done := make(chan error, 1)
@@ -110,4 +113,73 @@ func (s *agentService) Execute(args []string, reqs <-chan svc.ChangeRequest, sta
 			}
 		}
 	}
+}
+
+// configureService sets restart-on-failure and, once the agent holds a client
+// certificate, removes the enroll secret from the service's command line.
+// Both are done by the agent because the MSI is built without custom
+// actions, and doing them here also covers a service created by
+// install-agent.ps1.
+func configureService(log *slog.Logger) {
+	m, err := mgr.Connect()
+	if err != nil {
+		log.Warn("service manager", "err", err)
+		return
+	}
+	defer m.Disconnect()
+	svcH, err := m.OpenService(ServiceName)
+	if err != nil {
+		log.Warn("open service", "err", err)
+		return
+	}
+	defer svcH.Close()
+
+	if err := svcH.SetRecoveryActions([]mgr.RecoveryAction{
+		{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 60 * time.Second},
+	}, 86400); err != nil {
+		log.Warn("set recovery actions", "err", err)
+	}
+	go scrubEnrollSecret(log, svcH.Name)
+}
+
+// scrubEnrollSecret waits for enrollment, then rewrites the service command
+// line without -enroll-secret. The secret is single-purpose; after the agent
+// has a certificate it is only a liability sitting in the registry.
+func scrubEnrollSecret(log *slog.Logger, name string) {
+	cert := filepath.Join(stateDirFromArgs(os.Args[1:]), "client.pem")
+	for i := 0; i < 120; i++ {
+		if _, err := os.Stat(cert); err == nil {
+			break
+		}
+		time.Sleep(5 * time.Second)
+	}
+	if _, err := os.Stat(cert); err != nil {
+		return
+	}
+	m, err := mgr.Connect()
+	if err != nil {
+		return
+	}
+	defer m.Disconnect()
+	svcH, err := m.OpenService(name)
+	if err != nil {
+		return
+	}
+	defer svcH.Close()
+	cfg, err := svcH.Config()
+	if err != nil {
+		return
+	}
+	cleaned, changed := removeFlag(cfg.BinaryPathName, "-enroll-secret")
+	if !changed {
+		return
+	}
+	cfg.BinaryPathName = cleaned
+	if err := svcH.UpdateConfig(cfg); err != nil {
+		log.Warn("remove enroll secret from service configuration", "err", err)
+		return
+	}
+	log.Info("enroll secret removed from the service configuration")
 }

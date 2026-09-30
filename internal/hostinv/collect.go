@@ -618,7 +618,6 @@ func fimFiles() []FimFile {
 	return out
 }
 
-
 func hashFile(path string) (FimFile, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

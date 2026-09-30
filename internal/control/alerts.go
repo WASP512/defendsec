@@ -379,7 +379,7 @@ func (s *Server) evaluateSca(dev presence.Device, agentResults []presence.ScaRes
 	// Every pack the server knows, not two named here. The server's copy is
 	// authoritative for a check's title, severity and controls; the agent is
 	// authoritative only for whether it passed on that host.
-	packs, err := sca.LoadDir(sca.PacksDir())
+	packs, err := sca.LoadShipped()
 	if err != nil {
 		s.log.Warn("sca packs", "err", err)
 		packs = nil
