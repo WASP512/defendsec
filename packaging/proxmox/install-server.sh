@@ -303,7 +303,7 @@ ensure_go() {
   if [[ -z "$ver" ]]; then
     ver="$(curl -fsSL 'https://go.dev/VERSION?m=text' 2>/dev/null | head -n1 || true)"
   fi
-  [[ -n "$ver" ]] || ver="go1.25.13"
+  [[ -n "$ver" ]] || ver="go1.26.8"
   [[ "$ver" == go* ]] || ver="go${ver}"
 
   info "Installing ${ver} (need >= ${GO_MIN}, found ${have:-none})"

@@ -430,7 +430,7 @@ Open `47261–47263` from your admin network and from agents. Leave `47264` and 
 
 ## Notes for operators
 
-- Debian 12’s packaged Go 1.19 and Node 18 are too old. The installer downloads upstream Go and Node into `/usr/local` and checks the published SHA256. Pin with `GO_VERSION=go1.24.6` / `NODE_VERSION=v22.20.0` if you need specific builds.
+- Debian 12’s packaged Go 1.19 and Node 18 are too old. The installer downloads upstream Go and Node into `/usr/local` and checks the published SHA256. Pin with `GO_VERSION=go1.26.8` (at least the `go` line in go.mod) / `NODE_VERSION=v22.20.0` if you need specific builds.
 - Postgres is **native packages** by default so Proxmox LXC does not need Docker. Use `--postgres docker` only if you know you want it (`nesting=1` is already set on the CT).
 - Sample demo hosts are **off** in production. Set `DEFENDSEC_ENABLE_SAMPLE_DATA=true` in `console.env` only if you want them.
 
