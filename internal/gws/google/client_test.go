@@ -366,6 +366,27 @@ func TestTokenRefusalsAreClassified(t *testing.T) {
 	}
 }
 
+func TestEveryDelegationRefusalCodeIsTheDelegation(t *testing.T) {
+	// Google's server-to-server OAuth page lists these as what a missing or wrong
+	// domain-wide delegation answers; each must read as "delegation", not "credentials".
+	for _, code := range []string{"unauthorized_client", "access_denied", "admin_policy_enforced", "invalid_scope"} {
+		s := gwstest.New(t)
+		s.TokenRefusal = `{"error":"` + code + `","error_description":"x"}`
+		c := newClient(t, s, nil)
+		_, err := listUsers(t, c)
+		if google.KindOf(err) != google.KindDelegation || google.CodeOf(err) != code {
+			t.Errorf("%s: kind %q code %q (%v), want delegation", code, google.KindOf(err), google.CodeOf(err), err)
+		}
+	}
+	// Anything else on the token endpoint is the credentials.
+	s := gwstest.New(t)
+	s.TokenRefusal = `{"error":"invalid_client","error_description":"The OAuth client was deleted."}`
+	c := newClient(t, s, nil)
+	if _, err := listUsers(t, c); google.KindOf(err) != google.KindCredentials {
+		t.Errorf("invalid_client kind %q (%v), want credentials", google.KindOf(err), err)
+	}
+}
+
 func TestErrorTextNeverHoldsCredentialsOrBodies(t *testing.T) {
 	s := gwstest.New(t)
 	file, acct := s.NewKey()

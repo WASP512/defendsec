@@ -146,6 +146,9 @@ type Server struct {
 	RejectSubjects map[string]bool
 	// RejectKey makes the token endpoint refuse the signature (invalid_grant).
 	RejectKey bool
+	// TokenRefusal, when set, is the JSON body the token endpoint answers every
+	// request with, as a 400 (for the OAuth error codes the other switches do not make).
+	TokenRefusal string
 	// Override replaces the body of a route (key: the request path, no query).
 	Override map[string]string
 	// AutoForwarding and Filters override the fixtures per user email.
@@ -253,6 +256,10 @@ func (s *Server) serveToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := r.ParseForm(); err != nil || r.PostForm.Get("grant_type") != "urn:ietf:params:oauth:grant-type:jwt-bearer" {
 		writeErr(w, 400, `{"error":"unsupported_grant_type","error_description":"Invalid grant_type"}`)
+		return
+	}
+	if s.TokenRefusal != "" {
+		writeErr(w, 400, s.TokenRefusal)
 		return
 	}
 	parts := strings.Split(r.PostForm.Get("assertion"), ".")

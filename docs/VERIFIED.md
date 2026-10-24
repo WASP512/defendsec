@@ -1653,3 +1653,106 @@ and 6 external surface findings." The tile row is Hosts online, Pending patches,
 | Export snapshot (REPEATABLE READ) | Postgres 16 | concurrent record-and-export test, killed by the mutation | see the card | — |
 | Rank tie-break rule (Go = SQL = TS) | linux, Postgres 16 | Go, TS, Postgres; 15 SQL mutants | see the card | seeded console |
 | One Fix-this-week number on Fleet | Next.js 16 build | — | see the card | browser, seeded database |
+
+## Slice 13 — Google Workspace identity posture (migration 032)
+
+- Date: 2026-10-24 (MDT). Host: `hermesagent`, go1.26.10, node 22, Postgres 16 on titan CT 119 (own database).
+- Branch `lookout/13-gws-identity`, merged with `origin/main` at 390ecaf (slice 7c). Migration 031 on the branch collided with scout's `031_surface_seen.sql`;
+  mine is **032_gws_identity.sql** and `migrations_test.go` lists both. What is in it: `internal/gws` (collector, 2-Step Verification, super administrator and
+  Gmail filter/forwarding checks), `internal/gws/google` (read-only Google client: service-account JWT, token cache, error classification, throttling),
+  `internal/gws/gwstest` (fake Google: token endpoint that verifies the RS256 signature, Directory and Gmail routes), `internal/idposture` (finance and
+  security word lists and whole-word matching, now shared with slice 12), `internal/secret/json.go`, `internal/storepg/identity_gws.go`, `internal/control/gws.go`,
+  the controls catalog entries, and the console (Identity > Google Workspace, Fleet card and Fix this week rows for both providers, drawer). Google facts, with
+  doc URLs and the date checked: [GOOGLE-WORKSPACE.md](GOOGLE-WORKSPACE.md).
+
+### Commands run
+
+| # | Command | Result |
+| --- | --- | --- |
+| 1 | `gofmt -l cmd internal db`, `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./...` | no output, exit 0 |
+| 2 | `unset TEST_DATABASE_URL; TMPDIR=/tmp go test -count=1 ./...` | 68 packages `ok`, 0 failed (database tests skip) |
+| 3 | `TEST_DATABASE_URL=… umask 0022 TZ=UTC TMPDIR=/tmp go test -p 1 -count=1 -v` on storepg, db/migrations, control, feeds/runner, rmm, autotask, m365, gws, idposture, secret, controls, exposure, evidence | 17 packages `ok`, **679 `--- PASS` lines (tests and subtests), 0 FAIL** |
+| 4 | `npx tsc --noEmit`, `npm run lint`, `npm test`, `npx next build` | tsc and lint clean; **232 pass, 0 fail**; `next build` green (`/identity/google` in the route list) |
+| 5 | `govulncheck ./...`, `scripts/check-reproducible.sh` | 0 vulnerabilities in code that is called (1 in a required module that is not called); all targets reproducible |
+
+### What each claim rests on
+
+- **Google client** (`internal/gws/google/client_test.go`, against the fake Google): the assertion's RS256 signature, header and claims are verified by the fake
+  token endpoint; the token request always goes to the configured Google token URL, never the key file's `token_uri`; tokens cached per (user, scope); one
+  refresh on a 401 and a second 401 is fatal; `invalid_grant` (key, admin address, mailbox owner) and the four delegation codes (`unauthorized_client`,
+  `access_denied`, `admin_policy_enforced`, `invalid_scope`) are told apart, with the numeric-client-ID hint; 403 `accessNotConfigured`, `domainPolicy` and
+  plain 403 are separate answers; Google's 403 rate-limit reasons and 429 are retried with backoff and `Retry-After` (capped) and then reported as throttled,
+  `dailyLimitExceeded` is not retried; the Gmail "mail service not enabled" 400 and 404 mean no mailbox; redirects are not followed; no error text holds a key,
+  token or response body. **No method but GET** exists, apart from the token request.
+- **Checks** (`checks_test.go`, `filters_test.go`): a super administrator without 2-Step Verification is critical, a delegated administrator high, a user medium;
+  guests, suspended and archived users are left out and counted; enforcement is one finding per domain (high / medium / low by who is not covered); super
+  administrator count against the limit (boundary), exactly one is low, none in the list means *not assessed*; a filter that forwards outside is high and
+  critical when it also hides mail or matches finance words; a hiding filter is critical with finance words, high with security words or no condition, medium
+  otherwise; skip-inbox into a user label is filing and not reported unless finance words match (then high); own, alias and trusted domains are not outside;
+  whole-word matching; auto-forwarding critical when Gmail archives, trashes or marks the original read.
+- **Collector** (`collect_test.go`, fixture domain): a full read makes 18 requests (the number the Identity page shows) and the test asserts **every request is a
+  GET** to the users list or one of the two settings resources for `users/me`, none that names a message (`TestCollectOnlyReadsSettingsAndNeverTouchesAMessage`);
+  every failure answer (401, 403 by reason, 429, 5xx, refused token) is a *not assessed* check with the reason and resolves nothing; one unreadable mailbox leaves
+  the rest assessed and is counted and protected; a mailbox past the per-read cap or never reached is counted as skipped **and added to the unassessed prefixes**
+  (slice 12's follow-up gap, closed here from the start); a cancelled context stops the read.
+- **Store, ranking, API** (Postgres): the same tables and ranking as slice 12 (`provider = 'google'`); Google findings rank with Microsoft's; settings admin-only,
+  validated, ledgered in one transaction; a pasted key and an unlisted scope are `400`; `409` while a read runs; the key file is read each time and a group- or
+  world-writable one is refused; the schedule reads only when due.
+- **Mutations** (my own, on `internal/gws`): 28 mutants, each applied by exact-match replace, tested with `go test ./internal/gws/...`: **27 killed by a named
+  failing test, 1 control** (a no-op rewrite that must survive, and did). 16 on the checks and filters (forward-plus-hide severity, internal domains counted as
+  outside, filing ignores mark-as-read, finance filing not reported, filing-plus-finance critical, mark-as-read not hiding, security words ignored, trash
+  forwarding not critical, disabled forwarding reported, super administrator severity, suspended counted, guests counted, limit off by one, no-super-admin
+  assessed, enforcement severity, enforcement inverted); 11 on the client and collector (401 not refreshed, Retry-After beyond the cap waited, throttle not
+  retried, 403 rate limit read as forbidden, redirects followed, 401 not fatal, past-cap prefixes unprotected, unreadable prefixes unprotected, all-unreadable
+  counted as assessed, guest domains internal, `invalid_scope` not read as delegation). **One mutant survived** the first run: `invalid_scope` dropped from the
+  delegation codes. I added `TestEveryDelegationRefusalCodeIsTheDelegation` (with a `TokenRefusal` switch in the fake) and re-ran that mutant: killed. A first
+  attempt at "finance filing not reported" did not compile (`filing` unused) and is not counted; the corrected mutant is.
+
+### Real runs
+
+- **Console and API in a browser against the fixture domain.** A real `defendsec-apid` and the production console build on a scratch database
+  (`lookout_demo13`) seeded by one read of the fake Google server (example.com users, fake ids; the key file is a throwaway key generated for the demo, and the
+  demo apid never contacted Google: automatic reads off, the source was injected only in the seeding test, which is kept out of git). Page text read through the
+  browser: Identity > Google Workspace shows "9 findings (4 critical, 4 high)", the three checks assessed with their counts ("9 active users: 6 enrolled, 3 not
+  (2 of them administrators); enforced for all but 4", "2 super administrators (limit 4)", "8 of 8 mailboxes read … 7 filters"), the seven standing *not assessed*
+  items, the scope list, the service account email, **numeric client ID**, key id and project (never the key), and the nine findings; Fix this week lists them
+  with the super administrator without 2-Step Verification first, then the Intuit finance filter, the external auto-forwarding and the external-forwarding
+  filter; the Fleet card reads "Identity (Google Workspace): 9 findings (4 critical, 4 high), last read just now"; the Microsoft 365 page still says "not
+  connected" with no findings of Google's. API: 401 without a token; 400 for a pasted `private_key` and for `gmailScope=mail.google.com`; the drawer of an identity
+  row returns the filter's criteria and actions; 404 for a missing row; `provider=m365` returns no Google rows; **0 `level=ERROR` lines** in the apid log, in the
+  first start and in a second start on the same database (migration 032 re-run).
+- **No screenshots** were taken; page text is what was read.
+- **Not run: a read of a real Google Workspace domain.** It needs the Cloud project, service account and domain-wide delegation Mason creates himself; the
+  click-by-click setup is in GOOGLE-WORKSPACE.md and on the Identity > Google Workspace page, and the card is waiting on it.
+
+### Not verified
+
+- **Any real Google response.** Field names, the `fields` mask, page sizes, what a real domain costs in requests, how the Directory API answers for a user
+  without a Gmail licence (the 400 `failedPrecondition` is from experience, not from the reference page), the Gmail per-user rate limits (not read), and
+  whether `isEnforcedIn2Sv` is true for a user covered by an OU-level policy are all unobserved.
+- **The service-account flow against Google's real token endpoint.** The assertion follows Google's published format and the fake endpoint verifies the
+  signature, but Google has never been asked to accept it.
+- **The Admin console menu paths** named in fix texts (2-step verification enforcement, admin roles) are from memory of the current console, and the
+  delegation path is Google's own text on the service-account page; none was clicked.
+- **`gmail.readonly` is a read-all-mail scope.** It is the only read-only scope the settings calls accept, so it is the default; `gmail.settings.basic` is the
+  alternative (cannot read mail, can change settings). Which one a client prefers is Mason's call; the page and the doc say so.
+- **Ranking thresholds and the super administrator limit (4)** are judgements, not measured against a real client list. A super administrator without 2-Step
+  Verification is critical here, where the card said "admins high": it follows slice 12's Global Administrator ranking (a one-line change in `CheckTwoStep`).
+- **Not assessed by design, and said on every screen:** routing and compliance rules and the automatic-forwarding policy, mailbox delegation, 2-Step Verification
+  methods, delegated administrator privileges, third-party app access, users the administrator cannot see, mailboxes that cannot be acted as.
+- **Not run:** a domain with thousands of mailboxes (2,000-mailbox limit and 4-way concurrency are unit-tested only), a delegated administrator limited to an OU,
+  a domain with 2-Step Verification enforced everywhere, Workspace editions without Gmail, screenshots.
+- **Identity findings are not in the signed evidence export** (`defendsec-verify`); same as slice 12.
+
+## Feature × platform × evidence matrix — additions from slice 13
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Google client (service-account JWT, token cache, 401/403/429/5xx classification, GET only) | any | tests against a fake Google | see handoff | **not run** against Google |
+| 2-Step Verification, super administrator count, Gmail forwarding and filter checks | any | check, filter and collector tests; 28 mutants | see handoff | **not run** on a real domain |
+| Not assessed when a scope, API or throttle blocks a check; resolves nothing | any | collector tests | see handoff | fake Google, in a browser |
+| Findings in the shared identity tables and ranking, both providers | linux, Postgres 16 | storepg, exposure tests | see handoff | seeded console |
+| Settings admin-only and ledgered; key file mode and size checks | linux, Postgres 16 | control tests | see handoff | seeded console |
+| Identity > Google Workspace page, Fleet card, Fix this week rows, drawer | Next.js 16 build | `lib/identity-model.test.ts` | see handoff | browser, seeded database |
+
+- Windows and macOS: nothing here is platform-specific; `GOOS=windows go vet` only.
