@@ -478,3 +478,54 @@ func TestNormalizeDistro(t *testing.T) {
 		}
 	}
 }
+
+// The Source: field and SOURCERPM never carry the epoch, but the feeds' fixed
+// versions do. Real patched hosts: Ubuntu 22.04 libbpf0 (1:0.5.0-1ubuntu22.04.1
+// built from source "0.5.0-1ubuntu22.04.1") was flagged against the feed's
+// fixed "1:0.5.0-1ubuntu22.04.1". Measured on a real host, 2026-10-23.
+func TestSourceVersionInheritsBinaryEpoch(t *testing.T) {
+	src := &fakeSource{ranges: []Candidate{
+		rng(Candidate{CVE: "CVE-2022-3534", Ecosystem: "Ubuntu:22.04", Distro: "ubuntu", Release: "22.04",
+			Package: "libbpf", SourcePackage: "libbpf", Fixed: "1:0.5.0-1ubuntu22.04.1", State: StateFixed, Feed: "ubuntu-jammy"}),
+	}}
+	h := Host{Distro: "ubuntu", Release: "22.04", PackageManager: "dpkg", Packages: []Package{
+		{Name: "libbpf0", Version: "1:0.5.0-1ubuntu22.04.1", SourcePackage: "libbpf", SourceVersion: "0.5.0-1ubuntu22.04.1"}}}
+	if res := openFindings(t, src, h); len(res.Findings) != 0 {
+		t.Errorf("dpkg, patched: %+v", res.Findings)
+	}
+	// Really older: same epoch, lower revision still flags.
+	h.Packages[0] = Package{Name: "libbpf0", Version: "1:0.5.0-1", SourcePackage: "libbpf", SourceVersion: "0.5.0-1"}
+	if res := openFindings(t, src, h); len(res.Findings) != 1 {
+		t.Errorf("dpkg, vulnerable: %+v", res.Findings)
+	}
+
+	// rpm: openssl-style epoch 1; SOURCERPM gives "openssl-3.5.1-4.el9_8.src.rpm", no epoch.
+	rsrc := &fakeSource{ranges: []Candidate{
+		rng(Candidate{CVE: "CVE-2026-0001", Ecosystem: "Red Hat:9", Distro: "rhel", Release: "9",
+			Package: "openssl", SourcePackage: "openssl", Fixed: "1:3.5.1-4.el9_8", State: StateFixed, Feed: "rhel-9"}),
+	}}
+	rh := Host{Distro: "rocky", Release: "9.8", PackageManager: "rpm", Packages: []Package{
+		{Name: "openssl-libs", Version: "1:3.5.1-4.el9_8", SourcePackage: "openssl", SourceVersion: "3.5.1-4.el9_8"}}}
+	if res := openFindings(t, rsrc, rh); len(res.Findings) != 0 {
+		t.Errorf("rpm, patched: %+v", res.Findings)
+	}
+	rh.Packages[0] = Package{Name: "openssl-libs", Version: "1:3.5.1-3.el9_8", SourcePackage: "openssl", SourceVersion: "3.5.1-3.el9_8"}
+	if res := openFindings(t, rsrc, rh); len(res.Findings) != 1 {
+		t.Errorf("rpm, vulnerable: %+v", res.Findings)
+	}
+}
+
+func TestInheritEpoch(t *testing.T) {
+	for _, c := range []struct{ src, bin, want string }{
+		{"0.5.0-1", "1:0.5.0-1", "1:0.5.0-1"},
+		{"2.36-9", "1:2.36-9+b1", "1:2.36-9"},
+		{"2:1.0-1", "1:1.0-1", "2:1.0-1"}, // an explicit epoch is never overridden
+		{"1.0-1", "1.0-1", "1.0-1"},
+		{"1.0-1", "", "1.0-1"},
+		{"1.0-1", "a:1.0-1", "1.0-1"}, // not an epoch
+	} {
+		if got := inheritEpoch(c.src, c.bin); got != c.want {
+			t.Errorf("inheritEpoch(%q,%q) = %q, want %q", c.src, c.bin, got, c.want)
+		}
+	}
+}

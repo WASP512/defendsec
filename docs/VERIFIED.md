@@ -313,12 +313,57 @@ Skipped and counted, not guessed: Ubuntu jammy 114 definitions without a CVE + 1
 
 ## Slice 4 — distro-aware matcher (migration 021)
 
-Branch `scout/4-matcher`, stacked on `scout/3-feeds`. **The exit measurement (zero findings on a
-fully patched Ubuntu 22.04 and a fully patched Rocky 9 host) is PENDING.** There are no such hosts on
-this box. The CEO was asked (via `bot-dm`, delivery reported "ambiguous") to have grumpy provide two VMs
-on titan, or to run `defendsec-agentd -print-inventory` on existing ones and drop the JSON in
-`workspace/measure/{ubuntu-2204,rocky-9}.json`. Until those files exist this slice is not closed. What was
-run instead is below, and each item says what it does and does not show.
+Branch `scout/4-matcher` (merged, PR #84); measurement and fixes on `scout/4b-matcher-fixes`.
+**Exit measurement, 2026-10-23, two real freshly patched hosts: Ubuntu 22.04 = 0 findings after one matcher
+fix (it was 2 before); Rocky 9 = 8 findings, all one cause that is not a comparator bug: Red Hat's feed is
+ahead of Rocky's repositories. The "zero findings on Rocky 9" criterion is therefore NOT met.** Details in
+"Exit measurement" below. The first sections record what was verified before the hosts existed.
+
+### Exit measurement (real hosts)
+
+Hosts: VM 120 Ubuntu 22.04 (`jammy` cloud image, kernel 5.15.0-198, 597 dpkg packages,
+`apt list --upgradable` empty and `apt-get --dry-run full-upgrade` 0 upgraded after the last reboot, Ubuntu
+Pro not attached) and VM 121 Rocky 9.8 (cloud image, kernel 5.14.0-687.59.1.el9_8, 427 rpm, `dnf
+check-update --refresh` exit 0 after reboot), built by grumpy (t_b28b0b55) and inventoried with
+`defendsec-agentd -print-inventory` (binary sha256 matched on both). Feeds: the nine-feed snapshot 1 loaded
+2026-10-23 20:55 -06:00 (RHEL 9 OVAL last-modified 2026-10-23 21:44 GMT, i.e. current to the hour). Command:
+`defendsec-feeds match <inventory.json>` (exit 0 = no findings).
+
+| Host | Matcher | Result |
+| --- | --- | --- |
+| Ubuntu 22.04 | as merged (7471d23) | exit 2: **2 findings**, `libbpf0` CVE-2022-3534, CVE-2022-3606 |
+| Ubuntu 22.04 | + epoch fix | exit 0: **0 findings, 0 unfixed, 0 informational** (237 packages distro-mapped, 1,058 advisories examined) |
+| Rocky 9.8 | as merged, and with the epoch fix | exit 2: **8 findings**, all `kernel` 5.14.0-687.59.1.el9_8 → 0:5.14.0-687.60.1.el9_8 (3 high, 5 medium); 194 packages mapped, 4,330 advisories examined |
+
+**Triage.**
+
+1. *Ubuntu `libbpf0`: matcher bug, fixed.* dpkg's `Source:` field and an rpm's `SOURCERPM` name never carry the
+   epoch, yet the feed's fixed version does (`1:0.5.0-1ubuntu22.04.1`). The matcher compared the bare source
+   version `0.5.0-1ubuntu22.04.1` (epoch 0) to the fixed `1:…` and read it as older. Synthetic inventories and
+   unit tests could not show this because they never paired a source version with an epoched binary. Fix:
+   `inheritEpoch` in `internal/vuln/match.go` gives the source version the binary's epoch. The same bug
+   would have hit every rpm with an epoch (e.g. NetworkManager at epoch 1 on the Rocky host), which the
+   Rocky inventory confirms exist. Regression tests
+   `TestSourceVersionInheritsBinaryEpoch` (dpkg and rpm, patched and one-behind) and `TestInheritEpoch`;
+   reverting the one-line change fails the first with exactly the libbpf finding.
+2. *Rocky kernel: not a comparator bug; the feed source is wrong for Rocky.* The 8 CVEs come from a RHEL 9
+   advisory issued 2026-10-22 (kernel 687.60.1). Rocky's BaseOS mirror
+   (`dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/k/`) listed 687.59.1 as its newest kernel at
+   2026-10-24 03:33 UTC, and the VM's `dnf check-update` found nothing newer. So the host **is** fully patched
+   as far as Rocky can patch it, and the finding names a build the operator cannot install. Rocky and Alma
+   follow RHEL by days, so this will recur after every RHEL kernel advisory. Right fix: load Rocky's and
+   Alma's own errata (Rocky: Apollo `/api/v3/advisories/` RLSA entries or the repo `updateinfo`) and match
+   `rocky`/`almalinux` hosts against those. Not done in this branch; it is a new feed, not a matcher fix.
+   Nothing else on Rocky was flagged out of 194 mapped packages.
+
+**Negative control** (so "0" is not a matcher that flags nothing): the same two inventories with four packages
+downgraded (`libssl3`, `openssh-server`, `openssl-libs`, `sudo`) give 110 findings (Ubuntu) and 93 (Rocky).
+
+**Also shown by these hosts:** rpm collection on a real rpm host works (epoch rendered as `1:`, `SOURCERPM`
+parsed, 427 rpm packages including the kernel), which was previously unverified.
+
+**Still not shown:** zero findings on Rocky 9; the Ubuntu Pro heuristic (no Pro host); a host older than its
+latest point release; browser rendering; CI on the 4b branch.
 
 ### Toolchain
 
@@ -384,7 +429,7 @@ was used**.
 
 ### Not verified
 
-- **The exit measurement** (see top). No real Ubuntu 22.04 or Rocky 9 host has been matched.
+- **Zero findings on Rocky 9** (see the exit measurement above): 8 kernel findings from the RHEL-ahead-of-Rocky gap.
 - **`rpm` collection never ran on an rpm host** (no `rpm` here). `ParseRPMQuery` / `ParseSourceRPM` are tested
   on hand-written text in the shape of `rpm -qa --queryformat` output; whether rpm renders
   `%|EPOCH?{%{EPOCH}:}|` as expected on Rocky 9 is unchecked. If it does not, openssl-libs & co. would be
@@ -405,9 +450,9 @@ was used**.
 
 | Feature | Platform | Unit | CI | Real host |
 | --- | --- | --- | --- | --- |
-| Distro-aware matcher (`internal/vuln`) | any | 24 tests incl. backport regressions, mutation-checked | not checked | Debian 13 only (real feeds); **Ubuntu 22.04 and Rocky 9: PENDING** |
+| Distro-aware matcher (`internal/vuln`) | any | 24 tests incl. backport regressions, mutation-checked | not checked | Debian 13, Ubuntu 22.04 (0 findings, real host), Rocky 9.8 (8 findings: RHEL feed ahead of Rocky repos) |
 | Agent: distro, release, package manager, source packages | linux dpkg | parser tests, green | not checked | run on hermesagent (615 packages) |
 | Agent: same, rpm | linux rpm | parser tests on hand-written output | not checked | **not run** |
 | Findings storage + `/v1/findings` API | linux, Postgres 16.15 | storepg + control integration tests, green | not checked | real apid + real agent |
 | Console findings (advisories, host, detail, policy) | any | model logic unit-tested | not checked | rendered by a built console via curl; not in a browser |
-| Zero findings on a fully patched host | Ubuntu 22.04, Rocky 9 | synthetic only (by construction) | not checked | **PENDING** |
+| Zero findings on a fully patched host | Ubuntu 22.04, Rocky 9 | synthetic (by construction) | not checked | Ubuntu 22.04: **0 (met)**; Rocky 9: **8 (not met)**, see triage |

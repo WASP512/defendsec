@@ -515,9 +515,39 @@ func rangeAppliesTo(c Candidate, p Package) bool {
 // reported one, otherwise the binary version.
 func versionFor(c Candidate, p Package) string {
 	if c.SourcePackage != "" && p.SourcePackage != "" && p.SourceVersion != "" && c.SourcePackage == p.SourcePackage {
-		return p.SourceVersion
+		return inheritEpoch(p.SourceVersion, p.Version)
 	}
 	return p.Version
+}
+
+// inheritEpoch gives a source version the epoch of the binary built from it.
+// dpkg's Source: field and an rpm's SOURCERPM file name never carry the epoch,
+// yet the epoch belongs to the source version, so every binary of that source
+// has the same one. Comparing the bare source version against a feed's
+// "1:0.5.0-1ubuntu22.04.1" would read as older and flag a patched host (seen on
+// a patched Ubuntu 22.04: libbpf0).
+func inheritEpoch(srcVer, binVer string) string {
+	if hasEpoch(srcVer) {
+		return srcVer
+	}
+	if i := strings.Index(binVer, ":"); i > 0 && hasEpoch(binVer[:i+1]) {
+		return binVer[:i+1] + srcVer
+	}
+	return srcVer
+}
+
+// hasEpoch reports whether v starts with "<digits>:".
+func hasEpoch(v string) bool {
+	i := strings.Index(v, ":")
+	if i <= 0 {
+		return false
+	}
+	for _, r := range v[:i] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 type judgement int
