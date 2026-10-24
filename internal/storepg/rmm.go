@@ -295,7 +295,7 @@ func (s *Store) SetRMMMerge(ctx context.Context, deviceID, agentID, basis string
 // OpenMSRCKBs lists the KBs behind a device's open Microsoft findings.
 func (s *Store) OpenMSRCKBs(ctx context.Context, deviceID string) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT package FROM vuln_findings WHERE device_id = $1 AND resolved_at IS NULL AND feed = 'msrc' ORDER BY 1`, deviceID)
+		SELECT DISTINCT package FROM vuln_findings WHERE device_id = $1 AND resolved_at IS NULL ORDER BY 1`, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +400,7 @@ func (s *Store) CountOpenRMMFindings(ctx context.Context) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx, `
 		SELECT count(*) FROM vuln_findings f JOIN devices d ON d.id = f.device_id AND d.source = 'rmm' AND NOT d.revoked
-		WHERE f.feed = 'msrc' AND f.resolved_at IS NULL AND f.kind = 'finding'`).Scan(&n)
+		WHERE f.resolved_at IS NULL AND f.kind = 'finding'`).Scan(&n)
 	return n, err
 }
 
@@ -598,7 +598,7 @@ func (s *Store) RMMSummary(ctx context.Context, now time.Time) (RMMSummary, erro
 	if err := s.pool.QueryRow(ctx, `
 		SELECT count(*), count(*) FILTER (WHERE f.kev), count(DISTINCT f.advisory_id), count(DISTINCT f.device_id)
 		FROM vuln_findings f JOIN devices d ON d.id = f.device_id AND d.source = 'rmm' AND NOT d.revoked
-		WHERE f.feed = 'msrc' AND f.resolved_at IS NULL AND f.kind = 'finding'`).
+		WHERE f.resolved_at IS NULL AND f.kind = 'finding'`).
 		Scan(&out.FindingsOpen, &out.FindingsKEV, &out.AdvisoriesOpen, &out.DevicesWithFinds); err != nil {
 		return out, err
 	}
@@ -741,8 +741,8 @@ func (s *Store) GetRMMDevice(ctx context.Context, now time.Time, id string) (RMM
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT p.patch_uid, p.kb, p.title, p.severity, p.patch_type, p.install_status, p.release_date::timestamptz, p.reboot_required,
-		       (SELECT count(*) FROM vuln_findings f WHERE f.device_id = p.device_id AND f.package = p.kb AND f.feed = 'msrc' AND f.resolved_at IS NULL),
-		       (SELECT count(*) FROM vuln_findings f WHERE f.device_id = p.device_id AND f.package = p.kb AND f.feed = 'msrc' AND f.resolved_at IS NULL AND f.kev),
+		       (SELECT count(*) FROM vuln_findings f WHERE f.device_id = p.device_id AND f.package = p.kb AND f.resolved_at IS NULL),
+		       (SELECT count(*) FROM vuln_findings f WHERE f.device_id = p.device_id AND f.package = p.kb AND f.resolved_at IS NULL AND f.kev),
 		       p.kb <> '' AND EXISTS (SELECT 1 FROM advisory_ranges ar WHERE ar.distro = 'windows' AND ar.package = p.kb)
 		FROM rmm_patches p WHERE p.device_id = $1
 		ORDER BY 10 DESC, 9 DESC, p.release_date DESC NULLS LAST, p.patch_uid`, id)
@@ -759,4 +759,71 @@ func (s *Store) GetRMMDevice(ctx context.Context, now time.Time, id string) (RMM
 		d.Patches = append(d.Patches, p)
 	}
 	return d, rows.Err()
+}
+
+// RMMMissing is a missing update with a KB, as stored.
+type RMMMissing struct {
+	KB     string
+	Title  string
+	Status string // "approved_pending" or "not_approved"
+}
+
+// RMMRematch is a covered RMM device whose findings were computed against an
+// older feed snapshot than the latest one.
+type RMMRematch struct {
+	DeviceID   string
+	EvidenceAt *time.Time
+	Reason     string
+	Missing    []RMMMissing
+}
+
+// RMMRematchCandidates lists the covered, still fresh RMM devices whose last
+// match used a feed snapshot other than latest. Re-matching them needs no RMM
+// request: it uses the missing-update list stored at the last read, so a new
+// KEV listing or a new KB to CVE mapping shows up without waiting for the next
+// read. A device whose evidence has gone stale is left alone.
+func (s *Store) RMMRematchCandidates(ctx context.Context, latestSnapshot int64, now time.Time) ([]RMMRematch, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.id, p.evidence_at, p.reason
+		FROM devices d JOIN host_patch_state p ON p.device_id = d.id
+		WHERE d.source = 'rmm' AND NOT d.revoked AND p.coverage = 'covered'
+		  AND p.snapshot_id IS DISTINCT FROM $1
+		  AND p.evidence_at >= $2::timestamptz - make_interval(days => COALESCE((SELECT stale_after_days FROM rmm_settings WHERE id = 1), 7))
+		ORDER BY d.id`, latestSnapshot, now)
+	if err != nil {
+		return nil, err
+	}
+	var out []RMMRematch
+	idx := map[string]int{}
+	var ids []string
+	for rows.Next() {
+		var r RMMRematch
+		if err := rows.Scan(&r.DeviceID, &r.EvidenceAt, &r.Reason); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		idx[r.DeviceID] = len(out)
+		ids = append(ids, r.DeviceID)
+		out = append(out, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(ids) == 0 {
+		return out, err
+	}
+	prow, err := s.pool.Query(ctx, `
+		SELECT device_id, kb, title, lower(install_status) FROM rmm_patches
+		WHERE device_id = ANY($1) AND kb <> '' ORDER BY device_id, kb`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer prow.Close()
+	for prow.Next() {
+		var id string
+		var m RMMMissing
+		if err := prow.Scan(&id, &m.KB, &m.Title, &m.Status); err != nil {
+			return nil, err
+		}
+		out[idx[id]].Missing = append(out[idx[id]].Missing, m)
+	}
+	return out, prow.Err()
 }

@@ -754,3 +754,49 @@ func TestNeverReadAuditOrSoftwareOfAnUnauditedDevice(t *testing.T) {
 		t.Error("evidence was requested for a device RMM never audited")
 	}
 }
+
+// A new KEV listing lands in the findings without waiting for the next read of
+// the RMM: the stored missing-update list is matched again against the new
+// snapshot.
+func TestRematchPicksUpANewKEVListingWithoutAskingTheRMM(t *testing.T) {
+	r := newRig(t)
+	r.sync()
+	ctx := context.Background()
+	if r.count(`SELECT count(*) FROM vuln_findings WHERE device_id = $1 AND cve = 'CVE-2099-0002' AND kev`, win10ID) != 0 {
+		t.Fatal("setup: CVE-2099-0002 is not on the KEV list yet")
+	}
+	if n, err := rmm.Rematch(ctx, r.store, r.now); err != nil || n != 0 {
+		t.Fatalf("nothing changed, yet Rematch matched %d (%v)", n, err)
+	}
+	snap, err := r.store.RecordFeedSnapshot(ctx, []storepg.FeedRef{{Name: "kev", URL: "https://example.invalid/kev", FetchedAt: r.now, SHA256: strings.Repeat("b", 64), RecordCount: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.store.ApplyKEV(ctx, []storepg.KEVRow{
+		{CVE: "CVE-2099-0001", Added: r.now.AddDate(0, 0, -4), Name: "a"}, {CVE: "CVE-2099-0002", Added: r.now, Name: "b"}}, snap.ID); err != nil {
+		t.Fatal(err)
+	}
+	before := r.srv.Requests()
+	n, err := rmm.Rematch(ctx, r.store, r.now)
+	if err != nil || n != 1 {
+		t.Fatalf("Rematch = %d, %v; want the one covered device", n, err)
+	}
+	if len(r.srv.Requests()) != len(before) {
+		t.Error("Rematch asked the RMM for something")
+	}
+	if r.count(`SELECT count(*) FROM vuln_findings WHERE device_id = $1 AND cve = 'CVE-2099-0002' AND kev AND resolved_at IS NULL`, win10ID) != 1 {
+		t.Error("the new KEV listing did not reach the finding")
+	}
+	if r.count(`SELECT count(*) FROM vuln_findings WHERE device_id = $1 AND resolved_at IS NULL`, win10ID) != 3 {
+		t.Error("re-matching changed the set of open findings")
+	}
+	if n, _ := rmm.Rematch(ctx, r.store, r.now); n != 0 {
+		t.Errorf("a second Rematch matched %d devices again for the same snapshot", n)
+	}
+	// A device whose evidence has aged out is left alone.
+	snap2, _ := r.store.RecordFeedSnapshot(ctx, []storepg.FeedRef{{Name: "kev", URL: "https://example.invalid/kev", FetchedAt: r.now, SHA256: strings.Repeat("c", 64), RecordCount: 2}})
+	_ = snap2
+	if n, _ := rmm.Rematch(ctx, r.store, r.now.AddDate(0, 0, 10)); n != 0 {
+		t.Errorf("a stale device was re-matched (%d)", n)
+	}
+}

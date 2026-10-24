@@ -587,3 +587,51 @@ var (
 	_ Store  = (*storepg.Store)(nil)
 	_ Source = (*datto.Client)(nil)
 )
+
+// RematchStore is what Rematch needs.
+type RematchStore interface {
+	vuln.RangeSource
+	LatestFeedSnapshot(ctx context.Context) (storepg.FeedSnapshot, bool, error)
+	RMMRematchCandidates(ctx context.Context, latestSnapshot int64, now time.Time) ([]storepg.RMMRematch, error)
+	RecordPatchFindings(ctx context.Context, deviceID string, res vuln.Result, snapshotID *int64, inv *storepg.Inventory, st storepg.HostPatchState) error
+}
+
+// Rematch recomputes the findings of every covered RMM device whose last match
+// used an older feed snapshot, from the missing-update list stored at the last
+// read. It makes no RMM request. It returns how many devices it re-matched.
+func Rematch(ctx context.Context, store RematchStore, now time.Time) (int, error) {
+	snap, ok, err := store.LatestFeedSnapshot(ctx)
+	if err != nil || !ok {
+		return 0, err
+	}
+	cands, err := store.RMMRematchCandidates(ctx, snap.ID, now)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, c := range cands {
+		if err := ctx.Err(); err != nil {
+			return n, err
+		}
+		missing := make([]vuln.MissingPatch, 0, len(c.Missing))
+		for _, m := range c.Missing {
+			missing = append(missing, vuln.MissingPatch{KB: m.KB, Title: m.Title, Status: m.Status})
+		}
+		res, err := vuln.MatchWindows(ctx, store, missing)
+		if err != nil {
+			return n, err
+		}
+		if res.Coverage != vuln.CoverageFull {
+			continue // the feed is gone: leave the findings as they were
+		}
+		id := snap.ID
+		if err := store.RecordPatchFindings(ctx, c.DeviceID, res, &id, &storepg.Inventory{InstalledKBs: map[string]bool{}}, storepg.HostPatchState{
+			DeviceID: c.DeviceID, Coverage: storepg.PatchCovered, Reason: c.Reason, EvidenceAt: c.EvidenceAt,
+			KBsMissing: res.Stats.Packages, KBsMapped: res.Stats.DistroMapped,
+		}); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}

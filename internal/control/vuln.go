@@ -306,5 +306,7 @@ func (s *Server) refreshFindings(ctx context.Context) (matched, failed int) {
 	if matched > 0 || failed > 0 {
 		s.log.Info("findings refresh", "devices", len(devices), "rematched", matched, "failed", failed)
 	}
+	// Windows devices read through an RMM are matched from their stored update lists.
+	s.rmmRematch(ctx)
 	return matched, failed
 }

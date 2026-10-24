@@ -33,7 +33,7 @@ func TestMatchWindowsMissingKBFixesCVEs(t *testing.T) {
 		{KB: "5000001", Title: "2099-01 Cumulative Update", Status: "approved_pending"},
 		{KB: "KB5000002", Status: "not_approved"},
 		{KB: "", Title: "Security Intelligence Update"}, // no KB: examined, nothing to map
-		{KB: "KB5000777"},                               // unknown to the feed
+		{KB: "KB5000777"}, // unknown to the feed
 	})
 	if err != nil {
 		t.Fatal(err)
