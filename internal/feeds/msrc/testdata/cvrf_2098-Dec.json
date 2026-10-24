@@ -1,0 +1,6 @@
+{"DocumentTracking":{"Identification":{"ID":{"Value":"2098-Dec"}},"InitialReleaseDate":"2098-12-08T08:00:00","CurrentReleaseDate":"2098-12-09T10:00:00"},
+"ProductTree":{"FullProductName":[{"ProductID":"12001","Value":"Windows 10 Version 22H2 for x64-based Systems"}]},
+"Vulnerability":[
+{"Title":{"Value":"Windows SMB Remote Code Execution Vulnerability"},"CVE":"CVE-2098-1000","Threats":[{"Description":{"Value":"Critical"},"ProductID":["12001"],"Type":3}],
+ "CVSSScoreSets":[{"BaseScore":9.8,"Vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+ "Remediations":[{"Description":{"Value":"4990001"},"ProductID":["12001"],"Type":2}]}]}

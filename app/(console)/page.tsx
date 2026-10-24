@@ -9,6 +9,9 @@ import { FeedAgeBanner } from "@/components/feed-age-banner";
 import { AlsoCheckCard, FixThisWeekCard, KevWatchCallout } from "@/components/fix-this-week";
 import { ExposureTrendCard } from "@/components/exposure-trend-card";
 import { SurfaceSummaryCard } from "@/components/surface-summary-card";
+import { RmmSummaryCard } from "@/components/rmm-summary-card";
+import { getRmmDevices, getRmmStatus } from "@/lib/rmm";
+import { rmmCard, unsupportedRmm } from "@/lib/rmm-model";
 import { ensureStore, publicDevice } from "@/lib/store";
 import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 import { isOnline } from "@/lib/policies";
@@ -53,17 +56,22 @@ export default async function HomePage({
   const patchUnreliable = fleet.filter((d) => isUnreliable(patchReliabilityOf(d))).length;
   // Everything the Monday view needs comes from the control plane a page at a
   // time or as counts; the fleet itself stays on the server.
-  const [exposure, trend, feedStatus, periods] = await Promise.all([
+  const [exposure, trend, feedStatus, periods, rmmStatus] = await Promise.all([
     getExposureSummary(5),
     getExposureTrend(trendQuery),
     getFeedStatus(),
     loadAuditPeriods().catch(() => []),
+    getRmmStatus(),
   ]);
+  // Windows devices read through Datto RMM are not in the fleet above (they are not
+  // agents); their OS support is judged here the same way.
+  const rmmDevices = rmmStatus && rmmStatus.summary.devices > 0 ? ((await getRmmDevices()) ?? []) : [];
   // The OS support policy lives in the console (DEFENDSEC_SUPPORTED_OS), so the
   // unsupported hosts are counted here, from the fleet the page already holds.
   const unsupported = fleet
     .filter((d) => !d.sample && supportedOs(d) === false)
     .map((d) => ({ id: d.id, hostname: d.hostname, os: `${d.osName} ${d.osVersion}`.trim() }))
+    .concat(unsupportedRmm(rmmDevices.filter((d) => !d.mergedInto)))
     .sort((a, b) => a.hostname.localeCompare(b.hostname));
 
   return (
@@ -108,6 +116,7 @@ export default async function HomePage({
           </div>
           <div className="space-y-4">
             <SurfaceSummaryCard summary={exposure.surface} />
+            {rmmCard(rmmStatus).state !== "not-configured" ? <RmmSummaryCard status={rmmStatus} /> : null}
             <AlsoCheckCard summary={exposure} unsupported={unsupported.slice(0, 5)} unsupportedTotal={unsupported.length} />
           </div>
         </div>

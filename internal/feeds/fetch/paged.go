@@ -72,10 +72,6 @@ func (f *Fetcher) FetchPaged(ctx context.Context, name, baseURL string, p Pager)
 	if p.URL == nil || p.Records == nil || p.Key == nil || p.Wrap == "" {
 		return Result{}, errors.New("fetch: incomplete Pager")
 	}
-	prev, cached, err := f.Cache.LoadMeta(name)
-	if err != nil {
-		return Result{}, err
-	}
 	maxPages := p.MaxPages
 	if maxPages <= 0 {
 		maxPages = 2000
@@ -157,21 +153,48 @@ func (f *Fetcher) FetchPaged(ctx context.Context, name, baseURL string, p Pager)
 	}
 	buf.WriteString("]}\n")
 
+	return f.StoreNormalised(name, baseURL, buf.Bytes())
+}
+
+// GetBody downloads one document of a multi-document feed (one request, retried
+// like a page), refusing anything but https or a loopback mirror.
+func (f *Fetcher) GetBody(ctx context.Context, name, docURL string) ([]byte, error) {
+	if !ValidName(name) {
+		return nil, fmt.Errorf("invalid feed name %q", name)
+	}
+	if err := CheckURL(docURL); err != nil {
+		return nil, err
+	}
+	return f.getPage(ctx, name, docURL)
+}
+
+// StoreNormalised writes data as the feed's cached file and records its digest,
+// for a feed the caller assembled itself from several downloads. The stored
+// bytes must depend only on the records, not on how they were fetched, so an
+// unchanged upstream yields an unchanged digest.
+func (f *Fetcher) StoreNormalised(name, baseURL string, data []byte) (Result, error) {
+	if !ValidName(name) {
+		return Result{}, fmt.Errorf("invalid feed name %q", name)
+	}
+	prev, cached, err := f.Cache.LoadMeta(name)
+	if err != nil {
+		return Result{}, err
+	}
 	dir := filepath.Join(f.Cache.Dir, name)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return Result{}, err
 	}
-	sum := sha256.Sum256(buf.Bytes())
+	sum := sha256.Sum256(data)
 	digest := hex.EncodeToString(sum[:])
 	part := f.Cache.Path(name) + ".part"
-	if err := os.WriteFile(part, buf.Bytes(), 0o600); err != nil {
+	if err := os.WriteFile(part, data, 0o600); err != nil {
 		return Result{}, err
 	}
 	if err := os.Rename(part, f.Cache.Path(name)); err != nil {
 		os.Remove(part)
 		return Result{}, err
 	}
-	m := Meta{URL: baseURL, SHA256: digest, Size: int64(buf.Len()), FetchedAt: f.now()}
+	m := Meta{URL: baseURL, SHA256: digest, Size: int64(len(data)), FetchedAt: f.now()}
 	if err := f.Cache.SaveMeta(name, m); err != nil {
 		return Result{}, err
 	}

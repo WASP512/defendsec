@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { isRmmDeviceId } from "@/lib/rmm-model";
 import { databaseURL } from "@/lib/pg";
 import { listAlerts } from "@/lib/alerts";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +38,8 @@ export default async function DeviceDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  // A device read from Datto RMM has its own page; every link to /devices/<id> still works.
+  if (isRmmDeviceId(id)) redirect(`/rmm/devices/${id}`);
   const store = await ensureStore();
   const device = (await loadFleet(store.devices)).find((d) => d.id === id || d.mtlsDeviceId === id);
   if (!device) notFound();

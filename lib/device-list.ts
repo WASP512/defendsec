@@ -34,6 +34,8 @@ export type DeviceSummary = {
   patchReliability?: string;
   /** The first reason the list is unreliable. */
   patchReason?: string;
+  /** Where the row came from: an enrolled agent, or Datto RMM. Absent from an older control plane. */
+  source?: "agent" | "rmm";
 };
 
 export type DevicePage = { devices: DeviceSummary[]; next?: string; total: number };

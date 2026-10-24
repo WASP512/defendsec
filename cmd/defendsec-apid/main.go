@@ -216,6 +216,11 @@ func run(log *slog.Logger) error {
 		if strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_SURFACE_SCHEDULE"))) != "off" {
 			go svc.RunSurfaceSchedule(exportCtx, control.SurfaceScheduleCheck)
 		}
+		// Reads of the Datto RMM site the operator selected (every 6 hours). With no
+		// site, or no credentials, it does nothing; DEFENDSEC_RMM_SCHEDULE=off disables it.
+		if strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_RMM_SCHEDULE"))) != "off" {
+			go svc.RunRMMSchedule(exportCtx, control.RMMScheduleCheck)
+		}
 
 		// Postgres is the primary device store (roadmap 5.5): apid's memory
 		// is seeded from it, and defendsec-agents.json becomes an export
@@ -320,6 +325,9 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/assets/", svc.HandleAssets)
 	adminMux.HandleFunc("/v1/surface/findings", svc.HandleSurfaceFindings)
 	adminMux.HandleFunc("/v1/surface/scan", svc.HandleSurfaceScan)
+	// Datto RMM collector (slice 8): Windows inventory and patch state read through
+	// the RMM's API, with nothing installed on the PCs.
+	adminMux.HandleFunc("/v1/rmm/", svc.HandleRMM)
 	adminMux.HandleFunc("/v1/agent-releases", svc.HandleAgentReleases)
 	adminMux.HandleFunc("/v1/saved-queries", svc.HandleSavedQueries)
 	adminMux.HandleFunc("/v1/alerts", svc.HandleAlerts)

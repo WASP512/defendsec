@@ -1,0 +1,2 @@
+{"pageDetails":{"count":1,"totalCount":1,"prevPageUrl":null,"nextPageUrl":null},"patches":[
+{"patchId":"p-0003","category":["Security Updates"],"type":"SOFTWARE","title":"2099-01 Security Update for .NET (KB5000002)","releaseDate":"2099-01-14T00:00:00","severity":"IMPORTANT","kbArticleId":"5000002","installStatus":"NOT_APPROVED"}]}

@@ -65,6 +65,8 @@ type DeviceSummary struct {
 	// when unreliable.
 	PatchReliability string `json:"patchReliability"`
 	PatchReason      string `json:"patchReason"`
+	// Source is where the row came from: "agent" or "rmm" (read from Datto RMM).
+	Source string `json:"source"`
 }
 
 // DevicePage is one page of a listing.
@@ -143,7 +145,9 @@ func (s *Store) ListDevices(ctx context.Context, q DeviceQuery) (DevicePage, err
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
-	where = append(where, "NOT revoked")
+	// A device read from an RMM that is also an enrolled agent is the same machine:
+	// the agent row stands for it.
+	where = append(where, "NOT revoked", "merged_into IS NULL")
 	if q.Q != "" {
 		like := arg("%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.ToLower(q.Q)) + "%")
 		where = append(where, fmt.Sprintf(`(lower(hostname) LIKE %[1]s OR lower(serial) LIKE %[1]s OR lower(username) LIKE %[1]s
@@ -183,6 +187,7 @@ func (s *Store) ListDevices(ctx context.Context, q DeviceQuery) (DevicePage, err
 		       username, ip_addresses, disk_encryption, firewall, isolated, last_seen,
 		       last_seen >= `+cutoffArg+`, CASE WHEN jsonb_typeof(software) = 'array' THEN jsonb_array_length(software) ELSE 0 END,
 		       CASE WHEN jsonb_typeof(pending_updates) = 'array' THEN jsonb_array_length(pending_updates) ELSE 0 END,
+		       source,
 		       CASE WHEN repo_health IS NULL THEN CASE WHEN platform = 'linux' THEN 'unassessed' ELSE '' END
 		            ELSE COALESCE(repo_health->'assessment'->>'reliability', 'unassessed') END,
 		       COALESCE(repo_health->'assessment'->'reasons'->>0, '')
@@ -198,7 +203,7 @@ func (s *Store) ListDevices(ctx context.Context, q DeviceQuery) (DevicePage, err
 		var ips []byte
 		if err := rows.Scan(&d.ID, &d.Hostname, &d.Platform, &d.OSName, &d.OSVersion, &d.Arch, &d.AgentVersion,
 			&d.Serial, &d.HardwareModel, &d.Username, &ips, &d.DiskEncryption, &d.Firewall, &d.Isolated,
-			&d.LastSeen, &d.Online, &d.SoftwareCount, &d.PendingUpdates, &d.PatchReliability, &d.PatchReason); err != nil {
+			&d.LastSeen, &d.Online, &d.SoftwareCount, &d.PendingUpdates, &d.Source, &d.PatchReliability, &d.PatchReason); err != nil {
 			return DevicePage{}, err
 		}
 		_ = json.Unmarshal(ips, &d.IPAddresses)
@@ -243,11 +248,11 @@ func (s *Store) CountDevices(ctx context.Context, now time.Time) (FleetCounts, e
 		       count(*) FILTER (WHERE isolated),
 		       count(*) FILTER (WHERE disk_encryption = false),
 		       count(*) FILTER (WHERE firewall = false)
-		FROM devices WHERE NOT revoked`, cutoff).Scan(&c.Total, &c.Online, &c.Isolated, &c.Unencrypted, &c.FirewallOff)
+		FROM devices WHERE NOT revoked AND source = 'agent'`, cutoff).Scan(&c.Total, &c.Online, &c.Isolated, &c.Unencrypted, &c.FirewallOff)
 	if err != nil {
 		return c, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT platform, count(*) FROM devices WHERE NOT revoked GROUP BY platform`)
+	rows, err := s.pool.Query(ctx, `SELECT platform, count(*) FROM devices WHERE NOT revoked AND source = 'agent' GROUP BY platform`)
 	if err != nil {
 		return c, err
 	}
@@ -303,7 +308,7 @@ func (s *Store) LoadDevices(ctx context.Context) ([]presence.Device, error) {
 		       COALESCE(patch_inventory,''), fim, fim_baseline, last_seen, connected, isolated,
 		       cert_fingerprint, transport, agent_version, agent_public_key_pem,
 		       distro, distro_release, package_manager, os_edition, repo_health
-		FROM devices WHERE NOT revoked AND NOT sample`)
+		FROM devices WHERE NOT revoked AND NOT sample AND source = 'agent'`)
 	if err != nil {
 		return nil, err
 	}

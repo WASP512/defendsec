@@ -106,6 +106,8 @@ type Server struct {
 	// repoStaleAfter is how old a repository index may be before it is a
 	// finding (DEFENDSEC_REPO_STALE_DAYS; 0 means the default of 7 days).
 	repoStaleAfter time.Duration
+	// rmmr is the Datto RMM collector's state (rmm.go).
+	rmmr rmmRunner
 }
 
 // SetRepoStaleAfter sets the repository-index staleness threshold.

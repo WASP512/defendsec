@@ -1,0 +1,1 @@
+{"pageDetails":{"count":2,"totalCount":3,"prevPageUrl":null,"nextPageUrl":"{{BASE}}/api/v2/audit/device/dddddddd-0000-4000-8000-000000000001/software?max=2&page=1"},"software":[{"name":"Demo Browser","version":"120.0.1"},{"name":"Demo Reader","version":"23.8.2"}]}

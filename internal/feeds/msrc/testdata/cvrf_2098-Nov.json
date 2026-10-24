@@ -1,0 +1,3 @@
+{"DocumentTracking":{"Identification":{"ID":{"Value":"2098-Nov"}},"InitialReleaseDate":"2098-11-10T08:00:00"},
+"ProductTree":{"FullProductName":[{"ProductID":"12001","Value":"Windows 10 Version 22H2 for x64-based Systems"}]},
+"Vulnerability":[{"Title":{"Value":"Old one"},"CVE":"CVE-2098-0900","Threats":[{"Description":{"Value":"Low"},"Type":3}],"Remediations":[{"Description":{"Value":"4980001"},"ProductID":["12001"],"Type":2}]}]}

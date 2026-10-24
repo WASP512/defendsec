@@ -1,0 +1,7 @@
+{"@odata.context":"https://api.msrc.microsoft.com/$metadata#Updates","value":[
+{"ID":"2099-Jan","Alias":"2099-Jan","DocumentTitle":"January 2099 Security Updates","Severity":null,"InitialReleaseDate":"2099-01-12T08:00:00Z","CurrentReleaseDate":"2099-01-20T10:00:00Z","CvrfUrl":"https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/2099-Jan"},
+{"ID":"2098-Dec","Alias":"2098-Dec","DocumentTitle":"December 2098 Security Updates","Severity":null,"InitialReleaseDate":"2098-12-08T08:00:00Z","CurrentReleaseDate":"2098-12-09T10:00:00Z","CvrfUrl":"https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/2098-Dec"},
+{"ID":"2098-Nov","Alias":"2098-Nov","DocumentTitle":"November 2098 Security Updates","Severity":null,"InitialReleaseDate":"2098-11-10T08:00:00Z","CurrentReleaseDate":"2098-11-10T10:00:00Z","CvrfUrl":"https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/2098-Nov"},
+{"ID":"2098-Oct","Alias":"2098-Oct","DocumentTitle":"Mariner Release Notes","Severity":null,"InitialReleaseDate":"2098-10-02T00:00:00Z","CurrentReleaseDate":"2098-10-02T00:00:00Z","CvrfUrl":"https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/2098-Oct"},
+{"ID":"2999-Feb","Alias":"2999-Feb","DocumentTitle":"February 2999 Security Updates","Severity":null,"InitialReleaseDate":"2999-02-09T08:00:00Z","CurrentReleaseDate":"2999-02-09T08:00:00Z","CvrfUrl":"https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/2999-Feb"},
+{"ID":"not-a-month","DocumentTitle":"Security Updates","InitialReleaseDate":"2098-01-01T00:00:00Z","CurrentReleaseDate":"2098-01-01T00:00:00Z"}]}

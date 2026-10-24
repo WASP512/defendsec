@@ -25,6 +25,7 @@ import {
   BotMessageSquare,
   Globe,
   Network,
+  MonitorCog,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ConsoleTools } from "@/components/console-tools";
@@ -66,6 +67,7 @@ const nav = [
   // External surface (slice 7a). Appended: the groups below slice this array by position.
   { href: "/assets", label: "Assets", icon: Network },
   { href: "/surface", label: "Surface", icon: Globe },
+  { href: "/rmm", label: "Datto RMM", icon: MonitorCog },
 ];
 
 const navGroups = [
