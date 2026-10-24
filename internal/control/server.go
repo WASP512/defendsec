@@ -30,8 +30,6 @@ import (
 	"defendsec/internal/forward"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
-	"defendsec/internal/playbook"
-	"defendsec/internal/policy"
 	"defendsec/internal/presence"
 	"defendsec/internal/repohealth"
 	"defendsec/internal/sca"
@@ -68,12 +66,10 @@ type Server struct {
 	anchors         *anchor.Publisher
 	peerAnchorToken string
 
-	// Policy sits between the API and the signer (roadmap 2.1). Nil means no
-	// policy is loaded, which denies everything rather than allowing it.
-	policy *policy.Engine
-	// Playbooks are named sequences (roadmap 2.5). Every step still goes
-	// through the policy engine individually.
-	playbooks *playbook.Set
+	// allowedCmds is the set of signed command types an administrator may
+	// issue (commands.go). Empty by default.
+	allowedMu   sync.RWMutex
+	allowedCmds map[string]struct{}
 
 	// Behavioural detection (roadmap 3.2-3.5). trees holds per-device process
 	// lineage so an alert can carry the ancestry that led to it; gaps records
@@ -331,7 +327,6 @@ func (s *Server) Heartbeat(ctx context.Context, req *defendsecv1.HeartbeatReques
 		Connected:       true,
 		CertFingerprint: fp,
 		Transport:       "mtls-grpc",
-		Isolated:        req.GetIsolated(),
 	}
 	if err := s.store.Upsert(dev); err != nil {
 		s.log.Error("presence upsert", "err", err)
@@ -363,7 +358,6 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 		Connected:       true,
 		CertFingerprint: fp,
 		Transport:       "mtls-grpc",
-		Isolated:        host.GetIsolated(),
 		Serial:          req.GetSerial(),
 		HardwareModel:   req.GetHardwareModel(),
 		CPU:             req.GetCpu(),
@@ -408,14 +402,6 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 			Severity: item.GetSeverity(), Pass: item.GetPass(), Detail: item.GetDetail(),
 		})
 	}
-	// Captured before ApplyInventory overwrites the stored snapshot. Without
-	// this the previous versions are gone and a package upgrade can never be
-	// correlated with the file it rewrote (roadmap 4.3).
-	var previousSoftware []presence.Software
-	if before, ok := s.store.Get(id); ok {
-		previousSoftware = before.Software
-	}
-
 	events, err := s.store.ApplyInventory(dev)
 	if err != nil {
 		s.log.Error("inventory", "err", err)
@@ -444,14 +430,6 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 		for _, ev := range events {
 			if err := s.pg.AppendFimEvent(ctx2, ev); err != nil {
 				s.log.Warn("postgres fim event", "err", err)
-			}
-		}
-		// Package transitions, for triage correlation. Best-effort: failing a
-		// host's heartbeat because its package history could not be written
-		// would trade the security function for a nicety.
-		if changes := presence.DiffSoftware(previousSoftware, merged.Software); len(changes) > 0 {
-			if err := s.pg.RecordPackageChanges(ctx2, id, merged.Hostname, changes); err != nil {
-				s.log.Warn("postgres package changes", "err", err)
 			}
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,7 +16,6 @@ import (
 	"defendsec/internal/cmdlog"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/identity"
-	"defendsec/internal/policy"
 	"defendsec/internal/sign"
 )
 
@@ -129,16 +129,62 @@ func (s *Server) adminWriteOK(r *http.Request) bool {
 	return s.resolveActor(r).Role == identity.RoleAdmin
 }
 
+// issuableCommands are the signed command types the control plane can still
+// send. Slice 6 removed isolate, release, kill_process, quarantine_path and
+// run_script (see docs/DIRECTION.md); a request for any other type is a 400.
+var issuableCommands = map[string]struct{}{
+	agentcmd.TypeLiveQuery:   {},
+	agentcmd.TypeAgentUpdate: {},
+}
+
+// ParseAllowedCommands reads DEFENDSEC_ALLOW_COMMANDS: a comma-separated list
+// of command types. Unknown names are dropped, so a stale value left over from
+// before slice 6 (isolate, run_script, ...) enables nothing.
+func ParseAllowedCommands(raw string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if _, ok := issuableCommands[name]; ok && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SetAllowedCommands sets which command types an administrator may issue. The
+// default is none: the policy engine that used to decide this was removed, and
+// an install that never loaded a policy file could issue no host command, so
+// the remaining ones stay off until the operator names them.
+func (s *Server) SetAllowedCommands(types []string) {
+	allowed := make(map[string]struct{}, len(types))
+	for _, t := range types {
+		if _, ok := issuableCommands[t]; ok {
+			allowed[t] = struct{}{}
+		}
+	}
+	s.allowedMu.Lock()
+	s.allowedCmds = allowed
+	s.allowedMu.Unlock()
+}
+
+func (s *Server) commandAllowed(cmdType string) bool {
+	s.allowedMu.RLock()
+	defer s.allowedMu.RUnlock()
+	_, ok := s.allowedCmds[cmdType]
+	return ok
+}
+
 func validateCommandPayload(cmdType string, payload []byte) error {
 	switch cmdType {
-	case "run_script":
-		if _, err := agentcmd.ParseRunScriptPayload(payload); err != nil {
-			return err
-		}
-	case "quarantine_path":
-		if _, err := agentcmd.ParseQuarantinePayload(payload); err != nil {
-			return err
-		}
+	case agentcmd.TypeLiveQuery:
+		_, err := agentcmd.ParseLiveQueryPayload(payload)
+		return err
+	case agentcmd.TypeAgentUpdate:
+		_, err := agentcmd.ParseAgentUpdatePayload(payload)
+		return err
 	}
 	return nil
 }
@@ -157,12 +203,23 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Type = strings.TrimSpace(req.Type)
 	req.DeviceID = strings.TrimSpace(req.DeviceID)
-	switch req.Type {
-	case "isolate", "release", "kill_process", "live_query", "agent_update", "run_script", "quarantine_path":
-	default:
+	if _, ok := issuableCommands[req.Type]; !ok {
 		http.Error(w, "unknown command type", http.StatusBadRequest)
 		return
 	}
+	// The allow-list decides before anything is signed: a type the operator
+	// has not enabled never becomes a signed envelope, so it is inert whatever
+	// happens above this line. The refusal is written to the ledger, because
+	// "did anyone try" is a question asked after the fact.
+	if !s.commandAllowed(req.Type) {
+		s.audit(s.actorIdentity(r), "command_refused", req.DeviceID, map[string]any{"type": req.Type, "reason": "not enabled"})
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error":  "this command type is not enabled on this instance",
+			"reason": "Host commands are off by default. Set DEFENDSEC_ALLOW_COMMANDS (for example live_query,agent_update) and restart defendsec-apid.",
+		})
+		return
+	}
+
 	payload := req.Payload
 	if len(payload) == 0 {
 		payload = []byte("{}")
@@ -176,35 +233,6 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown mTLS device", http.StatusNotFound)
 		return
 	}
-	// Policy decides before anything is signed (roadmap 2.1). This is the
-	// chokepoint: a command policy refuses never becomes a signed envelope,
-	// so it is inert regardless of what happens above this line.
-	polReq := s.policyRequest(r.Context(), r, req.Type, req.DeviceID, dev.Hostname)
-	decision, err := s.authorise(r.Context(), polReq)
-	if err != nil {
-		s.log.Error("authorise command", "err", err)
-		http.Error(w, "could not evaluate policy", http.StatusInternalServerError)
-		return
-	}
-
-	switch decision.Effect {
-	case policy.EffectDeny:
-		s.recordDecision(r.Context(), polReq, decision, "")
-		denyResponse(w, decision)
-		return
-
-	case policy.EffectRequireApproval:
-		pending, err := s.createPendingCommand(r.Context(), polReq, decision, payload)
-		if err != nil {
-			s.log.Error("create pending command", "err", err)
-			http.Error(w, "could not record the approval request", http.StatusInternalServerError)
-			return
-		}
-		s.recordDecision(r.Context(), polReq, decision, "")
-		approvalResponse(w, pending, decision)
-		return
-	}
-
 	id, err := newDeviceID()
 	if err != nil {
 		http.Error(w, "id", http.StatusInternalServerError)
@@ -221,7 +249,6 @@ func (s *Server) issueCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := s.resolveActor(r)
 	signature := s.signer.Sign(env)
-	s.recordDecision(r.Context(), polReq, decision, id)
 	rec := cmdlog.Record{
 		ID:        env.CommandID,
 		DeviceID:  env.DeviceID,
@@ -362,23 +389,6 @@ func (s *Server) noteAck(deviceID string, accepted bool, commandID, message stri
 			_ = s.pg.SaveLiveQueryResult(ctx, commandID, deviceID, queryID, status, message)
 		}
 		cancel()
-	}
-	lower := strings.ToLower(message)
-	if accepted && strings.Contains(lower, "isolated") && !strings.Contains(lower, "cleared") {
-		_ = s.store.SetIsolated(deviceID, true)
-		if s.pg != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = s.pg.SetIsolated(ctx, deviceID, true)
-			cancel()
-		}
-	}
-	if accepted && strings.Contains(lower, "isolation cleared") {
-		_ = s.store.SetIsolated(deviceID, false)
-		if s.pg != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = s.pg.SetIsolated(ctx, deviceID, false)
-			cancel()
-		}
 	}
 	s.audit("agent", "command_ack", deviceID, map[string]any{"commandId": commandID, "accepted": accepted, "message": message})
 }

@@ -27,7 +27,7 @@ type DeviceQuery struct {
 	Q string
 	// Platform is linux, windows, or empty for any.
 	Platform string
-	// Status is online, offline, isolated, or empty for any.
+	// Status is online, offline, or empty for any.
 	Status string
 	// Limit is the page size, 1..MaxPageSize; 0 means 50.
 	Limit int
@@ -53,7 +53,6 @@ type DeviceSummary struct {
 	IPAddresses    []string  `json:"ipAddresses"`
 	DiskEncryption *bool     `json:"diskEncryption"`
 	Firewall       *bool     `json:"firewall"`
-	Isolated       bool      `json:"isolated"`
 	LastSeen       time.Time `json:"lastSeen"`
 	Online         bool      `json:"online"`
 	SoftwareCount  int       `json:"softwareCount"`
@@ -118,9 +117,9 @@ func (q *DeviceQuery) Normalize() error {
 		return fmt.Errorf("platform must be linux or windows")
 	}
 	switch q.Status {
-	case "", "online", "offline", "isolated":
+	case "", "online", "offline":
 	default:
-		return fmt.Errorf("status must be online, offline or isolated")
+		return fmt.Errorf("status must be online or offline")
 	}
 	if q.Limit == 0 {
 		q.Limit = 50
@@ -162,8 +161,6 @@ func (s *Store) ListDevices(ctx context.Context, q DeviceQuery) (DevicePage, err
 		where = append(where, "last_seen >= "+arg(cutoff))
 	case "offline":
 		where = append(where, "last_seen < "+arg(cutoff))
-	case "isolated":
-		where = append(where, "isolated")
 	}
 	filter := strings.Join(where, " AND ")
 
@@ -184,7 +181,7 @@ func (s *Store) ListDevices(ctx context.Context, q DeviceQuery) (DevicePage, err
 	limitArg := arg(q.Limit + 1)
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, hostname, platform, os_name, os_version, arch, agent_version, serial, hardware_model,
-		       username, ip_addresses, disk_encryption, firewall, isolated, last_seen,
+		       username, ip_addresses, disk_encryption, firewall, last_seen,
 		       last_seen >= `+cutoffArg+`, CASE WHEN jsonb_typeof(software) = 'array' THEN jsonb_array_length(software) ELSE 0 END,
 		       CASE WHEN jsonb_typeof(pending_updates) = 'array' THEN jsonb_array_length(pending_updates) ELSE 0 END,
 		       source,
@@ -202,7 +199,7 @@ func (s *Store) ListDevices(ctx context.Context, q DeviceQuery) (DevicePage, err
 		var d DeviceSummary
 		var ips []byte
 		if err := rows.Scan(&d.ID, &d.Hostname, &d.Platform, &d.OSName, &d.OSVersion, &d.Arch, &d.AgentVersion,
-			&d.Serial, &d.HardwareModel, &d.Username, &ips, &d.DiskEncryption, &d.Firewall, &d.Isolated,
+			&d.Serial, &d.HardwareModel, &d.Username, &ips, &d.DiskEncryption, &d.Firewall,
 			&d.LastSeen, &d.Online, &d.SoftwareCount, &d.PendingUpdates, &d.Source, &d.PatchReliability, &d.PatchReason); err != nil {
 			return DevicePage{}, err
 		}
@@ -230,7 +227,6 @@ func (s *Store) ListDevices(ctx context.Context, q DeviceQuery) (DevicePage, err
 type FleetCounts struct {
 	Total      int            `json:"total"`
 	Online     int            `json:"online"`
-	Isolated   int            `json:"isolated"`
 	ByPlatform map[string]int `json:"byPlatform"`
 	// Unencrypted and FirewallOff count devices that reported false; a
 	// device that did not report is in neither.
@@ -245,10 +241,9 @@ func (s *Store) CountDevices(ctx context.Context, now time.Time) (FleetCounts, e
 	err := s.pool.QueryRow(ctx, `
 		SELECT count(*),
 		       count(*) FILTER (WHERE last_seen >= $1),
-		       count(*) FILTER (WHERE isolated),
 		       count(*) FILTER (WHERE disk_encryption = false),
 		       count(*) FILTER (WHERE firewall = false)
-		FROM devices WHERE NOT revoked AND source = 'agent'`, cutoff).Scan(&c.Total, &c.Online, &c.Isolated, &c.Unencrypted, &c.FirewallOff)
+		FROM devices WHERE NOT revoked AND source = 'agent'`, cutoff).Scan(&c.Total, &c.Online, &c.Unencrypted, &c.FirewallOff)
 	if err != nil {
 		return c, err
 	}
@@ -287,12 +282,11 @@ func (s *Store) TouchDevice(ctx context.Context, d presence.Device) (bool, error
 			uptime_seconds = CASE WHEN $7 > 0 THEN $7 ELSE uptime_seconds END,
 			last_seen = $8::timestamptz,
 			connected = $9,
-			isolated = $10,
-			agent_version = COALESCE(NULLIF($11,''), agent_version),
+			agent_version = COALESCE(NULLIF($10,''), agent_version),
 			updated_at = now()
 		WHERE id = $1`,
 		d.ID, d.Hostname, d.Platform, d.OSName, d.OSVersion, d.Arch, d.UptimeSeconds, lastSeen,
-		d.Connected, d.Isolated, d.AgentVersion)
+		d.Connected, d.AgentVersion)
 	if err != nil {
 		return false, err
 	}
@@ -305,7 +299,7 @@ func (s *Store) LoadDevices(ctx context.Context) ([]presence.Device, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, hostname, platform, os_name, os_version, arch, serial, hardware_model, cpu, memory_mb,
 		       disk_encryption, firewall, ip_addresses, username, uptime_seconds, software, pending_updates,
-		       COALESCE(patch_inventory,''), fim, fim_baseline, last_seen, connected, isolated,
+		       COALESCE(patch_inventory,''), fim, fim_baseline, last_seen, connected,
 		       cert_fingerprint, transport, agent_version, agent_public_key_pem,
 		       distro, distro_release, package_manager, os_edition, repo_health
 		FROM devices WHERE NOT revoked AND NOT sample AND source = 'agent'`)
@@ -321,7 +315,7 @@ func (s *Store) LoadDevices(ctx context.Context) ([]presence.Device, error) {
 		if err := rows.Scan(&d.ID, &d.Hostname, &d.Platform, &d.OSName, &d.OSVersion, &d.Arch, &d.Serial,
 			&d.HardwareModel, &d.CPU, &d.MemoryMb, &d.DiskEncryption, &d.Firewall, &ips, &d.Username,
 			&d.UptimeSeconds, &sw, &pend, &d.PatchInventory, &fim, &base, &lastSeen, &d.Connected,
-			&d.Isolated, &d.CertFingerprint, &d.Transport, &d.AgentVersion, &d.AgentPublicKeyPEM,
+			&d.CertFingerprint, &d.Transport, &d.AgentVersion, &d.AgentPublicKeyPEM,
 			&d.Distro, &d.DistroRelease, &d.PackageManager, &d.OSEdition, &repoHealth); err != nil {
 			return nil, err
 		}

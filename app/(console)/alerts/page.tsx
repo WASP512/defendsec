@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ActivityItem, ActivityList, EmptyState, PageHeader } from "@/components/console-ui";
 import { AlertActions } from "@/components/alert-actions";
-import { AlertSuggestActions } from "@/components/alert-suggest-actions";
 import { isReadOnlySession } from "@/lib/auth";
 import { SeverityBadge } from "@/components/status-badge";
 import { databaseURL, isMissingRelationError } from "@/lib/pg";
@@ -168,7 +167,6 @@ export default async function AlertsPage({
               </p>
             }
             actions={<div className="flex flex-col items-end gap-2">
-              <AlertSuggestActions alert={alert} readOnly={readOnly} />
               <AlertActions alertId={alert.id} status={alert.status} readOnly={readOnly} />
             </div>}
           />

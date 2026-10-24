@@ -19,7 +19,7 @@ func memFleet(n int, now time.Time) []presence.Device {
 		}
 		out = append(out, presence.Device{
 			ID: fmt.Sprintf("d%04d", i), Hostname: fmt.Sprintf("Host-%04d", n-i), Platform: platforms[i%3],
-			LastSeen: seen.Format(time.RFC3339), Isolated: i%10 == 0,
+			LastSeen: seen.Format(time.RFC3339),
 		})
 	}
 	return out
@@ -57,7 +57,6 @@ func TestFilterDevicesPagesLikePostgres(t *testing.T) {
 	for q, want := range map[storepg.DeviceQuery]int{
 		{Platform: "windows"}: 79,
 		{Status: "offline"}:   60,
-		{Status: "isolated"}:  24,
 		{Q: "host-0001"}:      1,
 	} {
 		q.Now, q.Limit = now, 500
@@ -69,12 +68,16 @@ func TestFilterDevicesPagesLikePostgres(t *testing.T) {
 	if _, err := FilterDevices(fleet, storepg.DeviceQuery{Cursor: "junk"}); err == nil {
 		t.Error("bad cursor accepted")
 	}
+	// Isolation was removed in slice 6, so it is no longer a status to filter on.
+	if _, err := FilterDevices(fleet, storepg.DeviceQuery{Status: "isolated"}); err == nil {
+		t.Error("status isolated accepted")
+	}
 }
 
 func TestCountDevices(t *testing.T) {
 	now := time.Now()
 	c := CountDevices(memFleet(40, now), now)
-	if c.Total != 40 || c.Online != 30 || c.Isolated != 4 || c.ByPlatform["linux"] != 14 {
+	if c.Total != 40 || c.Online != 30 || c.ByPlatform["linux"] != 14 {
 		t.Errorf("%+v", c)
 	}
 }

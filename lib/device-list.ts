@@ -4,7 +4,7 @@
 export type DeviceListQuery = {
   q: string;
   platform: "" | "linux" | "windows";
-  status: "" | "online" | "offline" | "isolated";
+  status: "" | "online" | "offline";
   cursor: string;
   // Cursors of the pages before this one, so Previous works with a
   // forward-only keyset cursor.
@@ -25,7 +25,6 @@ export type DeviceSummary = {
   ipAddresses: string[];
   diskEncryption: boolean | null;
   firewall: boolean | null;
-  isolated: boolean;
   lastSeen: string;
   online: boolean;
   softwareCount: number;
@@ -43,7 +42,7 @@ export type DevicePage = { devices: DeviceSummary[]; next?: string; total: numbe
 export const PAGE_SIZE = 50;
 
 const PLATFORMS = new Set(["linux", "windows"]);
-const STATUSES = new Set(["online", "offline", "isolated"]);
+const STATUSES = new Set(["online", "offline"]);
 const CURSOR_RE = /^[A-Za-z0-9_-]{1,400}$/;
 
 type Params = Record<string, string | string[] | undefined>;

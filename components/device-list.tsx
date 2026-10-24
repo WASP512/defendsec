@@ -45,7 +45,6 @@ export function DeviceList({ query, page }: { query: DeviceListQuery; page: Devi
           <option value="">Any status</option>
           <option value="online">Online</option>
           <option value="offline">Offline</option>
-          <option value="isolated">Isolated</option>
         </select>
         <button type="submit" className="h-9 rounded-md border px-3 text-sm font-medium hover:bg-muted">
           Filter
@@ -84,7 +83,6 @@ export function DeviceList({ query, page }: { query: DeviceListQuery; page: Devi
                 <TableRow key={d.id}>
                   <TableCell className="min-w-40">
                     <Link href={`/devices/${d.id}`} className="font-medium hover:underline">{d.hostname}</Link>
-                    {d.isolated ? <Badge variant="destructive" className="ml-2">isolated</Badge> : null}
                     {d.source === "rmm" ? <Badge variant="outline" className="ml-2">Datto RMM</Badge> : null}
                   </TableCell>
                   <TableCell>

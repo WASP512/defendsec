@@ -29,7 +29,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
-	"defendsec/internal/agentcmd"
 	"defendsec/internal/agentfim"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/hostinv"
@@ -102,20 +101,9 @@ func run(ctx context.Context, log *slog.Logger, args []string) error {
 		secret = strings.TrimSpace(string(raw))
 	}
 
-	// Isolation keeps these reachable and nothing else.
-	agentcmd.SetControlPlane(*serverHTTP, *serverGRPC)
-
 	if err := os.MkdirAll(*stateDir, 0o700); err != nil {
 		return err
 	}
-	if st, reapplied, err := agentcmd.ReapplyIsolation(*stateDir); reapplied {
-		if err != nil || st.Mode != "net" {
-			log.Error("host is marked isolated but network isolation could not be re-applied", "detail", st.Message, "err", err)
-		} else {
-			log.Warn("network isolation re-applied at start", "detail", st.Message)
-		}
-	}
-
 	if err := ensureEnrolled(log, *serverHTTP, *tlsServerName, *stateDir, secret); err != nil {
 		return err
 	}
@@ -421,14 +409,6 @@ func attachStream(ctx context.Context, log *slog.Logger, client defendsecv1.Agen
 		return stream.Send(msg)
 	}
 
-	// Behavioural telemetry (roadmap 3.1-3.2), on its own cadence. It shares
-	// the stream but never blocks the command channel: the buffer drops
-	// rather than waiting, and a send failure here ends the shipper without
-	// touching command handling.
-	streamCtx, stopShipper := context.WithCancel(ctx)
-	defer stopShipper()
-	startEventShipper(streamCtx, log, deviceID, host, send)
-
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
@@ -478,7 +458,6 @@ func heartbeat(stateDir string) *defendsecv1.HeartbeatRequest {
 		Arch:          id.Arch,
 		Platform:      id.Platform,
 		UptimeSeconds: id.UptimeSeconds,
-		Isolated:      agentcmd.LoadState(stateDir).Isolated,
 	}
 }
 

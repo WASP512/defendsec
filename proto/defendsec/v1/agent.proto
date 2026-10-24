@@ -17,7 +17,10 @@ message HeartbeatRequest {
   string arch = 4;
   string platform = 5;
   int64 uptime_seconds = 6;
-  bool isolated = 7;
+  // 7 was `isolated` (host network isolation, removed in slice 6). Old agents
+  // may still send it; it is ignored.
+  reserved 7;
+  reserved "isolated";
   // Windows edition: the EditionID registry value ("ServerStandard",
   // "EnterpriseS", "Professional", ...). Client, server and LTSC editions share
   // build numbers and have different support dates, so a build alone cannot

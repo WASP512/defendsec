@@ -130,7 +130,6 @@ type Device struct {
 	// agent being connected (roadmap 1.3).
 	AgentPublicKeyPEM string     `json:"agentPublicKeyPem,omitempty"`
 	Transport         string     `json:"transport"`
-	Isolated          bool       `json:"isolated"`
 	Serial            string     `json:"serial,omitempty"`
 	HardwareModel     string     `json:"hardwareModel,omitempty"`
 	CPU               string     `json:"cpu,omitempty"`
@@ -258,7 +257,6 @@ func mergeHeartbeat(old, neu Device) Device {
 	}
 	out.LastSeen = neu.LastSeen
 	out.Connected = neu.Connected
-	out.Isolated = neu.Isolated
 	if neu.AgentPublicKeyPEM != "" {
 		out.AgentPublicKeyPEM = neu.AgentPublicKeyPEM
 	}
@@ -578,23 +576,6 @@ func (f *File) ResolveOpenAlerts(deviceID, kind, sourceID string) bool {
 		_ = f.write(doc)
 	}
 	return changed
-}
-
-func (f *File) SetIsolated(id string, isolated bool) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	doc, err := f.read()
-	if err != nil {
-		return err
-	}
-	for i, existing := range doc.Devices {
-		if existing.ID == id {
-			doc.Devices[i].Isolated = isolated
-			break
-		}
-	}
-	doc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	return f.write(doc)
 }
 
 func copyFim(in []FimFile) []FimFile {

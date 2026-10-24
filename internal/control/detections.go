@@ -308,11 +308,6 @@ func (s *Server) raiseDetectionAlert(match sigma.Match, tree *events.Tree, recen
 		ControlIDs:       controls.Tag(controls.SignalDetection),
 	}
 	s.recordAlert(alert)
-
-	// A detection can drive a playbook (roadmap 2.6): policy still decides
-	// every step, so this widens what can trigger a response without widening
-	// what a response may do.
-	s.considerAutomaticResponse(alert)
 }
 
 // renderAncestry writes the lineage as one line an analyst can read at a
