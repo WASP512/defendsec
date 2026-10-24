@@ -101,6 +101,9 @@ type Server struct {
 
 	// surf is the external surface scanner's state (surface.go).
 	surf surfaceRunner
+
+	// rmmr is the Datto RMM collector's state (rmm.go).
+	rmmr rmmRunner
 }
 
 // SetAnchoring configures checkpoint anchoring. Called at startup rather than

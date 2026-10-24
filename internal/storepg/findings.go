@@ -306,6 +306,11 @@ type Inventory struct {
 	Scheme vuln.Scheme
 	// Versions maps an installed package name to its version.
 	Versions map[string]string
+	// InstalledKBs, when non-nil, makes this the inventory of a Windows host
+	// read through an RMM: findings are keyed by KB, and a KB that is installed
+	// now closed its findings as fixed. Any other closed finding is the RMM no
+	// longer listing the update (superseded, withdrawn, or no longer offered).
+	InstalledKBs map[string]bool
 }
 
 // Classify says why a finding for pkg (fixed in fixed, "" if no fix) is no
@@ -313,6 +318,12 @@ type Inventory struct {
 func (inv *Inventory) Classify(pkg, fixed string) (resolution, installed string) {
 	if inv == nil {
 		return ResolutionUnknown, ""
+	}
+	if inv.InstalledKBs != nil {
+		if inv.InstalledKBs[pkg] {
+			return ResolutionFixed, "installed"
+		}
+		return ResolutionNoLongerAffects, ""
 	}
 	cur, ok := inv.Versions[pkg]
 	if !ok {
@@ -372,7 +383,21 @@ func (s *Store) RecordFindingsFor(ctx context.Context, deviceID string, res vuln
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	if err := recordFindingsTx(ctx, tx, deviceID, res, inv); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, upsertHostStateSQL, deviceID, res.Distro, res.Release, string(res.Coverage),
+		res.Stats.Packages, res.Stats.DistroMapped, res.Stats.Upstream, res.Stats.Undecidable,
+		res.Stats.NotAffected, snapshotID, res.Stats.EOLMapped, res.Stats.EOLDistroOrigin, res.Stats.EOLOriginUnknown); err != nil {
+		return fmt.Errorf("record host state: %w", err)
+	}
+	return tx.Commit(ctx)
+}
 
+// recordFindingsTx upserts a host's findings and closes the ones the run did
+// not confirm, inside the caller's transaction. The caller records the host's
+// state: host_vuln_state for an agent host, host_patch_state for an RMM host.
+func recordFindingsTx(ctx context.Context, tx pgx.Tx, deviceID string, res vuln.Result, inv *Inventory) error {
 	// The transaction's clock, not the caller's: the stale sweep compares with
 	// last_seen values this same transaction wrote with now().
 	var start time.Time
@@ -414,12 +439,7 @@ func (s *Store) RecordFindingsFor(ctx context.Context, deviceID string, res vuln
 	if err := closeStaleFindings(ctx, tx, deviceID, start, inv); err != nil {
 		return fmt.Errorf("close stale findings: %w", err)
 	}
-	if _, err := tx.Exec(ctx, upsertHostStateSQL, deviceID, res.Distro, res.Release, string(res.Coverage),
-		res.Stats.Packages, res.Stats.DistroMapped, res.Stats.Upstream, res.Stats.Undecidable,
-		res.Stats.NotAffected, snapshotID, res.Stats.EOLMapped, res.Stats.EOLDistroOrigin, res.Stats.EOLOriginUnknown); err != nil {
-		return fmt.Errorf("record host state: %w", err)
-	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 // closeStaleFindings closes every open finding of the host that the run did not

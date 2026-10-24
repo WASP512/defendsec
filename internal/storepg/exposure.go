@@ -429,7 +429,14 @@ func scanExposureGroup(row pgx.Row) (ExposureGroup, exposureCursor, error) {
 	g.KEVAdded = dateText(kevAdded)
 	g.AwaitingSince = dateText(awaitingSince)
 	g.Hosts = make([]HostRef, 0, len(ids))
+	named := make(map[string]bool, len(ids))
 	for i, id := range ids {
+		// A host with a finding for the same advisory in two packages (two KBs, a
+		// kernel and its modules) is one host.
+		if named[id] {
+			continue
+		}
+		named[id] = true
 		name := ""
 		if i < len(names) {
 			name = names[i]
@@ -608,15 +615,20 @@ func (s *Store) ExposureSummary(ctx context.Context, now time.Time) (ExposureSum
 	cutoff := now.Add(-SilentAfter)
 
 	if err := s.pool.QueryRow(ctx, `
-		SELECT count(*), count(*) FILTER (WHERE s.coverage = 'covered'), count(*) FILTER (WHERE d.last_seen < $1)
-		FROM devices d LEFT JOIN host_vuln_state s ON s.device_id = d.id
-		WHERE NOT d.revoked`, cutoff).Scan(&out.Hosts.Total, &out.Hosts.Assessed, &out.Hosts.Silent); err != nil {
+		SELECT count(*),
+		       count(*) FILTER (WHERE s.coverage = 'covered' OR (`+effectivePatchCoverage+`) = 'covered' OR EXISTS (
+		         SELECT 1 FROM devices m JOIN host_patch_state p2 ON p2.device_id = m.id
+		         WHERE m.merged_into = d.id AND NOT m.revoked AND p2.coverage = 'covered'
+		           AND p2.evidence_at >= $1::timestamptz - make_interval(days => COALESCE((SELECT stale_after_days FROM rmm_settings WHERE id = 1), 7)))),
+		       count(*) FILTER (WHERE d.last_seen < $2)
+		FROM devices d LEFT JOIN host_vuln_state s ON s.device_id = d.id LEFT JOIN host_patch_state p ON p.device_id = d.id
+		WHERE NOT d.revoked AND d.merged_into IS NULL`, now, cutoff).Scan(&out.Hosts.Total, &out.Hosts.Assessed, &out.Hosts.Silent); err != nil {
 		return out, err
 	}
 	out.Hosts.NotAssessed = out.Hosts.Total - out.Hosts.Assessed
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, hostname, last_seen FROM devices WHERE NOT revoked AND last_seen < $1
+		SELECT id, hostname, last_seen FROM devices WHERE NOT revoked AND merged_into IS NULL AND last_seen < $1
 		ORDER BY last_seen, id LIMIT 10`, cutoff)
 	if err != nil {
 		return out, err

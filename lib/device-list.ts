@@ -30,6 +30,8 @@ export type DeviceSummary = {
   online: boolean;
   softwareCount: number;
   pendingUpdates: number;
+  /** Where the row came from: an enrolled agent, or Datto RMM. Absent from an older control plane. */
+  source?: "agent" | "rmm";
 };
 
 export type DevicePage = { devices: DeviceSummary[]; next?: string; total: number };

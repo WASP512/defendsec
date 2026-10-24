@@ -1,0 +1,27 @@
+{"DocumentTitle":{"Value":"January 2099 Security Updates"},"DocumentType":{"Value":"Security Update"},
+"DocumentTracking":{"Identification":{"ID":{"Value":"2099-Jan"},"Alias":{"Value":"2099-Jan"}},"Status":2,"Version":"1.0","InitialReleaseDate":"2099-01-12T08:00:00","CurrentReleaseDate":"2099-01-20T10:00:00"},
+"ProductTree":{"Branch":[],"FullProductName":[
+{"ProductID":"11568","CPE":"cpe:2.3:o:microsoft:windows_server_2019:*","Value":"Windows Server 2019"},
+{"ProductID":"11569","Value":"Windows 10 Version 1809 for x64-based Systems"},
+{"ProductID":"12001","Value":"Windows 10 Version 22H2 for x64-based Systems"},
+{"ProductID":"12002","Value":"Windows 11 Version 24H2 for x64-based Systems"},
+{"ProductID":"0-17084","Value":"azl3 libical 3.0.10-1 on Azure Linux 3.0"}]},
+"Vulnerability":[
+{"Title":{"Value":"Windows Kernel Elevation of Privilege Vulnerability"},"CVE":"CVE-2099-0001",
+ "Threats":[{"Description":{},"ProductID":["12001"],"Type":0},{"Description":{"Value":"Important"},"ProductID":["12001"],"Type":3},{"Description":{"Value":"Critical"},"ProductID":["12002"],"Type":3}],
+ "CVSSScoreSets":[{"BaseScore":7.8,"Vector":"CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H","ProductID":["12001"]},{"BaseScore":8.8,"Vector":"CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H","ProductID":["12002"]}],
+ "Remediations":[
+  {"Description":{"Value":"5000001"},"URL":"https://catalog.update.microsoft.com/v7/site/Search.aspx?q=KB5000001","Supercedence":"4990001","ProductID":["12001","12002"],"Type":2,"SubType":"Security Update","FixedBuild":"10.0.19045.9999"},
+  {"Description":{"Value":"5000001"},"ProductID":["12001"],"Type":2,"SubType":"Security Update"},
+  {"Description":{"Value":"kb5000003"},"ProductID":["11568","11569"],"Type":2,"Supercedence":"","SubType":"Security Update"},
+  {"URL":"https://learn.microsoft.com/windows/","ProductID":["12001"],"Type":3,"SubType":"Release Notes"}]},
+{"Title":{"Value":"NTFS Information Disclosure Vulnerability"},"CVE":"CVE-2099-0002",
+ "Threats":[{"Description":{"Value":"Moderate"},"ProductID":["12001"],"Type":3}],
+ "CVSSScoreSets":[{"BaseScore":5.5,"Vector":"CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N","ProductID":["12001"]}],
+ "Remediations":[{"Description":{"Value":"5000001"},"ProductID":["12001"],"Type":2,"Supercedence":"4990001"}]},
+{"Title":{"Value":"Various packet overreads in mysqlnd"},"CVE":"CVE-2099-0003",
+ "Threats":[{"Description":{"Value":"Low"},"ProductID":["0-17084"],"Type":3}],
+ "Remediations":[{"Description":{"Value":"Release Notes"},"ProductID":["0-17084"],"Type":2,"FixedBuild":"8.3.35-1"}]},
+{"Title":{"Value":"An advisory that is not a CVE"},"CVE":"ADV990001",
+ "Remediations":[{"Description":{"Value":"5000009"},"ProductID":["12001"],"Type":2}]},
+{"Title":{"Value":"A CVE with no fix yet"},"CVE":"CVE-2099-0004","Remediations":[{"Description":{"Value":"Known Issue"},"ProductID":["12001"],"Type":2}]}]}

@@ -85,6 +85,7 @@ export function DeviceList({ query, page }: { query: DeviceListQuery; page: Devi
                   <TableCell className="min-w-40">
                     <Link href={`/devices/${d.id}`} className="font-medium hover:underline">{d.hostname}</Link>
                     {d.isolated ? <Badge variant="destructive" className="ml-2">isolated</Badge> : null}
+                    {d.source === "rmm" ? <Badge variant="outline" className="ml-2">Datto RMM</Badge> : null}
                   </TableCell>
                   <TableCell>
                     {platformLabel(d.platform as Platform)}

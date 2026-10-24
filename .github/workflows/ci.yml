@@ -89,7 +89,7 @@ jobs:
         # -p 1 runs the packages one at a time. They share a database, and
         # migration DDL takes ACCESS EXCLUSIVE on audit_log while an audit
         # append holds it, so running them concurrently can deadlock.
-        run: go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/...
+        run: go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/... ./internal/rmm/...
 
   node:
     runs-on: ubuntu-latest
