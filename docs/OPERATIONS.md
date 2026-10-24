@@ -323,7 +323,7 @@ onto air-gapped installs as signed bundles. It replaces the old OSV ingest scrip
 fleet's package names to `api.osv.dev` and is gone. Setup, the feed list, the bundle format and the
 known gaps are in [FEEDS.md](FEEDS.md); the units are `packaging/systemd/defendsec-feeds.service`
 and `.timer`, configured by `/etc/defendsec/feeds.env`. The timer is **not** enabled automatically.
-`GET /v1/feeds` on the admin API reports each feed's age; the Advisories page turns red when any
+`GET /v1/feeds` on the admin API reports each feed's age; the Exposure and Fleet pages turn red when any
 feed is more than seven days old.
 
 ---

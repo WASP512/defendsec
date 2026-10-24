@@ -99,7 +99,8 @@ available.
 `GET /v1/findings/{id}` (advisory, matched range, snapshot with each feed's URL, fetch time and
 SHA-256), `GET /v1/findings/summary[?deviceId=]` (per host: `open`, `kev`, `awaitingVendor`,
 `kevAwaitingVendor`, `unfixed`, `informational`; `open` is the fixable count and never includes
-`awaitingVendor`). Same tokens as the other read endpoints.
+`awaitingVendor`). Same tokens as the other read endpoints. The ranked, grouped view the console
+shows is `/v1/exposure/*`; see [EXPOSURE.md](EXPOSURE.md).
 
 ## Known limits
 

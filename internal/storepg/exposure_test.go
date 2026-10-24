@@ -88,7 +88,7 @@ func seedExposure(t *testing.T, s *Store, advs []expoAdv) {
 	}
 }
 
-func finding(a expoAdv, kind vuln.Kind, pkg, installed, fixed string) vuln.Finding {
+func expoFinding(a expoAdv, kind vuln.Kind, pkg, installed, fixed string) vuln.Finding {
 	return vuln.Finding{
 		AdvisoryID: a.id, CVE: a.cve, Kind: kind, Basis: vuln.BasisDistro, Package: pkg, Installed: installed,
 		Fixed: fixed, FixState: "fixed", Severity: a.sev, Summary: "summary of " + a.id, KEV: a.kev,
@@ -96,7 +96,7 @@ func finding(a expoAdv, kind vuln.Kind, pkg, installed, fixed string) vuln.Findi
 	}
 }
 
-func host(t *testing.T, s *Store, id, name string) {
+func expoHost(t *testing.T, s *Store, id, name string) {
 	t.Helper()
 	if err := s.UpsertDevice(context.Background(), presence.Device{ID: id, Hostname: name, Platform: "linux",
 		LastSeen: time.Now().UTC().Format(time.RFC3339)}); err != nil {
@@ -104,7 +104,7 @@ func host(t *testing.T, s *Store, id, name string) {
 	}
 }
 
-func record(t *testing.T, s *Store, dev string, fs ...vuln.Finding) {
+func expoRecord(t *testing.T, s *Store, dev string, fs ...vuln.Finding) {
 	t.Helper()
 	if err := s.RecordFindings(context.Background(), dev, vuln.Result{Coverage: vuln.CoverageFull, Findings: fs}, nil); err != nil {
 		t.Fatal(err)
@@ -131,14 +131,14 @@ func TestExposureOrderMatchesRankingRuleAndPagesByKeyset(t *testing.T) {
 		{"A-nothing-low-b", "CVE-2099-0012", "low", false, "", nil, nil},
 	}
 	seedExposure(t, s, advs)
-	host(t, s, "h1", "alpha")
-	host(t, s, "h2", "bravo")
+	expoHost(t, s, "h1", "alpha")
+	expoHost(t, s, "h2", "bravo")
 	for i, a := range advs {
 		// Every advisory on host h1; every other one also on h2.
-		fs := []vuln.Finding{finding(a, vuln.KindFinding, "pkg"+itoa(i), "1.0", "1.1")}
-		record(t, s, "h1", append(listFindings(t, s, "h1"), fs...)...)
+		fs := []vuln.Finding{expoFinding(a, vuln.KindFinding, "pkg"+itoa(i), "1.0", "1.1")}
+		expoRecord(t, s, "h1", append(listFindings(t, s, "h1"), fs...)...)
 		if i%2 == 0 {
-			record(t, s, "h2", append(listFindings(t, s, "h2"), fs...)...)
+			expoRecord(t, s, "h2", append(listFindings(t, s, "h2"), fs...)...)
 		}
 	}
 
@@ -251,23 +251,23 @@ func TestExposureBucketsAndSummary(t *testing.T) {
 	awaitingKEV := expoAdv{"B-await-kev", "CVE-2099-1006", "high", true, "2026-10-03", nil, nil}
 	info := expoAdv{"B-info", "CVE-2099-1007", "critical", true, "2026-10-04", f64(0.99), f64(9.9)}
 	seedExposure(t, s, []expoAdv{fixable, fixableKEV, noFix, noFixKEV, awaiting, awaitingKEV, info})
-	host(t, s, "h1", "alpha")
-	host(t, s, "h2", "bravo")
-	host(t, s, "h3", "charlie")
-	record(t, s, "h1",
-		finding(fixable, vuln.KindFinding, "a", "1", "2"),
-		finding(fixableKEV, vuln.KindFinding, "b", "1", "2"),
-		finding(noFix, vuln.KindUnfixed, "c", "1", ""),
-		finding(noFixKEV, vuln.KindUnfixed, "d", "1", ""),
-		finding(info, vuln.KindInformational, "e", "1", ""),
+	expoHost(t, s, "h1", "alpha")
+	expoHost(t, s, "h2", "bravo")
+	expoHost(t, s, "h3", "charlie")
+	expoRecord(t, s, "h1",
+		expoFinding(fixable, vuln.KindFinding, "a", "1", "2"),
+		expoFinding(fixableKEV, vuln.KindFinding, "b", "1", "2"),
+		expoFinding(noFix, vuln.KindUnfixed, "c", "1", ""),
+		expoFinding(noFixKEV, vuln.KindUnfixed, "d", "1", ""),
+		expoFinding(info, vuln.KindInformational, "e", "1", ""),
 	)
-	record(t, s, "h2",
-		finding(fixable, vuln.KindFinding, "a", "1", "2"),
-		withUpstream(finding(awaiting, vuln.KindAwaitingVendor, "f", "1", "2"), "2026-10-20"),
-		withUpstream(finding(awaitingKEV, vuln.KindAwaitingVendor, "g", "1", "2"), "2026-10-22"),
+	expoRecord(t, s, "h2",
+		expoFinding(fixable, vuln.KindFinding, "a", "1", "2"),
+		withUpstream(expoFinding(awaiting, vuln.KindAwaitingVendor, "f", "1", "2"), "2026-10-20"),
+		withUpstream(expoFinding(awaitingKEV, vuln.KindAwaitingVendor, "g", "1", "2"), "2026-10-22"),
 	)
 	// h3 was matched, found nothing, and has not reported for ten days.
-	record(t, s, "h3")
+	expoRecord(t, s, "h3")
 	if _, err := pool.Exec(ctx, `UPDATE devices SET last_seen = now() - interval '10 days' WHERE id = 'h3'`); err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestExposureBucketsAndSummary(t *testing.T) {
 	}
 
 	// A host that never reported inventory is not "assessed".
-	host(t, s, "h4", "delta")
+	expoHost(t, s, "h4", "delta")
 	sum, err = s.ExposureSummary(ctx, time.Now())
 	if err != nil || sum.Hosts.Total != 4 || sum.Hosts.NotAssessed != 1 {
 		t.Errorf("after unassessed host: %+v, %v", sum.Hosts, err)
@@ -366,10 +366,10 @@ func TestFindingResolutionRecordsHowItClosed(t *testing.T) {
 	seedExposure(t, s, []expoAdv{a})
 	hosts := []string{"fixed", "removed", "reclassified", "blind", "rpmfixed"}
 	for _, h := range hosts {
-		host(t, s, h, "host-"+h)
+		expoHost(t, s, h, "host-"+h)
 	}
 	open := func(h, pkg, installed, fixed string) {
-		record(t, s, h, finding(a, vuln.KindFinding, pkg, installed, fixed))
+		expoRecord(t, s, h, expoFinding(a, vuln.KindFinding, pkg, installed, fixed))
 	}
 	open("fixed", "openssl", "3.0.2-0ubuntu1.14", "3.0.2-0ubuntu1.15")
 	open("removed", "openssl", "3.0.2-0ubuntu1.14", "3.0.2-0ubuntu1.15")
@@ -439,15 +439,15 @@ func TestExposureTrendFromFirstSeenAndResolvedAt(t *testing.T) {
 	later := expoAdv{"T-later", "CVE-2099-3003", "medium", false, "", nil, nil}
 	nofix := expoAdv{"T-nofix", "CVE-2099-3004", "medium", false, "", nil, nil}
 	seedExposure(t, s, []expoAdv{kev, plain, later, nofix})
-	host(t, s, "h1", "alpha")
+	expoHost(t, s, "h1", "alpha")
 	if _, err := pool.Exec(ctx, `INSERT INTO feed_snapshots (created_at, feeds) VALUES ($1, '[]')`, at("2026-10-02")); err != nil {
 		t.Fatal(err)
 	}
-	record(t, s, "h1",
-		finding(kev, vuln.KindFinding, "a", "1", "2"),
-		finding(plain, vuln.KindFinding, "b", "1", "2"),
-		finding(later, vuln.KindFinding, "c", "1", "2"),
-		finding(nofix, vuln.KindUnfixed, "d", "1", ""),
+	expoRecord(t, s, "h1",
+		expoFinding(kev, vuln.KindFinding, "a", "1", "2"),
+		expoFinding(plain, vuln.KindFinding, "b", "1", "2"),
+		expoFinding(later, vuln.KindFinding, "c", "1", "2"),
+		expoFinding(nofix, vuln.KindUnfixed, "d", "1", ""),
 	)
 	set := func(adv, firstSeen, resolvedAt string) {
 		t.Helper()
@@ -467,10 +467,10 @@ func TestExposureTrendFromFirstSeenAndResolvedAt(t *testing.T) {
 	set("T-later", "2026-10-12", "2026-10-14")
 	set("T-nofix", "2026-10-06", "")
 	// The recurrence: the matcher confirms T-kev again, which archives the closed interval and restarts first_seen.
-	record(t, s, "h1",
-		finding(kev, vuln.KindFinding, "a", "1", "2"),
-		finding(plain, vuln.KindFinding, "b", "1", "2"),
-		finding(nofix, vuln.KindUnfixed, "d", "1", ""),
+	expoRecord(t, s, "h1",
+		expoFinding(kev, vuln.KindFinding, "a", "1", "2"),
+		expoFinding(plain, vuln.KindFinding, "b", "1", "2"),
+		expoFinding(nofix, vuln.KindUnfixed, "d", "1", ""),
 	)
 	if _, err := pool.Exec(ctx, `UPDATE vuln_findings SET first_seen = $1 WHERE advisory_id = 'T-kev'`, at("2026-10-15")); err != nil {
 		t.Fatal(err)
