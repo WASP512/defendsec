@@ -71,10 +71,11 @@ The deliverable per client is:
 
 ## What is replaced
 
-- **The advisory catalog and matcher.** The console matcher (`lib/advisories.ts`) holds a
-  hard-coded catalog, and the `advisories` table has one version floor per row with no distro
-  dimension. Both go. They are replaced by bulk feed sync and a matcher that understands
-  distro-specific fixed versions.
+- **The advisory catalog and matcher.** The console matcher (`lib/advisories.ts`) held a
+  hard-coded catalog, and the `advisories` table had one version floor per row with no distro
+  dimension. The catalog and the client-side matcher are deleted (slice 4); findings are
+  computed by the control plane against distro-specific fixed versions (see
+  [MATCHING.md](MATCHING.md)).
 - **The OSV ingest script** (`scripts/ingest-osv.py` and its systemd timer), replaced by the feed
   sync service `defendsec-feeds` in slice 3 (see [FEEDS.md](FEEDS.md)). The script is deleted: it
   sent the fleet's package names to a third party.

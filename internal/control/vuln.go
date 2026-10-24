@@ -255,12 +255,14 @@ func (s *Server) RunFindingsRefresh(ctx context.Context, every time.Duration) {
 	}
 }
 
-func (s *Server) refreshFindings(ctx context.Context) {
+// refreshFindings re-matches every host whose inputs changed since its last
+// match (new packages, or a new feed snapshot) and reports how many it matched
+// and how many failed.
+func (s *Server) refreshFindings(ctx context.Context) (matched, failed int) {
 	devices := s.store.List()
-	matched, failed := 0, 0
 	for _, dev := range devices {
 		if ctx.Err() != nil {
-			return
+			return matched, failed
 		}
 		if len(dev.Software) == 0 {
 			continue
@@ -279,4 +281,5 @@ func (s *Server) refreshFindings(ctx context.Context) {
 	if matched > 0 || failed > 0 {
 		s.log.Info("findings refresh", "devices", len(devices), "rematched", matched, "failed", failed)
 	}
+	return matched, failed
 }

@@ -191,3 +191,61 @@ func itoa(n int64) string {
 	b, _ := json.Marshal(n)
 	return string(b)
 }
+
+// A new feed snapshot makes every host be matched again, even though its
+// packages did not change; an unchanged host and snapshot is left alone.
+func TestRefreshFindingsRematchesOnNewSnapshot(t *testing.T) {
+	s, pg := pgServer(t)
+	s.store = presence.New(filepath.Join(t.TempDir(), "state.json"))
+	ctx := context.Background()
+	distro := "zr" + strings.ReplaceAll(strings.ToLower(time.Now().Format("150405.000000")), ".", "")
+
+	feed := func(sha string) storepg.FeedSnapshot {
+		snap, err := pg.RecordFeedSnapshot(ctx, []storepg.FeedRef{{Name: "feed-" + distro, URL: "https://example.invalid/f",
+			FetchedAt: time.Now(), SHA256: strings.Repeat(sha, 32), RecordCount: 1}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snap
+	}
+	first := feed("ab")
+	adv := storepg.Advisory{ID: "TEST-RF-" + distro, CVE: "CVE-2024-0100", Severity: "high", Source: "feed-" + distro,
+		SnapshotID: &first.ID, Ranges: []storepg.AdvisoryRange{{Ecosystem: "Test", Distro: distro, Release: "12",
+			Package: "libfoo", SourcePackage: "foo", Fixed: "2.0-1", FixState: storepg.FixStateFixed}}}
+	if err := pg.UpsertAdvisoryWithRanges(ctx, adv); err != nil {
+		t.Fatal(err)
+	}
+	dev := presence.Device{ID: "refresh-" + distro, Hostname: "refresh", Platform: "linux",
+		Distro: distro, DistroRelease: "12", PackageManager: "dpkg",
+		Software: []presence.Software{{Name: "libfoo", Version: "1.0-1", SourcePackage: "foo"}}}
+	if err := pg.UpsertDevice(ctx, dev); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.Seed([]presence.Device{dev}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Other tests' devices may be in the shared database but not in this store.
+	if matched, failed := s.refreshFindings(ctx); matched != 1 || failed != 0 {
+		t.Fatalf("first refresh: matched %d failed %d, want 1 and 0", matched, failed)
+	}
+	if matched, _ := s.refreshFindings(ctx); matched != 0 {
+		t.Fatalf("second refresh with nothing new re-matched %d hosts", matched)
+	}
+
+	// The feed gains a fix; a new snapshot is recorded. The host's packages are
+	// unchanged, and the host is matched again against the new data.
+	second := feed("cd")
+	adv.SnapshotID = &second.ID
+	adv.Ranges[0].Fixed = "1.5-1"
+	if err := pg.UpsertAdvisoryWithRanges(ctx, adv); err != nil {
+		t.Fatal(err)
+	}
+	if matched, failed := s.refreshFindings(ctx); matched != 1 || failed != 0 {
+		t.Fatalf("refresh after a new snapshot: matched %d failed %d, want 1 and 0", matched, failed)
+	}
+	rows, err := pg.ListFindings(ctx, storepg.FindingFilter{DeviceID: dev.ID})
+	if err != nil || len(rows) != 1 || rows[0].Fixed != "1.5-1" || rows[0].SnapshotID == nil || *rows[0].SnapshotID != second.ID {
+		t.Fatalf("findings after refresh = %+v, %v", rows, err)
+	}
+}
