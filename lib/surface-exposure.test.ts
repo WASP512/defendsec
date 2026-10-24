@@ -122,6 +122,18 @@ test("the description keeps vulnerabilities and external findings apart", () => 
   assert.equal(fixDescription({ fixable: fixable(0, 0) }, 0), "Nothing with a fix to install, and no external finding open.");
 });
 
+test("the description names end-of-life releases to upgrade apart from patches to install", () => {
+  const eol = (n: number) => ({ findings: n, advisories: n });
+  assert.equal(
+    fixDescription({ fixable: { ...fixable(5, 1), eol: eol(2) } }, 5),
+    "3 vulnerabilities with a fix to install and 2 end-of-life releases to upgrade, across 2 hosts and 1 external surface finding. The top 5, most urgent first:",
+  );
+  assert.equal(
+    fixDescription({ fixable: { ...fixable(1), eol: eol(1) } }, 1),
+    "1 end-of-life release to upgrade, across 2 hosts. The top 1, most urgent first:",
+  );
+});
+
 test("an empty list claims no more than was checked", () => {
   const hosts = { total: 3, assessed: 3, notAssessed: 0, silent: 0, silentList: [] };
   assert.equal(

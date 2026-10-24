@@ -571,6 +571,7 @@ func inventoryReport(log *slog.Logger, snap hostinv.Snapshot, stateDir string) *
 	rep.Host.Hostname = snap.Hostname
 	rep.Host.OsName = snap.OSName
 	rep.Host.OsVersion = snap.OSVersion
+	rep.Host.OsEdition = snap.OSEdition
 	rep.Host.Arch = snap.Arch
 	rep.Host.Platform = snap.Platform
 	rep.Host.UptimeSeconds = snap.UptimeSeconds
@@ -578,6 +579,7 @@ func inventoryReport(log *slog.Logger, snap hostinv.Snapshot, stateDir string) *
 		rep.Software = append(rep.Software, &defendsecv1.SoftwareItem{
 			Name: item.Name, Version: item.Version,
 			SourcePackage: item.SourcePackage, SourceVersion: item.SourceVersion,
+			Origin: item.Origin, OriginRepo: item.OriginRepo,
 		})
 	}
 	for _, item := range snap.PendingUpdates {

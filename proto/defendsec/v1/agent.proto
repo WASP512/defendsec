@@ -18,6 +18,13 @@ message HeartbeatRequest {
   string platform = 5;
   int64 uptime_seconds = 6;
   bool isolated = 7;
+  // Windows edition: the EditionID registry value ("ServerStandard",
+  // "EnterpriseS", "Professional", ...). Client, server and LTSC editions share
+  // build numbers and have different support dates, so a build alone cannot
+  // say whether a Windows host is supported. Optional: empty from other
+  // platforms and from older agents, and the console then reads the edition
+  // from the OS caption where it can and otherwise reports "unknown".
+  string os_edition = 8;
 }
 
 message HeartbeatResponse {
@@ -34,6 +41,15 @@ message SoftwareItem {
   // empty and the server falls back to the binary name and version.
   string source_package = 3;
   string source_version = 4;
+  // Where the package came from, read without changing anything: the apt
+  // Origin: of the repository that carries the installed version (from
+  // `apt-cache policy`), or the rpm Vendor. origin_repo is the repository URL
+  // (credentials removed) or the rpm Packager. Optional: agents older than
+  // application end-of-life reporting leave both empty, and the server then
+  // does not judge the package, because origin decides whether an upstream
+  // end-of-life date applies.
+  string origin = 5;
+  string origin_repo = 6;
 }
 
 message PendingUpdate {

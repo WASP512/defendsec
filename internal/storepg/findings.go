@@ -2,6 +2,7 @@ package storepg
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"defendsec/internal/controls"
 	"defendsec/internal/vuln"
 )
 
@@ -160,6 +162,12 @@ type HostVulnState struct {
 	NotAffected  int       `json:"notAffected"`
 	SnapshotID   *int64    `json:"snapshotId"`
 	MatchedAt    time.Time `json:"matchedAt"`
+	// Application end-of-life: of EOLMapped packages the mapping table knows,
+	// EOLDistro are the distribution's own (not judged) and EOLUnknown had no
+	// readable origin (not assessed, never "clean").
+	EOLMapped  int `json:"eolMapped"`
+	EOLDistro  int `json:"eolDistro"`
+	EOLUnknown int `json:"eolUnknown"`
 }
 
 // VulnFinding is a stored finding. SnapshotID, RangeID, Feed and FeedDate say
@@ -199,6 +207,16 @@ type VulnFinding struct {
 	// UpstreamFixedOn is, for an awaiting_vendor finding, the date Red Hat
 	// shipped the fix (YYYY-MM-DD); empty otherwise.
 	UpstreamFixedOn string `json:"upstreamFixedOn"`
+	// Origin and OriginRepo say where an end-of-life finding's packages came
+	// from (the apt Origin: or rpm Vendor, and the repository); empty on other
+	// kinds. EOL carries the rest of what such a finding says.
+	Origin     string          `json:"origin"`
+	OriginRepo string          `json:"originRepo"`
+	EOL        *vuln.EOLDetail `json:"eol"`
+	// Controls are the framework controls an end-of-life finding is evidence
+	// about, from the control catalog (CIS v8 2.2, NIST SI-2, ...); empty for
+	// other kinds.
+	Controls []string `json:"controls"`
 }
 
 // FindingKey is the key the console's triage store uses for a finding, so an
@@ -212,8 +230,11 @@ const (
 		INSERT INTO vuln_findings (
 			device_id, advisory_id, family, range_id, snapshot_id, feed, feed_date, kind, basis,
 			package, source_package, installed, fixed, fix_state, cve, severity, summary,
-			kev, epss, cvss_score, reason, upstream_fixed_on, first_seen, last_seen, resolved_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, NULLIF($22,'')::date, now(), now(), NULL)
+			kev, epss, cvss_score, reason, upstream_fixed_on,
+			eol_product, eol_cycle, eol_stage, eol_date, origin, origin_repo, eol_detail,
+			first_seen, last_seen, resolved_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, NULLIF($22,'')::date,
+		          $23,$24,$25, NULLIF($26,'')::date, $27,$28,$29, now(), now(), NULL)
 		ON CONFLICT (device_id, advisory_id, family) DO UPDATE SET
 			range_id=EXCLUDED.range_id, snapshot_id=EXCLUDED.snapshot_id, feed=EXCLUDED.feed,
 			feed_date=EXCLUDED.feed_date, kind=EXCLUDED.kind, basis=EXCLUDED.basis,
@@ -222,6 +243,9 @@ const (
 			cve=EXCLUDED.cve, severity=EXCLUDED.severity, summary=EXCLUDED.summary,
 			kev=EXCLUDED.kev, epss=EXCLUDED.epss, cvss_score=EXCLUDED.cvss_score, reason=EXCLUDED.reason,
 			upstream_fixed_on=EXCLUDED.upstream_fixed_on,
+			eol_product=EXCLUDED.eol_product, eol_cycle=EXCLUDED.eol_cycle, eol_stage=EXCLUDED.eol_stage,
+			eol_date=EXCLUDED.eol_date, origin=EXCLUDED.origin, origin_repo=EXCLUDED.origin_repo,
+			eol_detail=EXCLUDED.eol_detail,
 			last_seen=now(),
 			first_seen=CASE WHEN vuln_findings.resolved_at IS NULL THEN vuln_findings.first_seen ELSE now() END,
 			resolved_at=NULL, resolution='', resolved_installed=''`
@@ -239,7 +263,7 @@ const (
 
 	// Anything the run did not confirm is closed, not deleted.
 	staleFindingsSQL = `
-		SELECT id, package, fixed FROM vuln_findings
+		SELECT id, kind, package, installed, fixed FROM vuln_findings
 		WHERE device_id = $1 AND resolved_at IS NULL AND last_seen < $2`
 
 	closeFindingsSQL = `
@@ -249,20 +273,22 @@ const (
 
 	upsertHostStateSQL = `
 		INSERT INTO host_vuln_state (device_id, distro, release, coverage, packages, distro_mapped,
-		                             upstream, undecidable, not_affected, snapshot_id, matched_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
+		                             upstream, undecidable, not_affected, snapshot_id, matched_at,
+		                             eol_mapped, eol_distro, eol_unknown)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), $11,$12,$13)
 		ON CONFLICT (device_id) DO UPDATE SET
 			distro=EXCLUDED.distro, release=EXCLUDED.release, coverage=EXCLUDED.coverage,
 			packages=EXCLUDED.packages, distro_mapped=EXCLUDED.distro_mapped, upstream=EXCLUDED.upstream,
 			undecidable=EXCLUDED.undecidable, not_affected=EXCLUDED.not_affected,
-			snapshot_id=EXCLUDED.snapshot_id, matched_at=now()`
+			snapshot_id=EXCLUDED.snapshot_id, matched_at=now(),
+			eol_mapped=EXCLUDED.eol_mapped, eol_distro=EXCLUDED.eol_distro, eol_unknown=EXCLUDED.eol_unknown`
 
 	findingColumns = `
 		f.id, f.device_id, COALESCE(d.hostname,''), f.advisory_id, f.cve, f.family, f.range_id, f.snapshot_id,
 		f.feed, f.feed_date, f.kind, f.basis, f.package, f.source_package, f.installed, f.fixed,
 		f.fix_state, f.severity, f.summary, f.kev, f.epss, f.cvss_score, f.reason,
 		f.first_seen, f.last_seen, f.resolved_at, f.resolution, f.resolved_installed,
-		COALESCE(f.upstream_fixed_on::text, '')`
+		COALESCE(f.upstream_fixed_on::text, ''), f.origin, f.origin_repo, f.eol_detail`
 )
 
 // Resolution says how a finding came to be closed (vuln_findings.resolution).
@@ -296,6 +322,36 @@ func (inv *Inventory) Classify(pkg, fixed string) (resolution, installed string)
 		return ResolutionFixed, cur
 	}
 	return ResolutionNoLongerAffects, cur
+}
+
+// ClassifyEOL says why an end-of-life finding for pkg (installed at was when
+// the finding last held) is no longer confirmed. There is no fixed version to
+// compare with: the package is gone (removed), or it is at another version
+// (the host upgraded it, which is the remedy), or it is unchanged and the
+// calendar or the package's origin has changed since. A nil inventory cannot
+// say.
+func (inv *Inventory) ClassifyEOL(pkg, was string) (resolution, installed string) {
+	if inv == nil {
+		return ResolutionUnknown, ""
+	}
+	cur, ok := inv.Versions[pkg]
+	switch {
+	case !ok:
+		return ResolutionPackageRemoved, ""
+	case cur != was:
+		return ResolutionFixed, cur
+	}
+	return ResolutionNoLongerAffects, cur
+}
+
+// eolArgs are the lifecycle columns of the upsert for finding f: empty for any
+// other kind.
+func eolArgs(f vuln.Finding) []any {
+	if f.EOL == nil {
+		return []any{"", "", "", "", "", "", nil}
+	}
+	detail, _ := json.Marshal(f.EOL)
+	return []any{f.EOL.Product, f.EOL.Cycle, f.EOL.Stage, f.EOL.StageFrom, f.EOL.Origin, f.EOL.OriginRepo, detail}
 }
 
 // RecordFindings stores the outcome of matching one host without knowing the
@@ -346,10 +402,12 @@ func (s *Store) RecordFindingsFor(ctx context.Context, deviceID string, res vuln
 		if family == "" {
 			family = f.Package
 		}
-		if _, err := tx.Exec(ctx, upsertFindingSQL,
+		args := append([]any{
 			deviceID, f.AdvisoryID, family, rangeID, f.SnapshotID, f.Feed, f.FeedDate, string(f.Kind), string(f.Basis),
 			f.Package, f.SourcePackage, f.Installed, f.Fixed, f.FixState, f.CVE, normSeverity(f.Severity), f.Summary,
-			f.KEV, f.EPSS, f.CVSS, f.Reason, f.UpstreamFixedOn); err != nil {
+			f.KEV, f.EPSS, f.CVSS, f.Reason, f.UpstreamFixedOn,
+		}, eolArgs(f)...)
+		if _, err := tx.Exec(ctx, upsertFindingSQL, args...); err != nil {
 			return fmt.Errorf("record finding %s: %w", f.AdvisoryID, err)
 		}
 	}
@@ -358,7 +416,7 @@ func (s *Store) RecordFindingsFor(ctx context.Context, deviceID string, res vuln
 	}
 	if _, err := tx.Exec(ctx, upsertHostStateSQL, deviceID, res.Distro, res.Release, string(res.Coverage),
 		res.Stats.Packages, res.Stats.DistroMapped, res.Stats.Upstream, res.Stats.Undecidable,
-		res.Stats.NotAffected, snapshotID); err != nil {
+		res.Stats.NotAffected, snapshotID, res.Stats.EOLMapped, res.Stats.EOLDistroOrigin, res.Stats.EOLOriginUnknown); err != nil {
 		return fmt.Errorf("record host state: %w", err)
 	}
 	return tx.Commit(ctx)
@@ -375,12 +433,17 @@ func closeStaleFindings(ctx context.Context, tx pgx.Tx, deviceID string, start t
 	var resolutions, installed []string
 	for rows.Next() {
 		var id int64
-		var pkg, fixed string
-		if err := rows.Scan(&id, &pkg, &fixed); err != nil {
+		var kind, pkg, was, fixed string
+		if err := rows.Scan(&id, &kind, &pkg, &was, &fixed); err != nil {
 			rows.Close()
 			return err
 		}
-		r, v := inv.Classify(pkg, fixed)
+		var r, v string
+		if kind == string(vuln.KindEOL) {
+			r, v = inv.ClassifyEOL(pkg, was)
+		} else {
+			r, v = inv.Classify(pkg, fixed)
+		}
 		ids, resolutions, installed = append(ids, id), append(resolutions, r), append(installed, v)
 	}
 	rows.Close()
@@ -428,7 +491,7 @@ func (s *Store) ListFindings(ctx context.Context, f FindingFilter) ([]VulnFindin
 		WHERE ($1 = '' OR f.device_id = $1)
 		  AND ($2 = '' OR f.kind = $2)
 		  AND ($3 OR f.resolved_at IS NULL)
-		ORDER BY array_position(ARRAY['finding','awaiting_vendor','unfixed','informational'], f.kind), f.kev DESC,
+		ORDER BY array_position(ARRAY['finding','eol','awaiting_vendor','unfixed','informational'], f.kind), f.kev DESC,
 		         array_position(ARRAY['critical','high','medium','low','unknown'], f.severity),
 		         f.epss DESC NULLS LAST, f.cvss_score DESC NULLS LAST, f.device_id, f.advisory_id, f.family
 		LIMIT $4`, f.DeviceID, f.Kind, f.IncludeResolved, f.Limit)
@@ -460,14 +523,25 @@ var ErrNoFinding = errors.New("finding not found")
 
 func scanFinding(row pgx.Row) (VulnFinding, error) {
 	var v VulnFinding
+	var detail []byte
 	if err := row.Scan(&v.ID, &v.DeviceID, &v.Hostname, &v.AdvisoryID, &v.CVE, &v.Family, &v.RangeID, &v.SnapshotID,
 		&v.Feed, &v.FeedDate, &v.Kind, &v.Basis, &v.Package, &v.SourcePackage, &v.Installed, &v.Fixed,
 		&v.FixState, &v.Severity, &v.Summary, &v.KEV, &v.EPSS, &v.CVSS, &v.Reason,
-		&v.FirstSeen, &v.LastSeen, &v.ResolvedAt, &v.Resolution, &v.ResolvedInstalled, &v.UpstreamFixedOn); err != nil {
+		&v.FirstSeen, &v.LastSeen, &v.ResolvedAt, &v.Resolution, &v.ResolvedInstalled, &v.UpstreamFixedOn,
+		&v.Origin, &v.OriginRepo, &detail); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return VulnFinding{}, ErrNoFinding
 		}
 		return VulnFinding{}, err
+	}
+	if len(detail) > 0 {
+		var d vuln.EOLDetail
+		if err := json.Unmarshal(detail, &d); err == nil {
+			v.EOL = &d
+		}
+	}
+	if v.Kind == string(vuln.KindEOL) {
+		v.Controls = controls.Tag(controls.SignalSoftwareSupported)
 	}
 	v.Key = FindingKey(v.DeviceID, v.AdvisoryID, v.Family)
 	return v, nil
@@ -479,10 +553,10 @@ func (s *Store) GetHostVulnState(ctx context.Context, deviceID string) (HostVuln
 	var st HostVulnState
 	err := s.pool.QueryRow(ctx, `
 		SELECT device_id, distro, release, coverage, packages, distro_mapped, upstream, undecidable,
-		       not_affected, snapshot_id, matched_at
+		       not_affected, snapshot_id, matched_at, eol_mapped, eol_distro, eol_unknown
 		FROM host_vuln_state WHERE device_id = $1`, deviceID).Scan(&st.DeviceID, &st.Distro, &st.Release,
 		&st.Coverage, &st.Packages, &st.DistroMapped, &st.Upstream, &st.Undecidable, &st.NotAffected,
-		&st.SnapshotID, &st.MatchedAt)
+		&st.SnapshotID, &st.MatchedAt, &st.EOLMapped, &st.EOLDistro, &st.EOLUnknown)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return HostVulnState{}, false, nil
 	}
@@ -564,14 +638,14 @@ const findingsSummarySQL = `
 	FROM host_vuln_state s
 	LEFT JOIN (
 	  SELECT f.device_id,
-	         count(*) FILTER (WHERE f.kind = 'finding') AS open,
+	         count(*) FILTER (WHERE f.kind IN ('finding', 'eol')) AS open,
 	         count(*) FILTER (WHERE f.kind = 'finding' AND f.kev) AS kev,
 	         count(*) FILTER (WHERE f.kind = 'unfixed') AS unfixed,
 	         count(*) FILTER (WHERE f.kind = 'informational') AS info,
 	         count(*) FILTER (WHERE f.kind = 'awaiting_vendor') AS awaiting,
 	         count(*) FILTER (WHERE f.kind = 'awaiting_vendor' AND f.kev) AS kev_awaiting,
 	         (array_agg(f.device_id || ':' || f.advisory_id || ':' || lower(f.family) ORDER BY f.advisory_id)
-	            FILTER (WHERE (f.kind = 'finding' AND (f.kev OR f.severity IN ('critical', 'high')))
+	            FILTER (WHERE (f.kind IN ('finding', 'eol') AND (f.kev OR f.severity IN ('critical', 'high')))
 	                       OR (f.kind = 'awaiting_vendor' AND f.kev)))[1:` + "200" + `] AS keys
 	  FROM vuln_findings f WHERE f.resolved_at IS NULL GROUP BY f.device_id
 	) a ON a.device_id = s.device_id

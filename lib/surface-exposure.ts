@@ -118,7 +118,13 @@ export function fixDescription(summary: Pick<ExposureSummary, "fixable">, shown:
   if (fixable.advisories === 0 && surface === 0) return "Nothing with a fix to install, and no external finding open.";
   const parts: string[] = [];
   if (fixable.advisories > 0) {
-    parts.push(`${plural(fixable.advisories, "vulnerability", "vulnerabilities")} with a fix to install, across ${plural(fixable.hosts, "host")}`);
+    // advisories counts patches to install and, since slice 10, end-of-life releases to upgrade.
+    const eolN = fixable.eol?.advisories ?? 0;
+    const vulnN = fixable.advisories - eolN;
+    const what: string[] = [];
+    if (vulnN > 0) what.push(`${plural(vulnN, "vulnerability", "vulnerabilities")} with a fix to install`);
+    if (eolN > 0) what.push(`${plural(eolN, "end-of-life release")} to upgrade`);
+    parts.push(`${what.join(" and ")}, across ${plural(fixable.hosts, "host")}`);
   }
   if (surface > 0) parts.push(`${plural(surface, "external surface finding")}`);
   return `${parts.join(" and ")}. The top ${shown}, most urgent first:`;

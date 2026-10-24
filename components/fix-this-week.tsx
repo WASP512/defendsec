@@ -105,9 +105,10 @@ function FixRow({ group, rank }: { group: ExposureGroup; rank: number }) {
             href={`/advisories?advisory=${encodeURIComponent(group.advisoryId)}`}
             className="font-medium underline-offset-2 hover:underline"
           >
-            {group.cve || group.advisoryId}
+            {group.eol ? `${group.eol.productLabel} ${group.eol.cycle}` : group.cve || group.advisoryId}
           </Link>
           <SeverityBadge severity={group.severity} />
+          {group.eol ? <Badge variant="outline">{group.eol.stage === "eol" ? "End of life" : "Past active support"}</Badge> : null}
           {group.kev ? <Badge variant="destructive">KEV</Badge> : null}
         </div>
         <p className="text-sm">

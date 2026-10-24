@@ -232,8 +232,8 @@ var native = []Control{
 		ID: MustParseID("nist-800-53:SI-2"), Family: "SI",
 		Title:    "Flaw remediation",
 		Coverage: CoveragePartial,
-		Signals:  []Signal{SignalVulnAssessment, SignalPatchAction, SignalAlertLifecycle},
-		Note:     "Findings are tracked to resolution and remediation actions are signed. Remediation timeliness against an organisational standard is not measured.",
+		Signals:  []Signal{SignalVulnAssessment, SignalPatchAction, SignalAlertLifecycle, SignalSoftwareSupported},
+		Note:     "Findings are tracked to resolution and remediation actions are signed. Software from outside the distribution that its upstream no longer patches is reported as end-of-life. Remediation timeliness against an organisational standard is not measured.",
 	},
 	{
 		ID: MustParseID("nist-800-53:SI-4"), Family: "SI",
@@ -382,6 +382,13 @@ var native = []Control{
 		Coverage: CoverageEvidenced,
 		Signals:  []Signal{SignalInventorySoftware},
 		Note:     "Installed packages per host, collected by the agent.",
+	},
+	{
+		ID: MustParseID("cis-v8:2.2"), Family: "2",
+		Title:    "Ensure authorized software is currently supported",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalSoftwareSupported, SignalInventorySoftware},
+		Note:     "Software installed from third-party repositories is checked against its upstream release calendar (endoflife.date) and past-support releases are reported. Software from the host's own distribution follows the distribution's lifecycle and is covered by the Supported-OS policy; software the mapping table does not know, or whose origin could not be read, is not assessed. What counts as authorized is organisational.",
 	},
 	{
 		ID: MustParseID("cis-v8:3.11"), Family: "3",

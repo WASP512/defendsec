@@ -27,6 +27,12 @@ type Software struct {
 	// empty on platforms without a package manager.
 	SourcePackage string `json:"source_package,omitempty"`
 	SourceVersion string `json:"source_version,omitempty"`
+	// Origin is where the package came from: the apt Origin: of the repository
+	// that carries the installed version, or the rpm Vendor. OriginRepo is the
+	// repository (credentials removed) or the rpm Packager. Empty when the
+	// agent could not read it; see origin.go.
+	Origin     string `json:"origin,omitempty"`
+	OriginRepo string `json:"origin_repo,omitempty"`
 }
 
 type Update struct {
@@ -43,10 +49,12 @@ type FimFile struct {
 }
 
 type Snapshot struct {
-	Hostname       string
-	Platform       string
-	OSName         string
-	OSVersion      string
+	Hostname  string
+	Platform  string
+	OSName    string
+	OSVersion string
+	// OSEdition is the Windows EditionID ("ServerStandard", "EnterpriseS"); empty elsewhere.
+	OSEdition      string
 	Arch           string
 	Serial         string
 	HardwareModel  string
@@ -138,6 +146,9 @@ func applyPlatformInventory(snap *Snapshot) {
 		}
 		if facts.OSVersion != "" {
 			snap.OSVersion = facts.OSVersion
+		}
+		if facts.OSEdition != "" {
+			snap.OSEdition = facts.OSEdition
 		}
 		if facts.MemoryMb > 0 {
 			snap.MemoryMb = facts.MemoryMb

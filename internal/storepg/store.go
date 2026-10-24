@@ -40,18 +40,19 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 			id, hostname, platform, os_name, os_version, arch, serial, hardware_model, cpu, memory_mb,
 			disk_encryption, firewall, ip_addresses, username, uptime_seconds, software, pending_updates,
 			patch_inventory, fim, fim_baseline, last_seen, connected, isolated, cert_fingerprint, transport, agent_public_key_pem, updated_at,
-			distro, distro_release, package_manager
+			distro, distro_release, package_manager, os_edition
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
 			$11,$12,$13::jsonb,$14,$15,$16::jsonb,$17::jsonb,
 			$18,$19::jsonb,$20::jsonb,$21::timestamptz,$22,$23,$24,$25,$26,now(),
-			$27,$28,$29
+			$27,$28,$29,$30
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			hostname=EXCLUDED.hostname,
 			platform=EXCLUDED.platform,
 			os_name=EXCLUDED.os_name,
 			os_version=EXCLUDED.os_version,
+			os_edition=CASE WHEN EXCLUDED.os_edition <> '' THEN EXCLUDED.os_edition ELSE devices.os_edition END,
 			arch=EXCLUDED.arch,
 			serial=COALESCE(NULLIF(EXCLUDED.serial,''), devices.serial),
 			hardware_model=COALESCE(NULLIF(EXCLUDED.hardware_model,''), devices.hardware_model),
@@ -80,7 +81,7 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 	`, d.ID, d.Hostname, d.Platform, d.OSName, d.OSVersion, d.Arch, d.Serial, d.HardwareModel, d.CPU, d.MemoryMb,
 		d.DiskEncryption, d.Firewall, string(ips), d.Username, d.UptimeSeconds, string(sw), string(pend),
 		d.PatchInventory, string(fim), string(base), lastSeen, d.Connected, d.Isolated, d.CertFingerprint, d.Transport,
-		d.AgentPublicKeyPEM, d.Distro, d.DistroRelease, d.PackageManager)
+		d.AgentPublicKeyPEM, d.Distro, d.DistroRelease, d.PackageManager, d.OSEdition)
 	return err
 }
 
@@ -580,7 +581,7 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]map[string]any, err
 
 func (s *Store) ExportAgentsJSON(ctx context.Context) ([]byte, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, hostname, platform, os_name, os_version, arch, uptime_seconds, last_seen, connected,
+		SELECT id, hostname, platform, os_name, os_version, os_edition, arch, uptime_seconds, last_seen, connected,
 		       cert_fingerprint, transport, isolated, serial, hardware_model, cpu, memory_mb,
 		       disk_encryption, firewall, ip_addresses, username, software, pending_updates,
 		       patch_inventory, fim, fim_baseline
@@ -602,7 +603,7 @@ func (s *Store) ExportAgentsJSON(ctx context.Context) ([]byte, error) {
 		var ips, sw, pend, fim, base []byte
 		var lastSeen time.Time
 		if err := rows.Scan(
-			&d.ID, &d.Hostname, &d.Platform, &d.OSName, &d.OSVersion, &d.Arch, &d.UptimeSeconds, &lastSeen, &d.Connected,
+			&d.ID, &d.Hostname, &d.Platform, &d.OSName, &d.OSVersion, &d.OSEdition, &d.Arch, &d.UptimeSeconds, &lastSeen, &d.Connected,
 			&d.CertFingerprint, &d.Transport, &d.Isolated, &d.Serial, &d.HardwareModel, &d.CPU, &d.MemoryMb,
 			&d.DiskEncryption, &d.Firewall, &ips, &d.Username, &sw, &pend, &d.PatchInventory, &fim, &base,
 		); err != nil {

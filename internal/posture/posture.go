@@ -55,8 +55,10 @@ func (r Report) add(f Finding) { r[f.Probe] = f }
 // Facts are inventory values collected alongside posture, where the same
 // tool invocation yields both.
 type Facts struct {
-	OSName        string
-	OSVersion     string
+	OSName    string
+	OSVersion string
+	// OSEdition is the Windows EditionID.
+	OSEdition     string
 	MemoryMb      int64
 	UptimeSeconds int64
 	Serial        string

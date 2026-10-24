@@ -951,3 +951,105 @@ now present), unattested counted as attested: each made at least one test fail.
 | Surface drawer with raw observation | linux, Postgres 16 | storepg + control integration | see handoff | seeded data in a browser |
 | Reopened finding keeps its closed gap (migration 025) | linux, Postgres 16 | integration test | see handoff | not observed on a real domain |
 | Scan digest chained in the audit log; surface section verified by `defendsec-verify` | linux, Postgres 16 | evidence unit tests (10) + storepg/control integration | see handoff | exported by a real apid handler (fake resolver); verifier binary run on it, intact and three tampered ways |
+
+## Slice 10 — application end-of-life, Windows edition-aware Supported OS (migration 026)
+
+Branch `scout/10-app-eol-r2` from `b910939` (main after slice 5; the first push, `scout/10-app-eol` at `12af94b`, is abandoned: its history held two credential-shaped example URLs that TruffleHog flags, and pushed history is not rewritten). Design in [EOL.md](EOL.md). Postgres: PG 16 on titan CT 119 for the integration tests, the user-space PG 16.15 (`slice10`, a clone of `slice5real` that already held the real feeds) for the real runs.
+
+### What changed
+
+- **Feed** `endoflife` (endoflife.date API v1 `/products/full`): same pipeline as the other feeds (snapshot, SHA-256, status row, shrink guard, signed bundle). Keeps the 15 application products the mapping table can produce plus `windows` and `windows-server`, in `eol_releases`. An unchanged document is reloaded when the stored calendar lacks a product this build keeps.
+- **Origin** on every package: dpkg from `apt-cache policy` (the apt `Origin:` of the repository carrying the *installed* version, repository address with credentials removed), rpm from `Vendor`/`Packager`. Proto `SoftwareItem.origin` (5) and `origin_repo` (6), optional; an old agent keeps working and its packages are "not assessed".
+- **Rule**: origin decides. Distribution packages are never judged; third-party and unmanaged software is judged against the upstream calendar; unknown origin is not assessed.
+- **Findings** kind `eol` (`EOL:<product>:<cycle>`), severity `high` past security support and `low` past active support, in the fix bucket, ranked at the level of a high vulnerability (security-EOL in the urgent band after KEV, EOAS with the low CVSS-only ones; see EXPOSURE.md). Controls CIS v8 2.2 and NIST SI-2 through the new signal `software.supported`.
+- **Windows Supported OS** driven by the calendar by edition and build, replacing `WINDOWS_MIN_BUILD = 20348`. Agent reports `EditionID` (`HeartbeatRequest.os_edition` = 8, `devices.os_edition`). `GET /v1/lifecycle/os`. `DEFENDSEC_SUPPORTED_OS=windows=<build>` still overrides.
+
+### Exit measurement (real hosts, 2026-10-24, matcher `--as-of 2026-10-24`, scratch DB `slice10` with all feeds loaded)
+
+Lab VMs 120 (Ubuntu 22.04) and 121 (Rocky 9.8), the fully patched cloud images, inventories collected by the slice's static agent (`defendsec-agentd -print-inventory`, read-only). Binaries: `defendsec-feeds` built from `origin/main` (`b910939`) and from this branch, same database, same inventories.
+
+| Inventory | Binary | fixable | awaiting_vendor | no_fix | informational | eol |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Ubuntu 22.04, old (no origin) | main | 0 | 0 | 0 | 0 | n/a |
+| Ubuntu 22.04, old (no origin) | branch | 0 | 0 | 0 | 0 | **0** |
+| Ubuntu 22.04, with origin | branch | 0 | 0 | 0 | 0 | **0** |
+| Rocky 9.8, old (no origin) | main | 0 | 8 | 0 | 0 | n/a |
+| Rocky 9.8, old (no origin) | branch | 0 | 8 | 0 | 0 | **0** |
+| Rocky 9.8, with origin | branch | 0 | 8 | 0 | 0 | **0** |
+
+- **(a)** 0 app-EOL findings on both patched lab hosts. On Ubuntu with origin: `app eol: 5 mapped to a product: 5 the distribution's own (not judged), 0 origin unknown` (python3.10 and its libraries are upstream-EOL and Canonical-supported). Origins read on the real hosts: Ubuntu 596 of 597 packages `Ubuntu` (1 with none), Rocky 422 of 422 `Rocky Enterprise Software Foundation`.
+- **(c)** The finding set (advisory, CVE, package, kind) is identical between main's binary and the branch's on all four inventories: no change in vulnerability counts (Rocky keeps its 8 `awaiting_vendor`, Ubuntu 0).
+- **(b)** VM 120 made client-like: `add-apt-repository ppa:ondrej/php` (Sury's PHP repository is a PPA on Ubuntu; `packages.sury.org` is Debian-only), `apt-get install php8.0-cli` (installed `1:8.0.30-25+ubuntu22.04.1+deb.sury.org+1`, `php8.0 --version` = `PHP 8.0.30`), inventory collected: 5 packages with origin `LP-PPA-ondrej-php`. Matcher output:
+
+```
+app eol:    9 mapped to a product: 5 the distribution's own (not judged), 0 origin unknown (not assessed), 0 no release data (not assessed), 0 supported
+result:     0 fixable, 0 awaiting_vendor, 0 no_fix, 0 informational, 1 eol
+SEVERITY  CVE          PACKAGE     INSTALLED                                 FIXED IN        KIND  FEED       NOTE
+high      EOL:php:8.0  php8.0-cli  1:8.0.30-25+ubuntu22.04.1+deb.sury.org+1  upgrade to 8.4  eol   endoflife  PHP 8.0 reached end of life on 2023-11-26; origin LP-PPA-ondrej-php
+```
+
+  Exactly one finding (four PHP packages, one finding), naming PHP 8.0 and 2023-11-26, with the Sury PPA as origin. The vulnerability counts did not change.
+- **Cleanup**: php8.0 packages, the PPA, its key and `/tmp/agentd` removed from VM 120 (`dpkg -l | grep -c php` = 0, `/etc/apt/sources.list.d` empty, no `ondrej` in `apt-cache policy`); `/tmp/agentd` removed from VM 121, which was otherwise untouched.
+
+### Commands and results (this box)
+
+| Command | Result |
+| --- | --- |
+| `go build ./...`, `go vet ./...`, `GOOS=windows go vet` (cmd, posture, hostinv) | green, no output |
+| `TMPDIR=/tmp TEST_DATABASE_URL=… go test -p 1 -count=1 -v ./...` | exit 0: 1183 pass (subtests included), 0 fail, 5 skip (BPF, pwsh, netns: unrelated) |
+| `npm test` | 144 / 144 (was 121 on main) |
+| `npm run lint`, `npx tsc --noEmit`, `npm run build` | green |
+| `make proto` | only `agent.pb.go` changes, as expected for the two new fields |
+| Mutation: `today <= eolFrom` in `windowsSupport` | 1 test fails (the one that crosses the real EOL date) |
+| Mutation: server editions not narrowed to server cycles | 6 tests fail |
+
+### Windows check (the defect found in slice 5's screenshots)
+
+Unit cases in `lib/os-lifecycle.test.ts` and `lib/supported-os.test.ts`, on a real calendar (the `windows` and `windows-server` products fetched 2026-10-24, 69 releases, in `lib/testdata/os-calendar.json`):
+
+| Build | Edition | Judged 2026-10-24 | Flips on |
+| --- | --- | --- | --- |
+| 14393 | Server 2016 (`ServerStandard`) | **supported** | 2027-01-12 |
+| 17763 | Server 2019 (`ServerStandard`) | **supported** | 2029-01-09 |
+| 14393 | Windows 10 LTSB 2016 (`EnterpriseS`) | unsupported | 2026-10-13 |
+| 17763 | Windows 10 LTSC 2019 (`EnterpriseS`) | supported | |
+| 17763 | Windows 10 1809 Enterprise | unsupported | |
+| 19044 | Windows 10 LTSC 2021 / IoT LTSC | supported | 2027-01-12 |
+| 19044 | Windows 10 21H2 Pro | unsupported | |
+| 19045 | Windows 10 22H2 | **unsupported** (consumer ESU not counted) | 2025-10-14 |
+| 22631, 26100 | 11 Pro vs Enterprise vs LTSC | edition decides | |
+| 17763 / 14393 | edition not reported | **unknown** | |
+
+The test "the verdict changes on the real end-of-life date" checks the day before and the day of for Server 2016, Server 2019, LTSB 2016, 22H2 and LTSC 2021.
+
+### Not verified
+
+- **No Windows host.** `EditionID`/`ProductType` are read by the PowerShell script, which has not run on a Windows machine (the Go parser is tested on JSON, the script text is only checked to ask for the values). The Windows software-name mappings are unit-tested on names only.
+- **The console was rendered in a browser (round 2) only on synthetic data** (`scripts/seed-exposure-demo.sql`): the EOL rows, the host-page note and the Windows reason line are seen on invented hosts, not on a real fleet or a real Windows host.
+- **No end-to-end run through a real apid and agent** for an `eol` finding: the client-like result is the matcher CLI on a real inventory; the storage, exposure list, drawer and resolution are covered by integration tests on a real Postgres with synthetic inventories.
+- **Origin for dnf `from_repo`** is not read (rpm vendor and packager only). Software outside the package manager on Linux is not seen.
+- Linux distributions still use the floors in `lib/supported-os.ts`, not the calendar.
+- Sury's repository was tested as Ondrej's PPA on Ubuntu 22.04; `packages.sury.org` on Debian 11 (the motivating case) was not run, only a hand-written `apt-cache policy` fixture of it.
+
+### Round 2 (review changes, 2026-10-24)
+
+Branch head after merging `origin/main` (`7bc5b19`, slice 7b) into `scout/10-app-eol-r2`; the merge is a merge commit, no history rewritten. What changed:
+
+- **Migration renumbered** `025_app_eol.sql` → `026_app_eol.sql` (main took 025 for `025_surface_history.sql`); `migrations_test.go` pins both. **In-place upgrade, real data:** scratch DB cloned from `slice5real` (main's 024 schema, 1,455 findings, 70,913 advisories); the branch's apid started twice against it (it applied 025 and 026 before failing to bind its port, already held by the demo apid, so no migration error either time): `eol_releases` and `surface_finding_intervals` exist afterwards, row counts unchanged (1,455 / 70,913).
+- **Ranking, decided by the CEO** (card: "below KEV, next to high vulnerabilities"): security-EOL (`eol`, severity high) is in the urgent band after KEV with the critical/high surface findings, CVSS-equivalent 8.0; EOAS (`eoas`, low) is in the rest band, CVSS-equivalent 2.0, below every vulnerability with an EPSS score and below security-EOL. Stage decides, not the severity label. Go (`internal/exposure`: `EOLScore`, `Band`), the SQL `ORDER BY` (`k1`, `k4`) and TS (`rankBand`, `EOL_SCORE`) state it once; `docs/EXPOSURE.md` and `docs/EOL.md` describe the merged rule.
+- **Tests:** `TestEOLJoinsTheOrderNextToHighVulnerabilities`, `TestSecurityEOLRanksAboveActiveSupportEOLWhateverTheLabels`, `TestEOLIgnoresVulnerabilityFieldsAndKEVStillWins`, `TestEOLScoreRanksOnlyKnownStages` (Go), `TestEOLRanksNextToHighVulnerabilities` (Postgres: SQL order equals `exposure.Compare` over a list with KEV, EPSS-scored, CVSS-only, unscored and two eol rows, and keyset paging at page sizes 1, 2, 3, 200), three TS tests with the same cases. Seven mutations each fail a test: security-EOL in the rest band (Go: 2 fail; TS: 2 fail), security-EOL not in the urgent band in SQL (1 fail), EOAS scored 9.0 in Go (2 fail) and in TS (2 fail), EOAS scored 8.0 in SQL (1 fail), EOAS in the urgent band in SQL (1 fail). (An earlier version of the SQL test did not catch EOAS scored 8.0; a CVSS-only 5.0 vulnerability was added to it.)
+- **Console, rendered** in a browser against a synthetic database (`scripts/seed-exposure-demo.sql`, invented hosts, `example.com`/RFC 5737 only; PHP 8.0 and Node 16 past security support, PHP 8.2 past active support; Windows Server 2016 (14393, `ServerStandard`), Windows 10 LTSB 2016 (14393, `EnterpriseS`) and Windows 10 22H2 (19045) with the four real calendar rows). The list order seen in the browser: three KEV, SMB (critical surface), Node.js 16, PHP 8.0, RDP and an expiring certificate (high surface), then EPSS-scored CVEs, CVSS-only ones, DMARC p=none, PHP 8.2 (past active support), two low surface findings, an unscored CVE. Screenshots: `docs/screenshots/eol-fleet-fix-this-week.png`, `eol-exposure-ranked-list.png`, `eol-drawer-security-eol.png`, `eol-drawer-active-support.png`, `eol-host-linux-third-party.png`, `eol-host-windows-ltsb-unsupported.png` ("security updates ended 2026-10-13", Failing), `eol-host-windows-server-supported.png` ("security updates until 2027-01-12", Passing). Two small finds while looking: the drawer and the host-page row showed the raw id `EOL:php:8.0` as the title (now "PHP 8.0"), and main's Fix this week description, taken as is in the merge, would have said nothing of end-of-life releases (now "9 vulnerabilities with a fix to install and 3 end-of-life releases to upgrade, across 16 hosts and 6 external surface findings").
+- **Exit measurements re-run with the merged matcher** (`defendsec-feeds match --as-of 2026-10-24`, DB `slice10`, the inventories collected from VMs 120 and 121 in round 1; the VMs were not touched in round 2): Ubuntu 22.04 old and with origin: 0 findings, 0 eol (`EOLMapped 5`, 5 origin unknown on the old inventory, 5 the distribution's own with origin); Rocky 9.8: 0 fixable, 8 awaiting_vendor, 0 eol; the finding sets are identical to the matcher built from `b910939` (main before slice 7b); the PHP 8.0 PPA inventory: exactly 1 eol finding, `EOL:php:8.0 php8.0-cli 1:8.0.30-25+ubuntu22.04.1+deb.sury.org+1`, "PHP 8.0 reached end of life on 2023-11-26 ... (LP-PPA-ondrej-php)". nitpick re-collected the inventories from the live VMs in review round 1 with the same result.
+- **Branch CI on the merged tree:** https://github.com/WASP512/defendsec/actions/runs/40074768825, head `4dd58b6`, 6/6 jobs success (go, postgres-integration, node, isolation, provisioning, secrets-scan).
+- **Tests, merged tree:** `go test -p 1 -count=1 -v ./...` with `TMPDIR=/tmp` and Postgres: exit 0, 1,215 pass, 0 fail, 5 skip, 56 packages ok; `npm test` 168/168; `tsc`, `eslint` clean.
+
+## Feature × platform × evidence matrix — additions from slice 10
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| endoflife feed (snapshot, bundle, age, shrink guard) | Postgres 16 | runner integration tests incl. signed bundle and reload | run 40072034774 | real sync of endoflife.date, 370 releases, 17 products |
+| Package origin | dpkg (Ubuntu 22.04) | `apt-cache policy` real output fixtures, Sury hand fixture | run 40072034774 | read on VM 120 (597 pkgs) |
+| Package origin | rpm (Rocky 9.8) | query parser tests | run 40072034774 | read on VM 121 (422 pkgs) |
+| `eol` findings, origin decides | dpkg | matcher + storepg integration | run 40072034774 | 0 on patched Ubuntu/Rocky; 1 on a PHP 8.0 PPA host |
+| Windows Supported OS by edition and build | windows | table of build/edition pairs, date flips, mutations | run 40072034774 | none; reason lines rendered on synthetic hosts |
+| EOL ranking next to high vulnerabilities (Go = SQL = TS) | linux, Postgres 16 | Go, TS and Postgres tests, 7 mutations | run 40074768825 (6/6 jobs, on 4dd58b6, the merged tree) | rendered on synthetic data |
