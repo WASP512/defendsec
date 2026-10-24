@@ -891,8 +891,8 @@ The test "the verdict changes on the real end-of-life date" checks the day befor
 
 | Feature | Platform | Unit | CI | Real host |
 | --- | --- | --- | --- | --- |
-| endoflife feed (snapshot, bundle, age, shrink guard) | Postgres 16 | runner integration tests incl. signed bundle and reload | CI_RUN_SLICE10 | real sync of endoflife.date, 370 releases, 17 products |
-| Package origin | dpkg (Ubuntu 22.04) | `apt-cache policy` real output fixtures, Sury hand fixture | CI_RUN_SLICE10 | read on VM 120 (597 pkgs) |
-| Package origin | rpm (Rocky 9.8) | query parser tests | CI_RUN_SLICE10 | read on VM 121 (422 pkgs) |
-| `eol` findings, origin decides | dpkg | matcher + storepg integration | CI_RUN_SLICE10 | 0 on patched Ubuntu/Rocky; 1 on a PHP 8.0 PPA host |
-| Windows Supported OS by edition and build | windows | table of build/edition pairs, date flips, mutations | CI_RUN_SLICE10 | none |
+| endoflife feed (snapshot, bundle, age, shrink guard) | Postgres 16 | runner integration tests incl. signed bundle and reload | run 40072034774 | real sync of endoflife.date, 370 releases, 17 products |
+| Package origin | dpkg (Ubuntu 22.04) | `apt-cache policy` real output fixtures, Sury hand fixture | run 40072034774 | read on VM 120 (597 pkgs) |
+| Package origin | rpm (Rocky 9.8) | query parser tests | run 40072034774 | read on VM 121 (422 pkgs) |
+| `eol` findings, origin decides | dpkg | matcher + storepg integration | run 40072034774 | 0 on patched Ubuntu/Rocky; 1 on a PHP 8.0 PPA host |
+| Windows Supported OS by edition and build | windows | table of build/edition pairs, date flips, mutations | run 40072034774 | none |
