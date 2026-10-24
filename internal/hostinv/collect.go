@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"defendsec/internal/posture"
+	"defendsec/internal/repohealth"
 )
 
 type Software struct {
@@ -74,7 +75,12 @@ type Snapshot struct {
 	PackageManager string
 	PendingUpdates []Update
 	PatchInventory string
-	Fim            []FimFile
+	// RepoHealth is what the agent read about the host's package repositories:
+	// whether their signing keys and indexes are in order, which decides
+	// whether PendingUpdates can be believed. Empty from a host whose package
+	// manager the agent does not read. See internal/repohealth.
+	RepoHealth repohealth.Report
+	Fim        []FimFile
 	// Posture is the Windows posture report (roadmap 5.1, 5.2),
 	// handed to the SCA engine's posture checks. Nil on Linux.
 	Posture posture.Report
@@ -126,6 +132,7 @@ func Collect() Snapshot {
 	updates, status := pendingUpdates()
 	snap.PendingUpdates = updates
 	snap.PatchInventory = status
+	snap.RepoHealth = CollectRepoHealth()
 	snap.Fim = fimFiles()
 	if runtime.GOOS == "windows" {
 		applyPlatformInventory(&snap)
@@ -520,7 +527,10 @@ func pendingUpdates() ([]Update, string) {
 // pendingZypper lists openSUSE updates. Exit 7 is another process holding
 // the zypper lock, which is reported as an error rather than as "no updates".
 func pendingZypper() ([]Update, string) {
-	raw, code := runAllowExit("zypper", []int{7}, "--non-interactive", "--quiet", "list-updates")
+	// --no-refresh: with autorefresh on (zypper's default for most repositories)
+	// list-updates would refresh them, which is a download and a write; the
+	// repository-health check says how old what it reads is.
+	raw, code := runAllowExit("zypper", []int{7}, "--no-refresh", "--non-interactive", "--quiet", "list-updates")
 	if code != 0 {
 		return nil, "error"
 	}
@@ -576,8 +586,32 @@ func ParseZypperUpdates(raw string) []Update {
 	return updates
 }
 
+// aptReadOnly are the options that keep an apt command from writing apt's
+// derived package cache. As root, apt-cache, apt list and apt-get indextargets
+// regenerate /var/cache/apt/pkgcache.bin and srcpkgcache.bin when they are
+// missing or older than the indexes; with these two settings empty apt builds
+// the cache in memory and writes nothing (measured: the files' mtime and hash
+// are unchanged, with the cache deliberately removed first).
+var aptReadOnly = []string{"-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache="}
+
+// runApt runs an apt tool read-only (see aptReadOnly). Without its cache each
+// call parses the indexes itself, a second or two, so it gets a longer timeout
+// than run.
+func runApt(name string, args ...string) string {
+	full := append(append([]string{}, aptReadOnly...), args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, full...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func pendingApt() ([]Update, string) {
-	raw := run("apt", "list", "--upgradable")
+	raw := runApt("apt", "list", "--upgradable")
 	var updates []Update
 	for _, line := range strings.Split(raw, "\n") {
 		if !strings.Contains(line, "/") || strings.Contains(line, "Listing") {
@@ -602,8 +636,12 @@ func pendingApt() ([]Update, string) {
 }
 
 func pendingDNF(bin string) ([]Update, string) {
-	// dnf/yum check-update exits 100 when updates are available.
-	raw, code := runAllowExit(bin, []int{100}, "check-update", "-q")
+	// dnf/yum check-update exits 100 when updates are available. -C runs from
+	// the cache without refreshing it: without it dnf downloads repository
+	// metadata and writes it, which changes the host and would hide a stale
+	// index behind a fresh one. A host with no cached metadata gets "error",
+	// which the repository-health check reports as no cached metadata.
+	raw, code := runAllowExit(bin, []int{100}, "-C", "check-update", "-q")
 	if code < 0 {
 		return nil, "error"
 	}

@@ -1284,11 +1284,186 @@ Branch head after merging `origin/main` (`7bc5b19`, slice 7b) into `scout/10-app
 | Identity findings in Fix this week, summary, trend, drawer | any | Go + TS tests, SQL vs Go ordering | see handoff | fixture data, in a browser |
 | Credentials from PEM or secret files (`internal/secret`) | linux | 3 tests | see handoff | not run with a real certificate |
 
-## Slice 14 — Autotask tickets from Fix this week (migration 029)
+## Slice 11 — repository health: expired keys, stale indexes, unreliable pending updates (migration 029)
+
+Branch `scout/11-repo-health-r3`, one commit on `335b07a` and a second one for the review round (the flat-repository fix, section (e)) (main after slices 10 and 8; slice 8 took migration 027 and slice 12 took 028, this slice's is 029; see the merge note below). The first two pushes, `scout/11-repo-health` (`320b75e`: its history names a client in code comments) and `scout/11-repo-health-r2` (`4ee057f`: branch CI's TruffleHog step flagged credential-shaped example URLs in tests), are abandoned, because pushed history is not rewritten. The measurements below were taken on that tree; the one change since is cosmetic (comments, and three test URLs now assembled at run time), and the two packages touched (`internal/repohealth`, `internal/hostinv`) were re-run on this tree, the rest by branch CI. Design in [REPO_HEALTH.md](REPO_HEALTH.md). Postgres: PG 16 on titan CT 119 for the integration tests; the user-space PG 16.15 (`slice11b`, a clone of `slice10` that already held the real feeds, so the then-merged migrations 027 and 028 (this slice's own, since renumbered to 029) ran in place on a database that held 026) for the lab runs.
+
+### What was built
+
+- **Agent** (`internal/hostinv/repohealth.go`, read-only): per enabled apt source, `gpgv` on the Release file apt already holds, against the keyring that source uses; Release `Date:`/`Valid-Until:`; `update-success-stamp`. Per enabled dnf/yum/zypper repository: the `gpgkey` files and imported `gpg-pubkey` keys (expiry, revocation) and the age of the cached `repomd.xml`. Nothing refreshes, nothing writes. The keyring reaches `gpgv` as an in-memory file (`memfd`; `gpgv` reads nothing from a pipe).
+- **Server** (`internal/repohealth`, `internal/vuln`): judges the report. Findings kind `repo_health`, basis `host`, advisory `REPO:<12 hex>`; key problems, `no_index` on apt and `signature_bad`/`unsigned`/`key_revoked` are **high**, stale and expired indexes are **medium**; controls NIST SI-2 and CM-6, CIS v8 7.3 and 7.4. Threshold `DEFENDSEC_REPO_STALE_DAYS` (default 7). Stored with the verdict (`devices.repo_health`).
+- **Ranking:** high in the urgent band at 8.0, medium in the rest band at 5.0; Go, SQL and TS state it once each.
+- **Console:** Fix this week rows and description; host page notice, "0 pending — unreliable, not zero" and a Package repositories table; Patches page, dashboard card, hosts list and the "No pending patches" policy (`unknown`, never `pass`).
+- **Added scope from slice 10's review:** the agent's `apt-cache policy` no longer writes `/var/cache/apt/pkgcache.bin` (see exit (c)).
+
+### Merge with slice 12 (review round 3)
+
+Main moved while this was in review: slice 12 (identity posture) took migration 028 and put `Identity` into the same three-place rank rule. This branch merged `origin/main` (merge commit, not a rebase), renumbered to `db/migrations/029_repo_health.sql` (`migrations_test.go` pins it), and kept both slices' rows in `internal/exposure/rank.go`, the k1/k4 SQL in `internal/storepg/exposure.go` and `lib/exposure-model.ts`. The identity branch of the ranked `UNION ALL` also gets the three `repo_*` columns this slice added to the select list.
+
+- New `TestEveryKindOfRowRanksTogether` (`internal/storepg/exposure_allkinds_test.go`, real Postgres): one database holding a KEV CVE, EPSS-scored, CVSS-only and unscored CVEs, critical/high/medium surface, high/medium identity, past-security-support and past-active-support software, and a dead-key and a stale-index repository. The SQL order equals the written order and `exposure.Compare`, and keyset paging at limits 1, 2, 3, 4, 5, 7 and 200 walks the same 15 rows. The TS twin is in `lib/patch-reliability.test.ts`.
+- Mutations on the merged tree, each applied, run against `go test` (exposure + storepg ranking tests) or `npm test`, and reverted: **14 of 14 killed.** Repository constants: SQL band, SQL high 8.0, SQL medium 5.0, Go `Band`, Go `effective`, TS `rankBand`, TS `effective`. Identity constants: SQL band, SQL score branch, Go `Band`, Go `effective`, TS `ranksBySeverity`, the `identity:` key prefix. One shared score (critical 9.5). The SQL medium 5.0 for a repository row is caught only by the new test.
+- `go test -p 1 -count=1 ./...` with Postgres 16 (titan CT 119): exit 0, 63 packages ok, on the first merge (main at `4948192`). Main moved once more while this was being pushed (slice 12 follow-up, `6fea73b`, no conflicts); on that head I re-ran the CI integration packages (`storepg`, `db/migrations`, `control`, `feeds/runner`) plus `m365`, `exposure`, `repohealth` and `hostinv`: all ok. `go vet ./...` and `GOOS=windows go vet ./...` clean. `npm test` 214/214, eslint and `tsc --noEmit` clean.
+- **Real hosts, re-run on the merged head** (`84e07a7`, 2026-10-24; agent and apid built from it, the agent copied to VM 120 and VM 121). The apid ran on a *clone of the previous run's database*, which held the old `028_repo_health` columns, 1,457 findings, 70,935 advisories and no identity tables: an in-place upgrade across the renumber and slice 12's migration. After start: findings, repo_health row and advisory counts unchanged (1,457 / 1 / 70,935), `identity_findings` created, no error line in the apid log.
+  - Card exit, VM 120, a `file:` repository signed by a key that expired on 2026-01-02 (`--faked-system-time`): clean host, `repo_health` open 0, verdict `reliable` (4 repos). With the repository enabled, `apt-get update` printed `EXPKEYSIG 06B662AFA12D51C2` and exited 100; one new open high `repo_health` finding (`key_expired`) for that device, verdict `unreliable` (5 repos) with the reason "signing key 06B662AFA12D51C2 has expired", `/v1/exposure/summary` `repoHealth` 0 to 1 and `patchUnreliable` 0 to 1. After removing the repository: finding `no_longer_affected` (opened 04:10:18, resolved 04:10:51 MDT), verdict `reliable`, `repoHealth` 0, `patchUnreliable` 0. (The clone also holds the earlier run's closed finding for the same repository on another device row, which is why two rows read `no_longer_affected`.)
+  - http flat repository, VM 120, key valid for 240 s with no faked time: A (valid) `apt-get update` exit 0, lists hold `127.0.0.1:8099_._InRelease`, row `good`, no new finding, `reliable` (5 repos). B (after expiry) `apt-get update` exit **0** with "The repository is not updated and the previous index files will be used" and `EXPKEYSIG E83726261377A85D`: row `expired_key`, one open high `repo_health` finding (`key_expired`), `unreliable` with the reason. C (source removed): finding `no_longer_affected`, `reliable`.
+  - Patched hosts, `defendsec-feeds match --all` on fresh inventories from this head's agent: Ubuntu 22.04 `repos: 4 checked, 0 with a problem; pending updates: reliable`, `0 fixable, 0 awaiting_vendor, 0 no_fix, 0 informational, 0 eol, 0 repo_health`. Rocky 9.8: `repos: 3 checked, 0 with a problem; pending updates: reliable`, `0 fixable, 8 awaiting_vendor, ... 0 repo_health` (the same 8 kernel CVEs as before).
+  - Cleanup: VM 120 restored (no sources, `dstest`/`8099` absent from `apt-cache policy`, nothing listening on 8099, `apt-get update` exit 0, `/tmp` empty); VM 121: only my `/tmp/agentd` removed; apid stopped, scratch database dropped, pg-local stopped.
+- **Not re-run on the merged head:** a browser render of the merged console pages (exposure list and dashboard changed in the merge; the Go and TS tests pass), RPM with a bad key or stale cache, zypper, deb822 `.sources`, `repo_gpgcheck`, dnf `from_repo`.
+
+### Exit measurements (real hosts: VM 120 Ubuntu 22.04, VM 121 Rocky 9.8; 2026-10-24)
+
+The agent was built from the merged head (`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build`), copied to the VM, enrolled against an apid on this server (`defendsec-apid` from the same head, DB `slice11b`), and run as root as the real daemon (`-heartbeat 10s`, 30 s per step). The test repository is a signed apt repository (`file:` source) whose key was created with `gpg --faked-system-time 20260101T000000 ... 1d`, so it expired on 2026-01-02, and whose Release was signed half-way through its life.
+
+**(a) The expired-key condition, step by step** (`e11/lab_sequence.sh`, output kept):
+
+```text
+===== 1. clean host (test repository not present)
+sources.list.d entries: 0
+time=2026-10-24T08:52:55.011Z level=INFO msg="inventory ok" software=597 fim=6 patches=0
+-- findings (kind repo_health):                              <- none
+-- device verdict:
+reliable	4	[]
+defendsec-ubuntu2204 0 reliable
+===== 2. expired-key condition: enabled repository signed by an expired key
+Err:1 file:/tmp/ds-lab1/repo dstest InRelease
+  The following signatures were invalid: EXPKEYSIG 13EDAB264F59ECF5 DefendSec Test Repo (expired lab key) <lab@example.invalid>
+W: GPG error: file:/tmp/ds-lab1/repo dstest InRelease: The following signatures were invalid: EXPKEYSIG 13EDAB264F59ECF5 ...
+E: The repository 'file:/tmp/ds-lab1/repo dstest InRelease' is not signed.
+apt-get update exit=100
+-rw-r--r-- 1 root root 0 2026-10-24 08:53:23.701533459 +0000 /var/lib/apt/periodic/update-success-stamp
+-- findings (kind repo_health):
+high	REPO:0d0827f4a9ed	key_expired		file:/tmp/ds-lab1/repo dstest
+-- device verdict:
+unreliable	5	[file:/tmp/ds-lab1/repo dstest: signing key 13EDAB264F59ECF5 has expired]
+defendsec-ubuntu2204 0 unreliable file:/tmp/ds-lab1/repo dstest: signing key 13EDAB264F59ECF5 has expired
+fixable: {"findings": 7, ... "repoHealth": {"findings": 1, "advisories": 1}}
+hosts: {"total": 2, "assessed": 2, "notAssessed": 0, "patchUnreliable": 1}
+===== 3. repository removed
+apt-get update exit=0
+-- findings (kind repo_health):
+high	REPO:0d0827f4a9ed	key_expired	no_longer_affected	file:/tmp/ds-lab1/repo dstest
+-- device verdict:
+reliable	4	[]
+fixable: {"findings": 6, ... "repoHealth": {"findings": 0, "advisories": 0}}
+hosts: {"total": 2, "assessed": 2, "notAssessed": 0, "patchUnreliable": 0}
+```
+
+Exactly one `repo_health` high finding for the repository, the host's pending updates `unreliable` with the reason (the host listed 0 pending), and both go away when the repository is removed and the host re-collected. An earlier run of the same sequence with the pre-merge build gave the same result and also rendered the pages in the console (`next dev`, logged in with the admin token, page text read with curl): the Fix this week row ("Updates from this repository have stopped: signing key expired ... install the vendor's current signing key (signed-by keyring), then apt-get update"), the host page notice "Pending updates are unreliable (missing evidence)" with "0 pending — unreliable, not zero", the Package repositories table (expired key, `Release dated 2026-01-01`), the Patches page banner, the hosts list "updates unreliable", and, after removal, "No pending updates reported." (the console reads apid's presence file, which lags by up to a minute). The advisory detail carries controls `nist-800-53:SI-2`, `nist-800-53:CM-6`, `cis-v8:7.3`, `cis-v8:7.4` (and their CMMC, 800-171, CJIS mappings).
+
+**A fact worth recording:** `apt-get update` exits **100** with an expired-key repository and **still touches `update-success-stamp`**. A fresh stamp therefore does not clear a repository; each one is verified on its own (REPO_HEALTH.md says so).
+
+**(b) Both patched lab hosts give no `repo_health` finding** (this head's agent and matcher, `e11/exit_patched.sh`):
+
+```text
+== ubuntu-2204: repos: 4 checked, 0 with a problem; pending updates: reliable
+   result: 0 fixable, 0 awaiting_vendor, 0 no_fix, 0 informational, 0 eol, 0 repo_health
+== rocky-9:     repos: 3 checked, 0 with a problem; pending updates: reliable
+   result: 0 fixable, 8 awaiting_vendor, 0 no_fix, 0 informational, 0 eol, 0 repo_health
+```
+
+Ubuntu: the four stock sources, key `871920D1991BC93C`, `Release` dated 2022-04-21 (the base pocket, not stale because the host refreshed that day), 2026-10-23 and 2026-10-24. Rocky (the RPM path on a real host): `baseos`, `appstream`, `extras`, key `350d275d`, cached `repomd.xml` 5 hours old. The 8 awaiting_vendor are the unchanged slice 4c kernel rows.
+
+**(c) The agent no longer writes apt's cache** (`e11/vm_cachecheck.sh` on VM 120; old agent = slice 10's, new = this branch; "stale" = `touch -d 2026-10-01` on both `.bin` files, "missing" = deleted; the cache was rebuilt with `apt-cache gencaches` before each case):
+
+```text
+[old agent, cache stale]   before: pkgcache.bin mtime=2026-10-01 00:00:00  after: mtime=2026-10-24 08:45:02   (rewritten)
+[old agent, cache missing] before: MISSING                                  after: pkgcache.bin mtime=2026-10-24 08:45:06 (recreated)
+[new agent, cache stale]   before: pkgcache.bin mtime=2026-10-01 00:00:00  after: mtime=2026-10-01 00:00:00   sha256 83a0abc8667fe7a1 unchanged
+[new agent, cache missing] before: MISSING                                  after: MISSING
+```
+
+The same holds for `srcpkgcache.bin`. The old agent is the control: it changed the file in both cases. The two inventories are identical apart from `repoHealth` (`cmp_inv.py`: "inventories identical apart from repoHealth: True"), so origins did not change. Cost: `apt-cache policy` builds the cache in memory, about 1.6 s per call instead of 0.1 s (measured on VM 120), so the calls are batched.
+
+**(d) `gpgv` reports an expired key as a good signature** (measured on VM 120, gpgv 2.2.27, and on this host's gpgv): exit 0, "Good signature", and `KEYEXPIRED` and `EXPKEYSIG 13EDAB264F59ECF5` in `--status-fd` output. The collector parses the status lines. The Go test `TestRealGPGVReportsExpiredAndMissingKeys` makes its own expired key with `gpg --faked-system-time` and runs the real `gpgv` through the in-memory keyring path: expired key, wrong keyring (`NO_PUBKEY`), a file keyring, and a tampered file (`BADSIG`).
+
+**(e) A flat http repository on a real host: the review's defect, fixed and measured** (round 2; `e11/mkflat.sh`, `e11/lab_flat.sh`, VM 120, the real agent built from this head, a fresh apid and database). The reviewer found that `ReleaseBases()` looked for `<host>_InRelease` while apt keeps a flat (`./`) repository as `<host>:<port>_._InRelease`, so a healthy repository was reported as high `no_index`. Fixed (`uri + "/./"`), and the test that had asserted the wrong name now asserts the real one, plus `TestCollectAptFlatHTTPRepositoryFindsItsListsFile` (a `host:port_._InRelease` fixture: good, expired key, a flat repository under a path, never fetched). The repository is `deb [signed-by=...] http://127.0.0.1:8099/ ./` served by `python3 -m http.server`, signed by a key made with `gpg --quick-gen-key ... seconds=240`, with no faked time: the sequence of 2026-10-22, in which the key is valid when apt first fetches the index and expires afterwards.
+
+```text
+===== A. flat http repository, key valid
+gpg: revocation certificate stored as '/tmp/ds-lab2/gnupg/openpgp-revocs.d/CAF605F5A5993196E5F27650E14349B00C51E511.rev'
+gpg: checking the trustdb
+gpg: marginals needed: 3  completes needed: 1  trust model: pgp
+gpg: depth: 0  valid:   1  signed:   0  trust: 0-, 0q, 0n, 0m, 0f, 1u
+gpg: next trustdb check due at 2026-10-24
+key expires 2026-10-24 09:42:55 UTC (now 2026-10-24 09:38:56)
+source enabled; http server pid 41053
+Get:1 http://127.0.0.1:8099 ./ InRelease [903 B]
+apt-get update exit=0
+127.0.0.1:8099_._InRelease
+time=2026-10-24T09:39:09.126Z level=INFO msg="inventory ok" software=597 fim=6 patches=0
+-- findings (kind repo_health):
+-- verdict:
+reliable	5	[]
+-- the agent's own row for the repository:
+http://127.0.0.1:8099 ./   good   E14349B00C51E511   2026-10-24T09:38:56Z   Signature verified against signed-by /etc/apt/keyrings/dstest.gpg on the copy apt holds in /var/lib/apt/lists.
+
+===== B. same repository after the key expired (now 2026-10-24 09:43:14 UTC)
+Hit:1 http://127.0.0.1:8099 ./ InRelease
+Err:1 http://127.0.0.1:8099 ./ InRelease
+  The following signatures were invalid: EXPKEYSIG E14349B00C51E511 DefendSec Test Repo (short-lived lab key) <lab@example.invalid>
+W: An error occurred during the signature verification. The repository is not updated and the previous index files will be used. GPG error: http://127.0.0.1:8099 ./ InRelease: The following signatures were invalid: EXPKEYSIG E14349B00C51E511 DefendSec Test Repo (short-lived lab key) <lab@example.invalid>
+W: Failed to fetch http://127.0.0.1:8099/./InRelease  The following signatures were invalid: EXPKEYSIG E14349B00C51E511 DefendSec Test Repo (short-lived lab key) <lab@example.invalid>
+W: Some index files failed to download. They have been ignored, or old ones used instead.
+apt-get update exit=0
+127.0.0.1:8099_._InRelease
+time=2026-10-24T09:43:23.151Z level=INFO msg="inventory ok" software=597 fim=6 patches=0
+-- findings (kind repo_health):
+high	REPO:ed3361c78ea5	key_expired		http://127.0.0.1:8099 ./
+-- verdict:
+unreliable	5	[http://127.0.0.1:8099 ./: signing key E14349B00C51E511 has expired]
+-- the agent's own row for the repository:
+http://127.0.0.1:8099 ./	expired_key	E14349B00C51E511	2026-10-24T09:38:56Z	gpgv checked the copy apt holds in /var/lib/apt/lists against signed-by /etc/apt/keyrings/dstest.gpg. Key: DefendSec Test Repo (short-lived lab key) <lab@example.invalid>.
+
+===== C. repository removed
+apt-get update exit=0
+time=2026-10-24T09:43:58.984Z level=INFO msg="inventory ok" software=597 fim=6 patches=0
+-- findings (kind repo_health):
+high	REPO:ed3361c78ea5	key_expired	no_longer_affected	http://127.0.0.1:8099 ./
+-- verdict:
+reliable	4	[]
+-- the agent's own row for the repository:
+```
+
+A: the repository is checked and healthy (the reliable verdict covers 5 repositories, the four stock sources and this one), where the first version gave one open high finding. B: four minutes later `apt-get update` **exits 0**, prints `The repository is not updated and the previous index files will be used` and `EXPKEYSIG`, and keeps the old index: the condition of 2026-10-22 without a failing command. DefendSec reports `expired_key` against the copy apt kept, one high `repo_health` finding, and the host's pending updates unreliable with the reason. C: removing the source closes the finding (`no_longer_affected`) and the host is reliable again. The lab was restored (`mkflat.sh teardown`: source, keyring, lists copy, http server, agent state and binary removed; `apt-get update` exit 0; no `dstest` or `8099` in `apt-cache policy`; no listener on 8099).
+
+Re-run of (b) with this head's agent and matcher: Ubuntu `repos: 4 checked, 0 with a problem; pending updates: reliable`, `0 fixable, 0 awaiting_vendor, 0 no_fix, 0 informational, 0 eol, 0 repo_health`; Rocky 9.8 `repos: 3 checked, 0 with a problem; pending updates: reliable`, `0 fixable, 8 awaiting_vendor, ..., 0 repo_health`.
+
+### Tests
+
+- **Round 2 (flat-repository fix):** `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./...` clean; `go test -count=1 ./internal/repohealth/ ./internal/hostinv/ ./internal/vuln/ ./internal/exposure/` ok (50 tests pass and 0 fail in the first two, `-v`). The full suite with Postgres was not re-run locally for this round (only Go code in those two packages and docs changed); branch CI runs it.
+
+- `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./...`, `gofmt -l`: clean.
+- `TMPDIR=/tmp go test -p 1 -count=1 -v ./...` with Postgres (titan CT 119) on the merged head: exit 0, **1,327 pass, 0 fail, 5 skip** (Windows query scripts, isolation with real traffic and three sensor tests: the environment), 61 packages ok.
+- `npm test` 195/195 (168 on main plus the new file), `eslint` and `tsc --noEmit` clean.
+- New tests: `internal/repohealth` (gpgv status parsing from real captured output, apt source parsing in both syntaxes, OpenPGP expiry from real keys including a revoked one, `.repo` parsing, assessment rules); `internal/hostinv` (a fixture host tree and a fake `gpgv`: healthy, expired, no-index, trusted=yes, missing keyring, gpgv not runnable, deb822 with armored and inline keys, `file:` repositories, credentials redacted, rpm keys and metadata age, imported keys, plus the real-`gpgv` test); `internal/vuln` (findings, stats, the threshold, a missing or empty report is not "assessed", advisory id); `internal/exposure` (rank rule); `internal/storepg` (`TestRepoHealthFindingEndToEnd`: store, controls, exposure list and summary, detail, a missing report does not close the finding, fixed, reopened with the interval kept, removed; `TestRepoHealthRanksWithEverythingElse`: SQL order equals `exposure.Compare` over KEV, EPSS-scored, CVSS-only, EOL, high surface, high and medium repository rows, with keyset paging at 1, 2, 3 and 200; `TestRepoHealthReportPersistsWithItsVerdict`); `lib/patch-reliability.test.ts` (ranking, wording, the policy, "never a clean zero").
+- **Round 2 mutations**, each reverted (`workspace/mut.sh`, outside git), each fails a test: the flat name (`uri + "/./"` back to `uri + "/"`), `aptReadOnly` emptied, dnf without `-C`, zypper without `--no-refresh` (the last three are pinned by `internal/hostinv/readonly_argv_test.go`, which runs a stand-in manager and checks the argv each caller builds). **Mutations**, each reverted (`e11/mutations.sh`, kept outside git), each fails a test: SQL band for repository rows (1 fail), SQL score high 8.0→7.0 (1), SQL score medium 5.0→6.0 (1), Go band (1 in storepg, 2 in `internal/exposure`), fix bucket drops `repo_health` (2), TS `rankBand` (3), TS `effective` (1). The slice 10 review's survivor (the SQL security-EOL constant `-8.0`, which could become `-1.0` with every test green) now fails `TestRepoHealthRanksWithEverythingElse` (run: `-8.0` → `-1.0`, 1 fail, reverted); that test puts an EOL row, a high repository row and a high surface row at 8.0 in one list.
+
+### Not verified
+
+- **No real RPM host with a bad key or a stale cache.** The RPM path ran on a real Rocky 9.8 host with healthy repositories only; expired and stale rpm repositories are fixtures. `repomd.xml` signatures (`repo_gpgcheck`) are not verified, a remote `gpgkey=` URL is not fetched, and dnf `from_repo` (slice 10's "not verified" item) is **not** read: the checks here do not need per-package origin, so I did not add it. It stays a follow-up.
+- **An http repository on a real host** is now measured (section (e)): a flat repository on a local `127.0.0.1` server, healthy and then with the key expired after apt fetched it. Not measured: a remote mirror, a non-flat suite (`dists/<suite>`) with an expired key on a real host (the stock Ubuntu sources are checked as healthy), and deb822 `.sources` files (24.04). An http repository whose key had **already expired when apt first fetched it** has no index at all, so it is reported as `no_index` (high), not `key_expired` (REPO_HEALTH.md).
+- **zypper has not run on any host.**
+- **Windows, macOS** have no repository evidence; the console shows no verdict. The Datto RMM hosts (slice 8) are not touched.
+- The **DefendSec console was rendered in a browser only as page text over HTTP**; I did not look at screenshots.
+- The lab VMs were returned to how I found them: the test source, keyring, agent state and binaries removed, `apt-get update` exit 0, `dstest` absent from `apt-cache policy`, `pkgcache.bin` rebuilt.
+
+## Feature × platform × evidence matrix — additions from slice 11
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| apt repository signature and key expiry (`gpgv` status) | Ubuntu 22.04 | real captured `gpgv` output, fake-`gpgv` fixture host, real `gpgv` with an expired key | see the card | VM 120: expired key found, healthy host clean |
+| apt index staleness (`Date`, `Valid-Until`, refresh stamp) | Ubuntu 22.04 | table of dates and thresholds | see the card | healthy host clean; no stale index staged |
+| dnf/zypper key expiry and metadata age | Rocky 9.8 | fixtures | see the card | VM 121: healthy, 3 repositories, no finding; no bad key staged |
+| `repo_health` findings, close and reopen | Postgres 16 | matcher, storepg integration | see the card | VM 120 through apid: 1 finding, resolved on removal |
+| Pending updates marked unreliable | Postgres 16, console | TS and Go tests | see the card | VM 120: `unreliable` with the reason, then `reliable` |
+| Agent does not write apt's cache | Ubuntu 22.04 | — | — | VM 120: old agent rewrote it, new agent did not (stale and missing) |
+| Repository rows in the ranking (Go = SQL = TS) | linux, Postgres 16 | Go, TS and Postgres tests, 7 mutations | see the card | seen through apid on VM 120 |
+
+## Slice 14 — Autotask tickets from Fix this week (migration 030)
 
 - Date: 2026-10-24 (MDT). Host: `hermesagent`, go1.26.10, node 22, Postgres 16 on titan CT 119 (own database).
 - Branch `lookout/14-autotask`, merged with `origin/main` (6fea73b). What is in it: `internal/autotask` (planner, renderer, reconcile engine),
-  `internal/autotask/client` (Autotask REST client), `internal/autotask/atest` (fake Autotask service and fixtures), migration 029, `internal/storepg/autotask.go`,
+  `internal/autotask/client` (Autotask REST client), `internal/autotask/atest` (fake Autotask service and fixtures), migration 030, `internal/storepg/autotask.go`,
   `internal/control/autotask.go` (API and schedule), and the console (Autotask page, settings panel, four route handlers). Design, safety rules and the Autotask
   facts it rests on, with the pages and the date checked: [AUTOTASK.md](AUTOTASK.md).
 

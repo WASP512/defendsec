@@ -64,7 +64,7 @@ func atkScratch(t *testing.T) (*Server, *pgxpool.Pool, *atest.Server) {
 	t.Cleanup(srv.Close)
 	s.SetAutotaskDesk(func(set autotask.Settings) (autotask.Desk, error) {
 		return client.New(client.Config{BaseURL: srv.BaseURL(), UserName: atest.User, Secret: atest.Secret, IntegrationCode: atest.IntegrationCode,
-			Sleep: func(context.Context, time.Duration) error { return nil }})
+			Sleep: func(context.Context, time.Duration) error { return nil }, AllowAnyHost: true})
 	})
 	return s, pool, srv
 }

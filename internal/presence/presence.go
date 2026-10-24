@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"defendsec/internal/repohealth"
 )
 
 // FimPathSeverity returns the default severity for a watched integrity path.
@@ -126,23 +128,27 @@ type Device struct {
 	// AgentPublicKeyPEM is the public half of the enrolled certificate key,
 	// kept so acknowledgement signatures can be verified later without the
 	// agent being connected (roadmap 1.3).
-	AgentPublicKeyPEM string      `json:"agentPublicKeyPem,omitempty"`
-	Transport         string      `json:"transport"`
-	Isolated          bool        `json:"isolated"`
-	Serial            string      `json:"serial,omitempty"`
-	HardwareModel     string      `json:"hardwareModel,omitempty"`
-	CPU               string      `json:"cpu,omitempty"`
-	MemoryMb          int64       `json:"memoryMb,omitempty"`
-	DiskEncryption    *bool       `json:"diskEncryption"`
-	Firewall          *bool       `json:"firewall"`
-	IPAddresses       []string    `json:"ipAddresses,omitempty"`
-	Username          string      `json:"username,omitempty"`
-	Software          []Software  `json:"software,omitempty"`
-	PendingUpdates    []Update    `json:"pendingUpdates,omitempty"`
-	PatchInventory    string      `json:"patchInventory,omitempty"`
-	Fim               []FimFile   `json:"fim,omitempty"`
-	FimBaseline       []FimFile   `json:"fimBaseline,omitempty"`
-	ScaResults        []ScaResult `json:"scaResults,omitempty"`
+	AgentPublicKeyPEM string     `json:"agentPublicKeyPem,omitempty"`
+	Transport         string     `json:"transport"`
+	Isolated          bool       `json:"isolated"`
+	Serial            string     `json:"serial,omitempty"`
+	HardwareModel     string     `json:"hardwareModel,omitempty"`
+	CPU               string     `json:"cpu,omitempty"`
+	MemoryMb          int64      `json:"memoryMb,omitempty"`
+	DiskEncryption    *bool      `json:"diskEncryption"`
+	Firewall          *bool      `json:"firewall"`
+	IPAddresses       []string   `json:"ipAddresses,omitempty"`
+	Username          string     `json:"username,omitempty"`
+	Software          []Software `json:"software,omitempty"`
+	PendingUpdates    []Update   `json:"pendingUpdates,omitempty"`
+	PatchInventory    string     `json:"patchInventory,omitempty"`
+	// RepoHealth is what the agent read about the host's package repositories,
+	// with the server's verdict on whether PendingUpdates can be believed.
+	// Nil from an agent that does not report it (see internal/repohealth).
+	RepoHealth  *repohealth.Report `json:"repoHealth,omitempty"`
+	Fim         []FimFile          `json:"fim,omitempty"`
+	FimBaseline []FimFile          `json:"fimBaseline,omitempty"`
+	ScaResults  []ScaResult        `json:"scaResults,omitempty"`
 }
 
 // File is the device, FIM-event and alert state apid holds for mTLS agents.
@@ -291,6 +297,7 @@ func (f *File) ApplyInventory(dev Device) ([]FimEvent, error) {
 	merged.Distro, merged.DistroRelease, merged.PackageManager = dev.Distro, dev.DistroRelease, dev.PackageManager
 	merged.PendingUpdates = dev.PendingUpdates
 	merged.PatchInventory = dev.PatchInventory
+	merged.RepoHealth = dev.RepoHealth
 	if len(dev.ScaResults) > 0 {
 		merged.ScaResults = dev.ScaResults
 	} else {

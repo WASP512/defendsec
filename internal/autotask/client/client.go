@@ -137,6 +137,11 @@ type Config struct {
 	Sleep func(ctx context.Context, d time.Duration) error
 	// UserAgent is sent on every request.
 	UserAgent string
+	// AllowAnyHost lets BaseURL be any http(s) host. Tests set it to reach a local
+	// fake; production code leaves it false, and New then refuses a BaseURL that is
+	// not https://<host>.autotask.net/atservicesrest, because the three credential
+	// headers go to whatever host this names.
+	AllowAnyHost bool
 }
 
 // DefaultMaxRequests is the budget of one run when the caller sets none.
@@ -166,9 +171,17 @@ func New(cfg Config) (*Client, error) {
 	if cfg.UserName == "" || cfg.Secret == "" || cfg.IntegrationCode == "" {
 		return nil, errors.New("autotask: the API user, its secret and the integration code are all required")
 	}
-	if cfg.HTTP == nil {
-		cfg.HTTP = &http.Client{Timeout: 60 * time.Second}
+	if !cfg.AllowAnyHost {
+		checked, cerr := CheckZoneURL(cfg.BaseURL)
+		if cerr != nil {
+			return nil, fmt.Errorf("autotask: %w", cerr)
+		}
+		u, err = url.Parse(checked)
+		if err != nil {
+			return nil, errors.New("autotask: the zone URL is not a valid URL")
+		}
 	}
+	cfg.HTTP = noRedirects(cfg.HTTP, 60*time.Second)
 	if cfg.MaxRequests <= 0 {
 		cfg.MaxRequests = DefaultMaxRequests
 	}
@@ -183,6 +196,21 @@ func New(cfg Config) (*Client, error) {
 	}
 	base := strings.TrimRight(u.String(), "/") + "/" + apiVersion
 	return &Client{cfg: cfg, base: base}, nil
+}
+
+// noRedirects returns a copy of hc (or a new client) that never follows a
+// redirect. Go drops only Authorization and Cookie when a redirect leaves the host;
+// UserName, Secret and ApiIntegrationCode would go along, and a 307/308 would
+// replay the body. A 3xx therefore comes back as a response, and is an error.
+func noRedirects(hc *http.Client, timeout time.Duration) *http.Client {
+	var c http.Client
+	if hc != nil {
+		c = *hc
+	} else {
+		c.Timeout = timeout
+	}
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &c
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -391,9 +419,7 @@ func CheckZoneURL(raw string) (string, error) {
 // ZoneDiscoveryURL unless a test points elsewhere. The answer's URL goes through
 // CheckZoneURL unless allow is true (tests with a local server).
 func Discover(ctx context.Context, hc *http.Client, discoveryURL, user string, allow bool) (ZoneInfo, error) {
-	if hc == nil {
-		hc = &http.Client{Timeout: 30 * time.Second}
-	}
+	hc = noRedirects(hc, 30*time.Second)
 	u, err := url.Parse(discoveryURL)
 	if err != nil {
 		return ZoneInfo{}, errors.New("autotask zone discovery: bad URL")

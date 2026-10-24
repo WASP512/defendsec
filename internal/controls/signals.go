@@ -64,6 +64,11 @@ const (
 	// distribution is checked against its upstream support lifecycle, so
 	// software that no longer receives security fixes is found.
 	SignalSoftwareSupported Signal = "software.supported"
+	// SignalRepoHealth — the host's package repositories are checked for an
+	// expired or missing signing key and a stale index, so a "no pending
+	// updates" report is not taken from a package manager that has silently
+	// stopped refreshing.
+	SignalRepoHealth Signal = "repo.health"
 
 	// SignalFIM — file integrity monitoring against a baseline.
 	SignalFIM Signal = "fim.integrity"
@@ -151,6 +156,7 @@ var signalTitles = map[Signal]string{
 	SignalVulnAssessment:    "Vulnerability assessment",
 	SignalPatchAction:       "Remediation actions",
 	SignalSoftwareSupported: "Software support lifecycle",
+	SignalRepoHealth:        "Package repository health",
 	SignalFIM:               "File integrity monitoring",
 	SignalSCA:               "Configuration baseline checks",
 	SignalTransportMTLS:     "Mutually authenticated agent transport",

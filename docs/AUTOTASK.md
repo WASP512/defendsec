@@ -86,8 +86,9 @@ and only if the operator switched auto-complete on.
   with the reason in the run's history. Nothing it could not check is assumed fine.
 - **Credentials are files, never typed or stored.** `DEFENDSEC_AUTOTASK_SECRET_FILE` (the API user's secret) and `DEFENDSEC_AUTOTASK_CODE_FILE` (the integration
   code), each one value, mode 0600 (a file writable by group or others is refused, one readable by them gets a warning on the page), read each time apid talks to Autotask. The API only accepts the user's
-  *name* and the company id; a pasted `secret` is a `400`. The credentials are sent only to an `https://*.autotask.net/atservicesrest` URL (a zone URL typed in
-  or returned by zone discovery is checked first). No error, log line, ledger entry or status holds a value.
+  *name* and the company id; a pasted `secret` is a `400`. The credentials are sent only to an `https://*.autotask.net/atservicesrest` URL: a zone URL typed in
+  or returned by zone discovery is checked first, `client.New` refuses any other host itself, and the client never follows a redirect (a 3xx is an error; Go would
+  otherwise carry the `UserName`, `Secret` and `ApiIntegrationCode` headers to the new host and replay a POST body). No error, log line, ledger entry or status holds a value.
 - **Audit ledger.** `autotask_settings_changed`, `autotask_sync` (who asked for a run), `autotask_dry_run`, `autotask_run`, and for every ticket action
   `autotask_ticket_created`, `autotask_ticket_adopted`, `autotask_ticket_note_added`, `autotask_ticket_completed`, `autotask_ticket_state`, each written in
   the same transaction as the row it changes (a refused commit leaves no entry). The text of a dry run's tickets is in the run record, not in the chain.
@@ -156,3 +157,9 @@ company search are admin-only because they spend requests.
 - Windows hosts known only through the Datto RMM collector are ticketed by the same rules as any host with fixable findings; their fix-it text is the generic
   "install the vendor's update" because no package manager is known.
 - A ticket's title is not rewritten when the host count changes; the notes are.
+- A surface finding whose last observation was *not assessed* (the exposure view flags it as stale) is still ticketed from the older data: the candidate list does
+  not read that flag. It is resolved, and noted on the ticket, only when a later observation shows it fixed.
+- An MFA ticket takes the priority of its most urgent member, so one critical Global Admin and several medium accounts open one ticket at the critical priority.
+  Splitting the administrators into their own ticket is not done.
+- A note is not idempotent. If Autotask carries out a note but the answer is lost, the run says so and the next run may add the same news a second time (a ticket
+  is protected by its tag; a note has none). A note is never retried within a run.

@@ -2,6 +2,7 @@ import { warmOsCalendar } from "./os-calendar";
 import { readFile, stat } from "node:fs/promises";
 import { dataPath } from "./data-paths";
 import type { Device, FimEvent, FimFile, PatchInventory, Platform, SoftwareItem, PendingUpdate } from "./types";
+import type { RepoHealthReport } from "./patch-reliability";
 
 type MtlsFile = {
   fimEvents?: FimEvent[];
@@ -30,6 +31,7 @@ type MtlsFile = {
     software?: SoftwareItem[];
     pendingUpdates?: PendingUpdate[];
     patchInventory?: PatchInventory | null;
+    repoHealth?: RepoHealthReport | null;
     fim?: FimFile[];
     fimBaseline?: FimFile[];
   }[];
@@ -121,6 +123,7 @@ function mapMtlsDevices(parsed: MtlsFile): Device[] {
     software: item.software ?? [],
     pendingUpdates: item.pendingUpdates ?? [],
     patchInventory: item.patchInventory ?? null,
+    repoHealth: item.repoHealth ?? null,
     fim: item.fim ?? [],
     fimBaseline: item.fimBaseline ?? [],
     sample: false,
@@ -169,6 +172,7 @@ export function mergeDevices(fromStore: Device[], mtls: Device[]) {
       software: useInv ? live.software : device.software,
       pendingUpdates: useInv ? live.pendingUpdates : device.pendingUpdates,
       patchInventory: useInv ? live.patchInventory : device.patchInventory,
+      repoHealth: useInv ? live.repoHealth : device.repoHealth,
       fim: useInv ? live.fim : device.fim,
       fimBaseline: useInv ? live.fimBaseline : device.fimBaseline,
     };

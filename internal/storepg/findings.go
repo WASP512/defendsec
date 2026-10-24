@@ -217,6 +217,9 @@ type VulnFinding struct {
 	// about, from the control catalog (CIS v8 2.2, NIST SI-2, ...); empty for
 	// other kinds.
 	Controls []string `json:"controls"`
+	// Repo says what a repository-health finding is about: the repository,
+	// every problem found, the evidence dates and the fix. Nil on other kinds.
+	Repo *vuln.RepoDetail `json:"repo"`
 }
 
 // FindingKey is the key the console's triage store uses for a finding, so an
@@ -231,10 +234,10 @@ const (
 			device_id, advisory_id, family, range_id, snapshot_id, feed, feed_date, kind, basis,
 			package, source_package, installed, fixed, fix_state, cve, severity, summary,
 			kev, epss, cvss_score, reason, upstream_fixed_on,
-			eol_product, eol_cycle, eol_stage, eol_date, origin, origin_repo, eol_detail,
+			eol_product, eol_cycle, eol_stage, eol_date, origin, origin_repo, eol_detail, repo_detail,
 			first_seen, last_seen, resolved_at
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, NULLIF($22,'')::date,
-		          $23,$24,$25, NULLIF($26,'')::date, $27,$28,$29, now(), now(), NULL)
+		          $23,$24,$25, NULLIF($26,'')::date, $27,$28,$29,$30, now(), now(), NULL)
 		ON CONFLICT (device_id, advisory_id, family) DO UPDATE SET
 			range_id=EXCLUDED.range_id, snapshot_id=EXCLUDED.snapshot_id, feed=EXCLUDED.feed,
 			feed_date=EXCLUDED.feed_date, kind=EXCLUDED.kind, basis=EXCLUDED.basis,
@@ -245,7 +248,7 @@ const (
 			upstream_fixed_on=EXCLUDED.upstream_fixed_on,
 			eol_product=EXCLUDED.eol_product, eol_cycle=EXCLUDED.eol_cycle, eol_stage=EXCLUDED.eol_stage,
 			eol_date=EXCLUDED.eol_date, origin=EXCLUDED.origin, origin_repo=EXCLUDED.origin_repo,
-			eol_detail=EXCLUDED.eol_detail,
+			eol_detail=EXCLUDED.eol_detail, repo_detail=EXCLUDED.repo_detail,
 			last_seen=now(),
 			first_seen=CASE WHEN vuln_findings.resolved_at IS NULL THEN vuln_findings.first_seen ELSE now() END,
 			resolved_at=NULL, resolution='', resolved_installed=''`
@@ -263,8 +266,9 @@ const (
 
 	// Anything the run did not confirm is closed, not deleted.
 	staleFindingsSQL = `
-		SELECT id, kind, package, installed, fixed FROM vuln_findings
-		WHERE device_id = $1 AND resolved_at IS NULL AND last_seen < $2`
+		SELECT id, kind, package, installed, fixed, family FROM vuln_findings
+		WHERE device_id = $1 AND resolved_at IS NULL AND last_seen < $2
+		  AND (kind <> 'repo_health' OR $3)`
 
 	closeFindingsSQL = `
 		UPDATE vuln_findings f SET resolved_at = now(), resolution = c.resolution, resolved_installed = c.installed
@@ -288,7 +292,7 @@ const (
 		f.feed, f.feed_date, f.kind, f.basis, f.package, f.source_package, f.installed, f.fixed,
 		f.fix_state, f.severity, f.summary, f.kev, f.epss, f.cvss_score, f.reason,
 		f.first_seen, f.last_seen, f.resolved_at, f.resolution, f.resolved_installed,
-		COALESCE(f.upstream_fixed_on::text, ''), f.origin, f.origin_repo, f.eol_detail`
+		COALESCE(f.upstream_fixed_on::text, ''), f.origin, f.origin_repo, f.eol_detail, f.repo_detail`
 )
 
 // Resolution says how a finding came to be closed (vuln_findings.resolution).
@@ -306,6 +310,10 @@ type Inventory struct {
 	Scheme vuln.Scheme
 	// Versions maps an installed package name to its version.
 	Versions map[string]string
+	// Repos is the set of repository ids the host reported as enabled; nil
+	// when the host reported no repository evidence at all.
+	Repos map[string]bool
+
 	// InstalledKBs, when non-nil, makes this the inventory of a Windows host
 	// read through an RMM: findings are keyed by KB, and a KB that is installed
 	// now closed its findings as fixed. Any other closed finding is the RMM no
@@ -353,6 +361,31 @@ func (inv *Inventory) ClassifyEOL(pkg, was string) (resolution, installed string
 		return ResolutionFixed, cur
 	}
 	return ResolutionNoLongerAffects, cur
+}
+
+// ClassifyRepo says why a repository-health finding for the repository with
+// this id is no longer confirmed: the host still has the repository enabled
+// and it now passes (fixed), or it no longer has it enabled (no longer
+// affected: the repository was removed or disabled). A nil inventory, or one
+// without repository evidence, cannot say.
+func (inv *Inventory) ClassifyRepo(id string) (resolution, installed string) {
+	if inv == nil || inv.Repos == nil {
+		return ResolutionUnknown, ""
+	}
+	if inv.Repos[id] {
+		return ResolutionFixed, ""
+	}
+	return ResolutionNoLongerAffects, ""
+}
+
+// repoArgs is the repository-detail column of the upsert for finding f: NULL
+// for any other kind.
+func repoArgs(f vuln.Finding) any {
+	if f.Repo == nil {
+		return nil
+	}
+	detail, _ := json.Marshal(f.Repo)
+	return detail
 }
 
 // eolArgs are the lifecycle columns of the upsert for finding f: empty for any
@@ -432,11 +465,12 @@ func recordFindingsTx(ctx context.Context, tx pgx.Tx, deviceID string, res vuln.
 			f.Package, f.SourcePackage, f.Installed, f.Fixed, f.FixState, f.CVE, normSeverity(f.Severity), f.Summary,
 			f.KEV, f.EPSS, f.CVSS, f.Reason, f.UpstreamFixedOn,
 		}, eolArgs(f)...)
+		args = append(args, repoArgs(f))
 		if _, err := tx.Exec(ctx, upsertFindingSQL, args...); err != nil {
 			return fmt.Errorf("record finding %s: %w", f.AdvisoryID, err)
 		}
 	}
-	if err := closeStaleFindings(ctx, tx, deviceID, start, inv); err != nil {
+	if err := closeStaleFindings(ctx, tx, deviceID, start, inv, res.RepoHealthAssessed); err != nil {
 		return fmt.Errorf("close stale findings: %w", err)
 	}
 	return nil
@@ -444,8 +478,12 @@ func recordFindingsTx(ctx context.Context, tx pgx.Tx, deviceID string, res vuln.
 
 // closeStaleFindings closes every open finding of the host that the run did not
 // confirm, recording why when the inventory is known.
-func closeStaleFindings(ctx context.Context, tx pgx.Tx, deviceID string, start time.Time, inv *Inventory) error {
-	rows, err := tx.Query(ctx, staleFindingsSQL, deviceID, start)
+//
+// Repository-health findings are closed only when the run actually assessed the
+// host's repositories (repoAssessed): an agent that sent no repository report
+// leaves them open, because missing evidence is not a repaired repository.
+func closeStaleFindings(ctx context.Context, tx pgx.Tx, deviceID string, start time.Time, inv *Inventory, repoAssessed bool) error {
+	rows, err := tx.Query(ctx, staleFindingsSQL, deviceID, start, repoAssessed)
 	if err != nil {
 		return err
 	}
@@ -453,13 +491,15 @@ func closeStaleFindings(ctx context.Context, tx pgx.Tx, deviceID string, start t
 	var resolutions, installed []string
 	for rows.Next() {
 		var id int64
-		var kind, pkg, was, fixed string
-		if err := rows.Scan(&id, &kind, &pkg, &was, &fixed); err != nil {
+		var kind, pkg, was, fixed, family string
+		if err := rows.Scan(&id, &kind, &pkg, &was, &fixed, &family); err != nil {
 			rows.Close()
 			return err
 		}
 		var r, v string
-		if kind == string(vuln.KindEOL) {
+		if kind == string(vuln.KindRepoHealth) {
+			r, v = inv.ClassifyRepo(family)
+		} else if kind == string(vuln.KindEOL) {
 			r, v = inv.ClassifyEOL(pkg, was)
 		} else {
 			r, v = inv.Classify(pkg, fixed)
@@ -511,7 +551,7 @@ func (s *Store) ListFindings(ctx context.Context, f FindingFilter) ([]VulnFindin
 		WHERE ($1 = '' OR f.device_id = $1)
 		  AND ($2 = '' OR f.kind = $2)
 		  AND ($3 OR f.resolved_at IS NULL)
-		ORDER BY array_position(ARRAY['finding','eol','awaiting_vendor','unfixed','informational'], f.kind), f.kev DESC,
+		ORDER BY array_position(ARRAY['finding','eol','repo_health','awaiting_vendor','unfixed','informational'], f.kind), f.kev DESC,
 		         array_position(ARRAY['critical','high','medium','low','unknown'], f.severity),
 		         f.epss DESC NULLS LAST, f.cvss_score DESC NULLS LAST, f.device_id, f.advisory_id, f.family
 		LIMIT $4`, f.DeviceID, f.Kind, f.IncludeResolved, f.Limit)
@@ -543,12 +583,12 @@ var ErrNoFinding = errors.New("finding not found")
 
 func scanFinding(row pgx.Row) (VulnFinding, error) {
 	var v VulnFinding
-	var detail []byte
+	var detail, repoDetail []byte
 	if err := row.Scan(&v.ID, &v.DeviceID, &v.Hostname, &v.AdvisoryID, &v.CVE, &v.Family, &v.RangeID, &v.SnapshotID,
 		&v.Feed, &v.FeedDate, &v.Kind, &v.Basis, &v.Package, &v.SourcePackage, &v.Installed, &v.Fixed,
 		&v.FixState, &v.Severity, &v.Summary, &v.KEV, &v.EPSS, &v.CVSS, &v.Reason,
 		&v.FirstSeen, &v.LastSeen, &v.ResolvedAt, &v.Resolution, &v.ResolvedInstalled, &v.UpstreamFixedOn,
-		&v.Origin, &v.OriginRepo, &detail); err != nil {
+		&v.Origin, &v.OriginRepo, &detail, &repoDetail); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return VulnFinding{}, ErrNoFinding
 		}
@@ -560,8 +600,17 @@ func scanFinding(row pgx.Row) (VulnFinding, error) {
 			v.EOL = &d
 		}
 	}
-	if v.Kind == string(vuln.KindEOL) {
+	if len(repoDetail) > 0 {
+		var d vuln.RepoDetail
+		if err := json.Unmarshal(repoDetail, &d); err == nil {
+			v.Repo = &d
+		}
+	}
+	switch v.Kind {
+	case string(vuln.KindEOL):
 		v.Controls = controls.Tag(controls.SignalSoftwareSupported)
+	case string(vuln.KindRepoHealth):
+		v.Controls = controls.Tag(controls.SignalRepoHealth)
 	}
 	v.Key = FindingKey(v.DeviceID, v.AdvisoryID, v.Family)
 	return v, nil
@@ -658,14 +707,14 @@ const findingsSummarySQL = `
 	FROM host_vuln_state s
 	LEFT JOIN (
 	  SELECT f.device_id,
-	         count(*) FILTER (WHERE f.kind IN ('finding', 'eol')) AS open,
+	         count(*) FILTER (WHERE f.kind IN ('finding', 'eol', 'repo_health')) AS open,
 	         count(*) FILTER (WHERE f.kind = 'finding' AND f.kev) AS kev,
 	         count(*) FILTER (WHERE f.kind = 'unfixed') AS unfixed,
 	         count(*) FILTER (WHERE f.kind = 'informational') AS info,
 	         count(*) FILTER (WHERE f.kind = 'awaiting_vendor') AS awaiting,
 	         count(*) FILTER (WHERE f.kind = 'awaiting_vendor' AND f.kev) AS kev_awaiting,
 	         (array_agg(f.device_id || ':' || f.advisory_id || ':' || lower(f.family) ORDER BY f.advisory_id)
-	            FILTER (WHERE (f.kind IN ('finding', 'eol') AND (f.kev OR f.severity IN ('critical', 'high')))
+	            FILTER (WHERE (f.kind IN ('finding', 'eol', 'repo_health') AND (f.kev OR f.severity IN ('critical', 'high')))
 	                       OR (f.kind = 'awaiting_vendor' AND f.kev)))[1:` + "200" + `] AS keys
 	  FROM vuln_findings f WHERE f.resolved_at IS NULL GROUP BY f.device_id
 	) a ON a.device_id = s.device_id

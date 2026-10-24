@@ -15,7 +15,7 @@ import (
 	"defendsec/internal/autotask"
 )
 
-// Autotask storage (migration 029): the settings of the one company an instance
+// Autotask storage (migration 030): the settings of the one company an instance
 // maps to, the tickets DefendSec follows (the idempotency record), and the runs.
 // Every ticket action is an audit-chain entry written in the transaction that
 // changes the row it describes.

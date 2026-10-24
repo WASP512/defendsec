@@ -115,7 +115,7 @@ func newRig(t *testing.T) *rig {
 
 func (r *rig) desk() *client.Client {
 	cfg := client.Config{BaseURL: r.srv.BaseURL(), UserName: atest.User, Secret: atest.Secret, IntegrationCode: atest.IntegrationCode,
-		Sleep: func(context.Context, time.Duration) error { return nil }}
+		Sleep: func(context.Context, time.Duration) error { return nil }, AllowAnyHost: true}
 	if r.cfg != nil {
 		r.cfg(&cfg)
 	}

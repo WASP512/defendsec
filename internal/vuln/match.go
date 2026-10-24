@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"defendsec/internal/lifecycle"
+	"defendsec/internal/repohealth"
 )
 
 // Distro-aware matching.
@@ -57,6 +58,13 @@ const (
 	// to the fix bucket beside KindFinding. Software from the host's own
 	// distribution never gets one: it follows the distribution's lifecycle.
 	KindEOL Kind = "eol"
+	// KindRepoHealth: an enabled package repository whose signing key has
+	// expired or is missing, or whose index has stopped refreshing. Updates from
+	// that repository have silently stopped, so the host's pending updates
+	// cannot be believed and nothing it publishes is being matched. It belongs
+	// to the fix bucket: the remedy is to install the vendor's current key (or
+	// refresh the index) and is work for this week. See internal/repohealth.
+	KindRepoHealth Kind = "repo_health"
 )
 
 // Basis says which kind of range produced a finding.
@@ -68,6 +76,9 @@ const (
 	// BasisLifecycle: the finding comes from a release calendar
 	// (endoflife.date), not from an advisory range.
 	BasisLifecycle Basis = "lifecycle"
+	// BasisHost: the finding comes from what the host reports about its own
+	// configuration (its repositories), not from an advisory or a calendar.
+	BasisHost Basis = "host"
 )
 
 // Coverage says whether the feeds could have said anything about this host. A
@@ -115,6 +126,11 @@ type Host struct {
 	// AsOf is the calendar day application end-of-life is judged on; the zero
 	// value means today. It exists so a run can be reproduced.
 	AsOf time.Time
+	// RepoHealth is what the agent read about the host's package repositories
+	// (nil from an agent that does not report it), and StaleAfter is how old an
+	// index may be before it is a finding (0 means the default, 7 days).
+	RepoHealth *repohealth.Report
+	StaleAfter time.Duration
 }
 
 // Candidate is one advisory range with the advisory and feed context a finding
@@ -184,6 +200,8 @@ type Finding struct {
 	UpstreamFixedOn string
 	// EOL is set on findings of kind KindEOL.
 	EOL *EOLDetail
+	// Repo is set on findings of kind KindRepoHealth.
+	Repo *RepoDetail
 }
 
 // EOLDetail is what an end-of-life finding says beyond the fields every
@@ -239,15 +257,24 @@ type Stats struct {
 	EOLOriginUnknown int
 	EOLNoRelease     int
 	EOLSupported     int
+	// RepoHealthChecked is the number of repositories the host reported and
+	// RepoHealthFindings how many of them have a problem. Zero checked with no
+	// report means "not assessed", never "healthy".
+	RepoHealthChecked  int
+	RepoHealthFindings int
 }
 
 // Result is the outcome for one host.
 type Result struct {
-	Distro   string // normalised (feed vocabulary)
-	Release  string
-	Coverage Coverage
-	Findings []Finding
-	Stats    Stats
+	// RepoHealthAssessed is true when the host reported repository evidence and
+	// it was judged (even if every repository is healthy). False means the
+	// host said nothing, and open repository findings must stay open.
+	RepoHealthAssessed bool
+	Distro             string // normalised (feed vocabulary)
+	Release            string
+	Coverage           Coverage
+	Findings           []Finding
+	Stats              Stats
 }
 
 // Open returns the findings of kind KindFinding: what has a fix to install.
@@ -538,6 +565,10 @@ func Match(ctx context.Context, src RangeSource, h Host) (Result, error) {
 		}
 	}
 
+	// Repository health: independent of the distribution's feeds, and judged
+	// even for a host no feed covers.
+	assessRepoHealth(h, &res)
+
 	res.Stats.Advisories = len(advSeen)
 	for _, f := range merged {
 		res.Findings = append(res.Findings, f)
@@ -600,6 +631,8 @@ func kindRank(k Kind) int {
 	case KindFinding:
 		return 0
 	case KindEOL:
+		return 1
+	case KindRepoHealth:
 		return 1
 	case KindAwaitingVendor:
 		return 2

@@ -637,7 +637,14 @@ func fail(op *Op, err error) (fatal string) {
 	op.Status = OpFailed
 	op.Error = errText(err)
 	if client.IsAmbiguous(err) {
-		op.Reason = "It may have been carried out; the next run checks before doing it again."
+		// A ticket is looked up by its tag before any create, so a lost answer on a
+		// create is safe. A note has no tag to look up: if its answer was lost and
+		// the same news is still open next run, the note may be added a second time.
+		if op.Kind == OpNote {
+			op.Reason = "It may have been carried out. A note is not looked up again, so the next run may add it a second time."
+		} else {
+			op.Reason = "It may have been carried out; the next run checks before doing it again."
+		}
 	}
 	if client.IsFatal(err) {
 		return op.Error

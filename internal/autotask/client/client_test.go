@@ -27,7 +27,7 @@ func (s *sleeper) Sleep(ctx context.Context, d time.Duration) error {
 func newClient(t *testing.T, srv *atest.Server, mod func(*client.Config)) (*client.Client, *sleeper) {
 	t.Helper()
 	sl := &sleeper{}
-	cfg := client.Config{BaseURL: srv.BaseURL(), UserName: atest.User, Secret: atest.Secret, IntegrationCode: atest.IntegrationCode, Sleep: sl.Sleep}
+	cfg := client.Config{BaseURL: srv.BaseURL(), UserName: atest.User, Secret: atest.Secret, IntegrationCode: atest.IntegrationCode, Sleep: sl.Sleep, AllowAnyHost: true}
 	if mod != nil {
 		mod(&cfg)
 	}
@@ -291,7 +291,7 @@ func TestLostAnswerLeavesATicketTheTagFinds(t *testing.T) {
 func TestAuthFailureIsFatalAndNeverEchoesTheSecret(t *testing.T) {
 	srv := newServer(t)
 	sl := &sleeper{}
-	c, err := client.New(client.Config{BaseURL: srv.BaseURL(), UserName: atest.User, Secret: "the-wrong-secret-value", IntegrationCode: atest.IntegrationCode, Sleep: sl.Sleep})
+	c, err := client.New(client.Config{BaseURL: srv.BaseURL(), UserName: atest.User, Secret: "the-wrong-secret-value", IntegrationCode: atest.IntegrationCode, Sleep: sl.Sleep, AllowAnyHost: true})
 	if err != nil {
 		t.Fatal(err)
 	}

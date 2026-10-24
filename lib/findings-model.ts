@@ -5,6 +5,7 @@
 // stores the result. This file holds the wire types and the pure helpers the
 // pages share; it imports nothing from the app, so `node --test` can run it.
 
+import { repoFixPhrase } from "./patch-reliability.ts";
 import type { FindingStatus, FindingTriage } from "./types.ts";
 
 /** finding: a fix is available (fixable). eol: software from outside the
@@ -12,8 +13,11 @@ import type { FindingStatus, FindingTriage } from "./types.ts";
  *  so it is work for this week like a patch. awaiting_vendor: fixed upstream by
  *  Red Hat but not yet released by the rebuild the host runs (Rocky, AlmaLinux),
  *  so there is nothing to install yet. unfixed: affected, no fix published.
- *  informational: the distro will not fix it, or is still investigating. */
-export type FindingKind = "finding" | "eol" | "awaiting_vendor" | "unfixed" | "informational";
+ *  informational: the distro will not fix it, or is still investigating.
+ *  repo_health: a package repository on the host whose signing key has expired
+ *  or is missing, or whose index has gone stale: updates from it have stopped,
+ *  so it is work for this week and the host's pending updates are unreliable. */
+export type FindingKind = "finding" | "eol" | "repo_health" | "awaiting_vendor" | "unfixed" | "informational";
 
 /** What an end-of-life finding says: the release past support, where its
  *  packages came from, and what to upgrade to. */
@@ -38,6 +42,28 @@ export type EolDetail = {
   link?: string;
 };
 
+/** What a repository-health finding says: the repository, every problem, the evidence dates and the fix. */
+export type RepoDetail = {
+  repoId: string;
+  label: string;
+  uri?: string;
+  suite?: string;
+  manager: string;
+  source?: string;
+  signature: string;
+  keyId?: string;
+  signedBy?: string;
+  problems: { code: string; severity: "high" | "medium"; title: string; detail: string }[];
+  releaseDate?: string;
+  validUntil?: string;
+  metadataTime?: string;
+  keyExpires?: string;
+  lastRefresh?: string;
+  lastRefreshSource?: string;
+  staleAfterDays: number;
+  fix: string;
+};
+
 export type FindingSeverity = "critical" | "high" | "medium" | "low" | "unknown";
 
 /** What each finding was computed from: advisory, range, snapshot, feed. */
@@ -55,7 +81,7 @@ export type VulnFinding = {
   feed: string;
   feedDate: string | null;
   kind: FindingKind;
-  basis: "distro" | "upstream" | "lifecycle";
+  basis: "distro" | "upstream" | "lifecycle" | "host";
   package: string;
   sourcePackage: string;
   installed: string;
@@ -74,6 +100,8 @@ export type VulnFinding = {
   origin?: string;
   originRepo?: string;
   eol?: EolDetail | null;
+  /** Repository-health findings only. */
+  repo?: RepoDetail | null;
   controls?: string[];
 };
 
@@ -263,6 +291,7 @@ export function originLabel(f: { origin?: string; originRepo?: string }): string
 /** "fixed in 1:8.9p1-3ubuntu0.10" / "no fix published". */
 export function fixLabel(f: Pick<VulnFinding, "fixed" | "kind" | "fixState"> & { eol?: EolDetail | null }): string {
   if (f.kind === "eol" && f.eol) return upgradeLabel(f.eol);
+  if (f.kind === "repo_health") return repoFixPhrase(f.fixState);
   if (f.kind === "awaiting_vendor") return `fixed upstream in ${f.fixed}, not yet released for this distribution`;
   if (f.fixed) return `fixed in ${f.fixed}`;
   if (f.fixState === "will_not_fix") return "the distro will not fix this";
