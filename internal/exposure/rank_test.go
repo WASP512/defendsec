@@ -28,7 +28,6 @@ func TestCompareOrder(t *testing.T) {
 		{AdvisoryID: "epss-mid-cvss-critical", EPSS: f(0.30), CVSS: f(9.9), Severity: "critical"},
 		{AdvisoryID: "no-epss-cvss-9", CVSS: f(9.0)},
 		{AdvisoryID: "no-epss-cvss-6", CVSS: f(6.0)},
-		{AdvisoryID: "no-scores-critical", Severity: "critical"},
 		{AdvisoryID: "no-scores-low", Severity: "low"},
 		{AdvisoryID: "no-scores-unknown"},
 	}
@@ -101,4 +100,77 @@ func ids(items []Item) []string {
 		out = append(out, it.AdvisoryID)
 	}
 	return out
+}
+
+// Surface findings join the same order (slice 7b): KEV vulnerabilities first,
+// then critical and high surface findings, then everything else by EPSS, CVSS
+// and severity, with a medium surface finding among the medium vulnerabilities.
+func TestSurfaceFindingsJoinTheOrder(t *testing.T) {
+	sf := func(id, sev string) Item {
+		return Item{AdvisoryID: SurfaceKeyPrefix + id, Severity: sev, Surface: true}
+	}
+	want := []Item{
+		{AdvisoryID: "kev", KEV: true, KEVAdded: d("2021-01-01"), EPSS: f(0.001), CVSS: f(1)},
+		sf("000000000002", "critical"), // SMB reachable, expired certificate, SPF +all; lower id (older) first
+		sf("000000000007", "critical"),
+		sf("000000000001", "high"), // RDP, a database port, DMARC missing
+		sf("000000000009", "high"),
+		{AdvisoryID: "epss-0.9", EPSS: f(0.9), CVSS: f(2)}, // a non-KEV CVE with a high EPSS ranks below an exposed port
+		{AdvisoryID: "epss-0.003", EPSS: f(0.003), CVSS: f(9.8), Severity: "critical"},
+		{AdvisoryID: "cvss-only-9.8", CVSS: f(9.8), Severity: "critical"},
+		{AdvisoryID: "cvss-only-7.5", CVSS: f(7.5), Severity: "high"},
+		sf("000000000003", "medium"), // DMARC p=none: with the medium vulnerabilities (5.0)
+		{AdvisoryID: "cvss-only-4.3", CVSS: f(4.3), Severity: "medium"},
+		sf("000000000004", "low"), // 2.0
+		{AdvisoryID: "cvss-only-1.0", CVSS: f(1.0), Severity: "low"},
+		{AdvisoryID: "no-scores-critical", Severity: "critical"}, // no score at all ranks after every scored row
+	}
+	got := append([]Item(nil), want...)
+	for i := range got {
+		j := (i*5 + 2) % len(got)
+		got[i], got[j] = got[j], got[i]
+	}
+	sort.Slice(got, func(i, j int) bool { return Compare(got[i], got[j]) < 0 })
+	for i := range want {
+		if got[i].AdvisoryID != want[i].AdvisoryID {
+			t.Fatalf("position %d = %s, want %s\nfull order: %v", i, got[i].AdvisoryID, want[i].AdvisoryID, ids(got))
+		}
+	}
+}
+
+func TestSurfaceIgnoresVulnerabilityFields(t *testing.T) {
+	// A surface item never reads KEV, EPSS or CVSS, whatever a caller put in them.
+	odd := Item{AdvisoryID: "surface:000000000001", Severity: "medium", Surface: true, KEV: true, EPSS: f(0.99), CVSS: f(10)}
+	vuln := Item{AdvisoryID: "v", EPSS: f(0.01), CVSS: f(1)}
+	if Compare(odd, vuln) <= 0 {
+		t.Fatal("a medium surface finding must rank after a vulnerability that has an EPSS score")
+	}
+	if Band(odd) != BandRest {
+		t.Fatalf("a medium surface finding is in band %d, want %d", Band(odd), BandRest)
+	}
+}
+
+func TestKEVStillBeatsAnUrgentSurfaceFinding(t *testing.T) {
+	kev := Item{AdvisoryID: "z", KEV: true, KEVAdded: d("2019-01-01"), EPSS: f(0.001), CVSS: f(1)}
+	smb := Item{AdvisoryID: "surface:000000000001", Severity: "critical", Surface: true}
+	if Compare(kev, smb) >= 0 || Compare(smb, kev) <= 0 {
+		t.Fatal("an exploited-in-the-wild vulnerability must rank above an exposed port")
+	}
+}
+
+func TestSurfaceScoreRanksEveryRankedSeverityAndNotInfo(t *testing.T) {
+	prev := 100.0
+	for _, sev := range []string{"critical", "high", "medium", "low"} {
+		s, ok := SurfaceScore(sev)
+		if !ok || s >= prev {
+			t.Fatalf("%s: score %v ok=%v, want a ranked score below %v", sev, s, ok, prev)
+		}
+		prev = s
+	}
+	if _, ok := SurfaceScore("info"); ok {
+		t.Fatal("info is an observation and must never rank")
+	}
+	if _, ok := SurfaceScore(""); ok {
+		t.Fatal("an empty severity must never rank")
+	}
 }

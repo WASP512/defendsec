@@ -515,6 +515,7 @@ func (s *Server) HandleSurfaceScan(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				res.Status, res.Reason = "failed", err.Error()
 				s.log.Warn("surface scan", "err", err, "asset", a.Value)
+				s.auditSurfaceScanFailed(actor, a, "manual", err)
 			}
 			res.Summary = sum
 			done[a.ID] = res
@@ -541,6 +542,18 @@ func (s *Server) HandleSurfaceScan(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"scans": results})
+}
+
+// auditSurfaceScanFailed writes a failed scan to the ledger. A scan that could
+// not be recorded leaves no scan row, so without this entry a failing schedule is
+// silent: nothing would show that an asset has gone unscanned. The error is cut
+// short, since it can carry a resolver's own wording.
+func (s *Server) auditSurfaceScanFailed(actor string, a storepg.SurfaceAsset, trigger string, err error) {
+	msg := err.Error()
+	if len(msg) > 200 {
+		msg = msg[:200]
+	}
+	s.audit(actor, "surface_scan_failed", "", map[string]any{"assetId": a.ID, "value": a.Value, "trigger": trigger, "error": msg})
 }
 
 // RunSurfaceSchedule scans every confirmed asset that has not been scanned
@@ -583,6 +596,7 @@ func (s *Server) scanDueSurfaceAssets(ctx context.Context) int {
 		s.releaseSurfaceScan(a.ID)
 		if err != nil {
 			s.log.Warn("scheduled surface scan", "err", err, "asset", a.Value)
+			s.auditSurfaceScanFailed("system:surface-schedule", a, "schedule", err)
 			continue
 		}
 		n++

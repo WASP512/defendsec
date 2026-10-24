@@ -199,7 +199,9 @@ func TestSurfaceFindingBookkeeping(t *testing.T) {
 		t.Fatalf("last_seen must stay at the last real confirmation: %+v", open)
 	}
 
-	// Scan 4: SPF comes back. The row is reopened, first_seen is kept.
+	// Scan 4: SPF comes back. The row is reopened and first_seen restarts (slice
+	// 7b): the interval that ended is kept in surface_finding_intervals, so the
+	// days it was closed are not counted as open.
 	t3 := t2.Add(24 * time.Hour)
 	sum, err = s.RecordSurfaceScan(ctx, a.ID, "manual", report(a, t3,
 		result("spf", true, "", finding("spf", "spf.softfail", "d", surface.SevLow))))
@@ -211,9 +213,18 @@ func TestSurfaceFindingBookkeeping(t *testing.T) {
 	}
 	all, _ = s.ListSurfaceFindings(ctx, SurfaceFindingFilter{AssetID: a.ID, IncludeResolved: true})
 	for _, f := range all {
-		if f.FindingID == "spf.softfail" && (f.ResolvedAt != nil || !f.FirstSeen.Equal(t0) || !f.LastSeen.Equal(t3)) {
+		if f.FindingID == "spf.softfail" && (f.ResolvedAt != nil || !f.FirstSeen.Equal(t3) || !f.LastSeen.Equal(t3)) {
 			t.Fatalf("reopened finding: %+v", f)
 		}
+	}
+	var closedFrom, closedTo time.Time
+	var nIntervals int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*), min(opened_at), min(closed_at) FROM surface_finding_intervals
+		WHERE asset_id = $1 AND finding_id = 'spf.softfail'`, a.ID).Scan(&nIntervals, &closedFrom, &closedTo); err != nil {
+		t.Fatal(err)
+	}
+	if nIntervals != 1 || !closedFrom.Equal(t0) || !closedTo.Equal(t1) {
+		t.Fatalf("the interval that ended must be kept: %d %v %v", nIntervals, closedFrom, closedTo)
 	}
 	if len(all) != 2 {
 		t.Fatalf("no duplicate rows: %d", len(all))

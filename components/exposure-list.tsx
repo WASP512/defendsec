@@ -12,6 +12,7 @@ import {
   fixedLabel,
   hostsLabel,
   isRanked,
+  isSurfaceRow,
   nextHref,
   pageNumber,
   prevHref,
@@ -21,6 +22,7 @@ import {
   type ExposurePageResponse,
   type Rankable,
 } from "@/lib/exposure-model";
+import { surfaceWhere, unconfirmedNote } from "@/lib/surface-exposure";
 import { cn } from "@/lib/utils";
 
 /** The ranking line: why this row is where it is. KEV rows are marked red. */
@@ -105,16 +107,49 @@ export function ExposureList({ query, page }: { query: ExposureListQuery; page: 
           }
           description={
             resolved
-              ? "A finding appears here after the host's inventory shows the fix, or the package is gone."
+              ? "A finding appears here after the host's inventory shows the fix, or the package is gone, or after a later scan no longer sees an external finding."
               : watch
                 ? "No assessed host has a vulnerability that is waiting on a vendor fix."
-                : "No assessed host has a vulnerability with a fix to install. Hosts that are not assessed are counted above: an empty list says nothing about them."
+                : "No assessed host has a vulnerability with a fix to install and no external surface finding is open. Hosts that are not assessed, and assets that have not been scanned, are counted elsewhere on the page: an empty list says nothing about them."
           }
           icon={ShieldCheck}
         />
       ) : (
         <ol className="space-y-2">
-          {page.findings.map((g, i) => (
+          {page.findings.map((g, i) =>
+            isSurfaceRow(g) ? (
+              <li
+                key={g.advisoryId}
+                data-advisory={g.advisoryId}
+                data-source="surface"
+                className="flex gap-4 rounded-xl border bg-card p-4"
+              >
+                <div className="w-8 shrink-0 pt-0.5 text-right text-sm font-medium tabular-nums text-muted-foreground">
+                  {first + i + 1}
+                </div>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      href={drawerHref(query, g.advisoryId)}
+                      scroll={false}
+                      className="font-medium underline-offset-2 hover:underline"
+                    >
+                      {g.summary}
+                    </Link>
+                    <SeverityBadge severity={g.severity} />
+                    <Badge variant="outline">external surface</Badge>
+                    <Badge variant="outline">{resolved ? "resolved" : "open"}</Badge>
+                  </div>
+                  <WhyRanksHere group={g} />
+                  <p className="text-sm">{surfaceWhere(g)}</p>
+                  {g.surface?.detail ? <p className="text-sm text-muted-foreground">{g.surface.detail}</p> : null}
+                  {!resolved && unconfirmedNote(g) ? (
+                    <p className="text-xs text-amber-700 dark:text-amber-400">{unconfirmedNote(g)}</p>
+                  ) : null}
+                  <p className="text-xs text-muted-foreground">{ageLabel(g.firstSeen, resolved ? g.resolvedAt : null)}</p>
+                </div>
+              </li>
+            ) : (
             <li
               key={g.advisoryId}
               data-advisory={g.advisoryId}
@@ -158,15 +193,16 @@ export function ExposureList({ query, page }: { query: ExposureListQuery; page: 
                 </p>
               </div>
             </li>
-          ))}
+            ),
+          )}
         </ol>
       )}
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>
           {page.total === 0
-            ? "0 advisories"
-            : `${first + 1}–${first + page.findings.length} of ${page.total} ${page.total === 1 ? "advisory" : "advisories"}`}
+            ? "0 items"
+            : `${first + 1}–${first + page.findings.length} of ${page.total} ${page.total === 1 ? "item" : "items"}`}
         </span>
         <div className="flex items-center gap-2">
           {prev ? (

@@ -19,6 +19,9 @@ import {
   parseExposureQuery,
   parseTrendQuery,
   prevHref,
+  rankBand,
+  SURFACE_SCORE,
+  surfaceChart,
   rankReason,
   resolutionLabel,
   trendApiPath,
@@ -349,4 +352,82 @@ test("ExposureGroup rows from the wire satisfy Rankable", () => {
     fixed: ["2"], firstSeen: "2026-10-01T00:00:00Z", resolvedAt: null, awaitingSince: null,
   };
   assert.equal(isRanked([g]), true);
+});
+
+// ---- surface findings in the same order (slice 7b) -------------------------------------------------
+// The same cases as TestSurfaceFindingsJoinTheOrder in internal/exposure: the console and the control
+// plane must state one rule.
+
+function surfaceRow(id: string, severity: Rankable["severity"]): Rankable {
+  return { advisoryId: `surface:${id}`, severity, kev: false, kevAdded: null, epss: null, cvss: null, source: "surface" };
+}
+
+test("surface findings join the order: KEV, then critical and high surface, then EPSS, CVSS and severity", () => {
+  const want: Rankable[] = [
+    row("kev", { kev: true, kevAdded: "2021-01-01", epss: 0.001, cvss: 1 }),
+    surfaceRow("000000000002", "critical"), // SMB reachable, an expired certificate, SPF +all: the older finding first
+    surfaceRow("000000000007", "critical"),
+    surfaceRow("000000000001", "high"), // RDP, a database port, DMARC missing
+    surfaceRow("000000000009", "high"),
+    row("epss-0.9", { epss: 0.9, cvss: 2 }), // a non-KEV CVE with a high EPSS ranks below an exposed port
+    row("epss-0.003", { epss: 0.003, cvss: 9.8, severity: "critical" }),
+    row("cvss-only-9.8", { cvss: 9.8, severity: "critical" }),
+    row("cvss-only-7.5", { cvss: 7.5, severity: "high" }),
+    surfaceRow("000000000003", "medium"), // DMARC p=none sits with the medium vulnerabilities
+    row("cvss-only-4.3", { cvss: 4.3, severity: "medium" }),
+    surfaceRow("000000000004", "low"),
+    row("cvss-only-1.0", { cvss: 1.0, severity: "low" }),
+    row("no-scores-critical", { severity: "critical" }),
+  ];
+  const shuffled = want.map((_, i) => want[(i * 5 + 2) % want.length]);
+  assert.equal(new Set(shuffled.map((r) => r.advisoryId)).size, want.length);
+  assert.deepEqual(sorted(shuffled), want.map((r) => r.advisoryId));
+});
+
+test("a surface row ignores any KEV, EPSS or CVSS it was handed, and KEV still beats an exposed port", () => {
+  const odd: Rankable = { ...surfaceRow("000000000001", "medium"), kev: true, epss: 0.99, cvss: 10 };
+  assert.equal(rankBand(odd), 2);
+  assert.ok(compareRank(odd, row("v", { epss: 0.01, cvss: 1 })) > 0, "after a vulnerability that has an EPSS score");
+  const kev = row("z", { kev: true, kevAdded: "2019-01-01", epss: 0.001, cvss: 1 });
+  assert.ok(compareRank(kev, surfaceRow("000000000001", "critical")) < 0);
+  assert.ok(compareRank(surfaceRow("000000000001", "critical"), kev) > 0);
+});
+
+test("isRanked accepts a mixed page in rank order and refuses one out of order", () => {
+  const page = [row("kev", { kev: true, kevAdded: "2026-01-01" }), surfaceRow("000000000001", "high"), row("v", { epss: 0.5 })];
+  assert.equal(isRanked(page), true);
+  assert.equal(isRanked([page[1], page[0], page[2]]), false);
+  assert.equal(isRanked([page[0], page[2], page[1]]), false, "a high surface finding is not below a non-KEV vulnerability");
+});
+
+test("the SURFACE_SCORE table matches the control plane's", () => {
+  assert.deepEqual(SURFACE_SCORE, { critical: 9.5, high: 8.0, medium: 5.0, low: 2.0 });
+});
+
+test("the reason a surface row ranks where it does is never a CVSS or EPSS number", () => {
+  const urgent = rankReason(surfaceRow("000000000001", "critical"));
+  assert.match(urgent.headline, /Live for anyone on the internet/);
+  assert.deepEqual(urgent.details, ["critical severity", "ranks after exploited vulnerabilities and before every other vulnerability"]);
+  const rest = rankReason(surfaceRow("000000000002", "medium"));
+  assert.equal(rest.headline, "No exploitation signal (external surface finding)");
+  assert.match(rest.text, /ranked by severity medium/);
+  for (const r of [urgent, rest]) assert.doesNotMatch(r.text, /CVSS|EPSS \d/);
+});
+
+test("the surface series is a chart of its own, on its own scale, with no bar for a day before the first scan", () => {
+  const points = [
+    { day: "2026-10-01", known: true, open: 1, kev: 0, watch: 0, surface: 0, surfaceHigh: 0, surfaceKnown: false },
+    { day: "2026-10-02", known: true, open: 1, kev: 0, watch: 0, surface: 4, surfaceHigh: 1, surfaceKnown: true },
+    { day: "2026-10-03", known: true, open: 1, kev: 0, watch: 0, surface: 2, surfaceHigh: 0, surfaceKnown: true },
+  ];
+  // Hundreds of vulnerabilities must not flatten a handful of surface findings.
+  assert.equal(trendChart(points, 300, 100).max, 1, "the vulnerability scale ignores the surface series");
+  const chart = surfaceChart(points, 300, 100);
+  assert.equal(chart.max, 4);
+  assert.deepEqual(chart.bars.map((b) => [b.known, b.surface, b.high]), [[false, 0, 0], [true, 4, 1], [true, 2, 0]]);
+  assert.deepEqual(chart.bars.map((b) => b.height), [0, 100, 50]);
+  assert.equal(chart.bars[1].highHeight, 25);
+  // An older control plane sends no surface series at all: nothing is drawn as a measurement.
+  const old = surfaceChart([{ day: "2026-10-01", known: true, open: 3, kev: 0, watch: 0 }], 100, 100);
+  assert.deepEqual(old.bars.map((b) => [b.known, b.height]), [[false, 0]]);
 });

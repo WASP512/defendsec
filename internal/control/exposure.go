@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"defendsec/internal/exposure"
 	"defendsec/internal/storepg"
 )
 
@@ -74,7 +75,7 @@ func (s *Server) HandleExposure(w http.ResponseWriter, r *http.Request) {
 // exposureError answers a store error: validation problems are the caller's
 // (400), anything else is ours and is logged.
 func (s *Server) exposureError(w http.ResponseWriter, what string, err error) {
-	if errors.Is(err, storepg.ErrBadExposureQuery) || errors.Is(err, storepg.ErrBadCursor) || errors.Is(err, storepg.ErrBadTrendWindow) {
+	if errors.Is(err, storepg.ErrBadExposureQuery) || errors.Is(err, storepg.ErrBadCursor) || errors.Is(err, storepg.ErrBadTrendWindow) || errors.Is(err, storepg.ErrBadSurfaceKey) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -168,8 +169,11 @@ func (s *Server) exposureFindings(w http.ResponseWriter, r *http.Request) {
 
 type exposureAdvisoryResponse struct {
 	AdvisoryID string `json:"advisoryId"`
-	Bucket     string `json:"bucket"`
-	Status     string `json:"status"`
+	// Source is storepg.SourceVulnerability; a surface row's drawer answers
+	// with exposureSurfaceResponse and source "surface".
+	Source string `json:"source"`
+	Bucket string `json:"bucket"`
+	Status string `json:"status"`
 	// Advisory is the vulnerability record; nil if it has been removed.
 	Advisory *advisoryJSON `json:"advisory"`
 	// Hosts is one row per affected host (and package family): installed vs
@@ -208,9 +212,40 @@ type exposureHostRow struct {
 	ResolvedInstalled string `json:"resolvedInstalled"`
 }
 
+// exposureSurfaceResponse is the drawer of a surface row of the list: the
+// finding, how long it has been open, and the raw observation behind it.
+type exposureSurfaceResponse struct {
+	AdvisoryID string                `json:"advisoryId"`
+	Source     string                `json:"source"`
+	Status     string                `json:"status"`
+	Detail     storepg.SurfaceDetail `json:"detail"`
+}
+
+// exposureSurface serves the drawer of a surface row (id "surface:<12 digits>").
+func (s *Server) exposureSurface(w http.ResponseWriter, r *http.Request, id string) {
+	d, err := s.pg.GetSurfaceDetail(r.Context(), id)
+	if errors.Is(err, storepg.ErrNoSurfaceFinding) {
+		http.Error(w, "no such findings", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		s.exposureError(w, "exposure surface finding", err)
+		return
+	}
+	status := storepg.ExposureOpen
+	if d.Finding.ResolvedAt != nil {
+		status = storepg.ExposureResolved
+	}
+	writeJSON(w, http.StatusOK, exposureSurfaceResponse{AdvisoryID: id, Source: storepg.SourceSurface, Status: status, Detail: d})
+}
+
 func (s *Server) exposureAdvisory(w http.ResponseWriter, r *http.Request) {
 	v := r.URL.Query()
 	bucket, status := v.Get("bucket"), v.Get("status")
+	if id := v.Get("id"); strings.HasPrefix(id, exposure.SurfaceKeyPrefix) {
+		s.exposureSurface(w, r, id)
+		return
+	}
 	d, err := s.pg.GetExposureDetail(r.Context(), v.Get("id"), bucket, status)
 	if err != nil {
 		s.exposureError(w, "exposure advisory", err)
@@ -227,7 +262,7 @@ func (s *Server) exposureAdvisory(w http.ResponseWriter, r *http.Request) {
 		status = storepg.ExposureOpen
 	}
 	resp := exposureAdvisoryResponse{
-		AdvisoryID: d.AdvisoryID, Bucket: bucket, Status: status, Truncated: d.Truncated,
+		AdvisoryID: d.AdvisoryID, Source: storepg.SourceVulnerability, Bucket: bucket, Status: status, Truncated: d.Truncated,
 		Hosts: make([]exposureHostRow, 0, len(d.Findings)), Snapshots: []snapshotJSON{},
 	}
 	if a := d.Advisory; a != nil {
@@ -293,6 +328,7 @@ var exposureTrendCaveats = []string{
 	"A finding is one advisory on one host. Each day counts the findings first seen by the end of that day and not yet closed.",
 	"Days before the first feed snapshot are marked unknown; their zeros mean no data, not a clean fleet.",
 	"A finding whose kind changed (awaiting vendor, then fixable) counts under its current kind for its whole open interval.",
+	"The surface line counts external surface findings (critical, high, medium, low; never info) open at the end of each day, from the first surface scan; days before it are marked unknown. A surface finding that closed and came back counts as closed in between, except for findings reopened before slice 7b, whose closed days were not recorded. A finding's severity is taken from its record at the time it was last open.",
 }
 
 func (s *Server) exposureTrend(w http.ResponseWriter, r *http.Request) {
