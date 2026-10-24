@@ -1,26 +1,20 @@
-// Package forward sends events and alerts to the operator's own log platform
-// (roadmap 3.6).
+// Package forward sends DefendSec's alerts to the operator's own log platform
+// (syslog, CEF, webhook, OTLP, Slack or Teams).
 //
 // # DefendSec is not a SIEM, on purpose
 //
-// A behavioural sensor produces thousands of events a second. Storing them all
-// would make DefendSec a log lake, which is a different product with different
-// economics, a different competitive field, and a storage bill the operator is
-// already paying somewhere else. §2 declines that, and this package is how the
-// decline is made practical rather than merely stated: everything goes to the
-// platform the operator already runs, and DefendSec keeps only a short window
-// for the thing it actually needs it for — context on an alert.
+// What leaves is the alert table: file-integrity drift, configuration-check
+// failures and vulnerability findings. DefendSec does not collect events or
+// logs, so there is no event stream to forward and nothing to store beyond its
+// own findings. A small fleet or an MSP feeds these into the platform it
+// already runs.
 //
-// # Forwarding must never affect detection
+// # Forwarding must never affect the control plane
 //
-// The same rule as the agent buffer, for the same reason. A syslog collector
-// that stops accepting connections must not stop DefendSec matching rules or
-// raising alerts. So the sink is asynchronous and lossy, drops are counted and
-// reported, and a destination that is down is a reported fault rather than an
-// outage.
-//
-// Security function first, telemetry second. A tool that stops defending
-// because its log shipper is unhappy has its priorities backwards.
+// A syslog collector that stops accepting connections must not stop DefendSec
+// processing inventory or raising alerts. So the sink is asynchronous and
+// lossy, drops are counted and reported, and a destination that is down is a
+// reported fault rather than an outage.
 package forward
 
 import (
@@ -35,7 +29,8 @@ import (
 
 // Record is anything forwardable.
 type Record struct {
-	// Kind is "event" or "alert", so a downstream rule can route them apart.
+	// Kind says what the record is, so a downstream rule can route on it.
+	// DefendSec sends "alert".
 	Kind string `json:"kind"`
 	// At is when it happened.
 	At time.Time `json:"at"`
@@ -55,7 +50,7 @@ type Destination interface {
 	// Name identifies it in the status report.
 	Name() string
 	// Send delivers a batch. It may block; the Forwarder calls it from its own
-	// goroutine and never from the detection path.
+	// goroutine and never from the inventory path.
 	Send(ctx context.Context, records []Record) error
 	// Close releases resources.
 	Close() error
@@ -99,10 +94,8 @@ type DestinationStatus struct {
 
 // DefaultCapacity bounds the outbound queue.
 //
-// Smaller than the agent's event buffer because this queue exists only to
-// absorb a stalled destination, not a burst of host activity: by the time
-// records reach here they have already been matched, and losing telemetry to a
-// dead collector costs less than losing events to a dead sensor.
+// Small because this queue exists only to absorb a stalled destination, not a
+// burst of host activity.
 const DefaultCapacity = 4096
 
 // batchSize bounds one delivery.
@@ -139,7 +132,7 @@ func New(capacity int, destinations ...Destination) *Forwarder {
 func (f *Forwarder) Enabled() bool { return f != nil && len(f.destinations) > 0 }
 
 // Send queues a record. It never blocks and never returns an error: a caller
-// on the detection path must not have to decide what to do about a full queue.
+// on the inventory path must not have to decide what to do about a full queue.
 func (f *Forwarder) Send(r Record) {
 	if !f.Enabled() {
 		return
@@ -249,7 +242,7 @@ type Status struct {
 // Status returns the current picture.
 func (f *Forwarder) Status() Status {
 	if f == nil {
-		return Status{Detail: "Forwarding is not configured. DefendSec keeps a short event window for alert context and is not a log store; send events to your own platform with DEFENDSEC_FORWARD."}
+		return Status{Detail: "Forwarding is not configured. DefendSec is not a log store; send its alerts to your own platform with DEFENDSEC_FORWARD."}
 	}
 	f.mu.Lock()
 	queued := len(f.queue)
@@ -270,10 +263,10 @@ func (f *Forwarder) Status() Status {
 
 	switch {
 	case !st.Enabled:
-		st.Detail = "Forwarding is not configured. DefendSec keeps a short event window for alert context and is not a log store; send events to your own platform with DEFENDSEC_FORWARD."
+		st.Detail = "Forwarding is not configured. DefendSec is not a log store; send its alerts to your own platform with DEFENDSEC_FORWARD."
 	case st.Dropped > 0:
 		st.Detail = fmt.Sprintf(
-			"%d records were dropped because a destination could not keep up. Detection is unaffected — forwarding is deliberately lossy so a stalled collector cannot stop DefendSec defending — but your log platform has gaps.",
+			"%d records were dropped because a destination could not keep up. Inventory processing is unaffected — forwarding is deliberately lossy so a stalled collector cannot stop DefendSec working — but your log platform has gaps.",
 			st.Dropped)
 	case st.Failed > 0:
 		st.Detail = fmt.Sprintf(

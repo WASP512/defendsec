@@ -12,7 +12,6 @@ import (
 
 	"defendsec/internal/alertmeta"
 	"defendsec/internal/controls"
-	"defendsec/internal/playbook"
 	"defendsec/internal/presence"
 	"defendsec/internal/sca"
 	"defendsec/internal/storepg"
@@ -145,42 +144,10 @@ func (s *Server) recordAlert(alert presence.Alert) {
 		}
 	}
 
-	// Every alert goes to the operator's log platform, not only behavioural
-	// ones: for many operators the collector is the system of record, and a
-	// finding that exists only in DefendSec is a finding their process will
-	// not see (roadmap 3.6).
+	// Every alert goes to the operator's log platform: for many operators the
+	// collector is the system of record, and a finding that exists only in
+	// DefendSec is a finding their process will not see.
 	s.forwardAlert(alert)
-
-	// Automatic response (roadmap 2.6). Runs after the finding is stored, so
-	// the record of what happened exists before anything acts on it, and in
-	// the background so a slow response path cannot stall ingest.
-	s.considerAutomaticResponse(alert)
-}
-
-// considerAutomaticResponse offers a finding to the automatic playbooks.
-func (s *Server) considerAutomaticResponse(alert presence.Alert) {
-	if s.playbooks == nil || s.pg == nil {
-		return
-	}
-	pa := playbook.Alert{
-		ID: alert.ID, Kind: alert.Kind, Severity: alert.Severity,
-		DeviceID: alert.DeviceID, Hostname: alert.Hostname, Title: alert.Title,
-	}
-	if path, ok := alert.Detail[alertmeta.KeyFilePath].(string); ok {
-		pa.Path = path
-	}
-
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		classes, err := s.pg.DeviceClasses(ctx, alert.DeviceID)
-		cancel()
-		if err != nil {
-			// Evaluated as unclassified, which is the stricter reading: a
-			// trigger naming a class will not match.
-			s.log.Warn("read device classes for automatic response", "err", err)
-		}
-		s.maybeAutorun(pa, classes)
-	}()
 }
 
 // alertBatch is a device's open alert keys, loaded once for the duration of
@@ -274,42 +241,6 @@ func (s *Server) resolveAlert(deviceID, kind, sourceID string) {
 	}
 }
 
-func (s *Server) alertFromFimEvent(ev presence.FimEvent) presence.Alert {
-	severity := ev.Severity
-	if severity == "" {
-		severity = fimPathSeverity(ev.Path)
-	}
-	action := ev.Action
-	if action == "" {
-		action = "modified"
-	}
-	detail := alertmeta.BaseDetail(ev.Hostname)
-	detail[alertmeta.KeyFilePath] = ev.Path
-	detail[alertmeta.KeyFileHashPrev] = ev.Previous
-	detail[alertmeta.KeyFileHashCurr] = ev.Current
-	detail[alertmeta.KeyEventAction] = action
-	detail = alertmeta.WithRaw(detail, map[string]any{
-		"path": ev.Path, "previous": ev.Previous, "current": ev.Current, "action": action,
-	})
-	return presence.Alert{
-		ID:               ev.ID,
-		DetectedAt:       ev.DetectedAt,
-		DeviceID:         ev.DeviceID,
-		Hostname:         ev.Hostname,
-		Kind:             "fim",
-		Severity:         severity,
-		Title:            "File integrity " + action + ": " + ev.Path,
-		Summary:          shortHash(ev.Previous) + " → " + shortHash(ev.Current),
-		SourceType:       "fim_event",
-		SourceID:         ev.ID,
-		GeneratorID:      alertmeta.GeneratorFIM,
-		GeneratorVersion: alertmeta.GeneratorVersion,
-		Detail:           detail,
-		Signal:           string(controls.SignalFIM),
-		ControlIDs:       controls.Tag(controls.SignalFIM),
-	}
-}
-
 func (s *Server) alertFromDrift(dev presence.Device, path, prev, curr string) presence.Alert {
 	id, _ := newDeviceID()
 	action := "modified"
@@ -378,13 +309,6 @@ func (s *Server) alertFromSca(dev presence.Device, r sca.Result) presence.Alert 
 		// The check names the controls it actually tests, which is more
 		// specific than anything the signal alone can say.
 		ControlIDs: controls.Tag(controls.SignalSCA, r.Controls...),
-	}
-}
-
-func (s *Server) processFimAlerts(events []presence.FimEvent) {
-	for _, ev := range events {
-		ev := ev
-		s.recordAlert(s.alertFromFimEvent(ev))
 	}
 }
 

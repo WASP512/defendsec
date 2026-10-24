@@ -50,7 +50,6 @@ function normalizeDevice(device: Device): Device {
     patchInventory: device.patchInventory ?? null,
     fim,
     fimBaseline: device.fimBaseline ?? copyFim(fim),
-    isolated: device.isolated ?? false,
     mtlsDeviceId: device.mtlsDeviceId ?? "",
   };
 }
@@ -130,7 +129,6 @@ export function publicDevice(device: Device) {
     sample: device.sample,
     enrolledAt: device.enrolledAt,
     lastSeen: device.lastSeen,
-    isolated: device.isolated ?? false,
     mtlsDeviceId: device.mtlsDeviceId ?? "",
   };
 }

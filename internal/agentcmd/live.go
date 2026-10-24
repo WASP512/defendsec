@@ -18,7 +18,6 @@ const (
 )
 
 var allowedLiveQueries = []string{
-	"processes",
 	"listening_ports",
 	"users",
 	"logged_in_users",
@@ -77,8 +76,6 @@ func RunLiveQuery(query string) (string, error) {
 		}
 	}
 	switch query {
-	case "processes":
-		return listProcesses()
 	case "listening_ports":
 		return listListeningPorts()
 	case "users":
@@ -101,86 +98,6 @@ func RunLiveQuery(query string) (string, error) {
 func hostname() string {
 	h, _ := os.Hostname()
 	return h
-}
-
-func passwdByUID() map[string]string {
-	out := map[string]string{}
-	raw, err := os.ReadFile("/etc/passwd")
-	if err != nil {
-		return out
-	}
-	sc := bufio.NewScanner(strings.NewReader(string(raw)))
-	for sc.Scan() {
-		parts := strings.Split(sc.Text(), ":")
-		if len(parts) >= 3 {
-			out[parts[2]] = parts[0]
-		}
-	}
-	return out
-}
-
-func listProcesses() (string, error) {
-	if runtime.GOOS == "windows" {
-		return "", fmt.Errorf("processes query not implemented on windows")
-	}
-	users := passwdByUID()
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return "", err
-	}
-	var b strings.Builder
-	b.WriteString("pid\tuid\tuser\tcomm\tcmdline\n")
-	count := 0
-	for _, entry := range entries {
-		pid, err := strconv.Atoi(entry.Name())
-		if err != nil || pid <= 0 {
-			continue
-		}
-		procDir := filepath.Join("/proc", entry.Name())
-		comm, err := os.ReadFile(filepath.Join(procDir, "comm"))
-		if err != nil {
-			continue
-		}
-		uid := readProcUID(procDir)
-		user := users[uid]
-		if user == "" {
-			user = uid
-		}
-		cmdline := truncate(readProcCmdline(procDir), 120)
-		fmt.Fprintf(&b, "%d\t%s\t%s\t%s\t%s\n", pid, uid, user, strings.TrimSpace(string(comm)), cmdline)
-		count++
-		if count >= 200 {
-			break
-		}
-	}
-	return b.String(), nil
-}
-
-func readProcUID(procDir string) string {
-	raw, err := os.ReadFile(filepath.Join(procDir, "status"))
-	if err != nil {
-		return ""
-	}
-	sc := bufio.NewScanner(strings.NewReader(string(raw)))
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.HasPrefix(line, "Uid:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				return fields[1]
-			}
-		}
-	}
-	return ""
-}
-
-func readProcCmdline(procDir string) string {
-	raw, err := os.ReadFile(filepath.Join(procDir, "cmdline"))
-	if err != nil || len(raw) == 0 {
-		return ""
-	}
-	parts := strings.Split(string(raw), "\x00")
-	return strings.Join(parts, " ")
 }
 
 func truncate(s string, max int) string {

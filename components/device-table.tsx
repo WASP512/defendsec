@@ -62,7 +62,6 @@ export function DeviceTable({ devices }: { devices: PublicDevice[] }) {
               {row.original.hardwareModel === "mTLS gRPC agent" || row.original.mtlsDeviceId ? (
                 <Badge variant="outline">mTLS</Badge>
               ) : null}
-              {row.original.isolated ? <Badge variant="destructive">isolated</Badge> : null}
             </div>
           </div>
         ),

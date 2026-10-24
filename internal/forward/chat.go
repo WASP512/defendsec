@@ -13,9 +13,9 @@ import (
 )
 
 // ChatDestination posts alerts to Slack or Microsoft Teams incoming webhooks
-// (roadmap 5.6). Only alerts at or above a minimum severity are posted —
-// events never are: a chat channel that receives every process execution is
-// a channel everyone mutes, and then the alert that mattered is muted too.
+// (roadmap 5.6). Only alerts at or above a minimum severity are posted: a chat
+// channel that receives everything is a channel everyone mutes, and then the
+// alert that mattered is muted too.
 type ChatDestination struct {
 	kind   string // slack or teams
 	url    string

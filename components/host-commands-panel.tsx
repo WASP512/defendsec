@@ -23,12 +23,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Activity, ShieldAlert, Terminal, Upload } from "lucide-react";
+import { Activity, ShieldAlert, Upload } from "lucide-react";
 import type { CommandRecord } from "@/lib/commands";
 import { relativeTime } from "@/lib/format";
 
 const LIVE_QUERIES = [
-  "processes",
   "listening_ports",
   "users",
   "logged_in_users",
@@ -128,22 +127,19 @@ function CommandOutput({ item }: { item: CommandRecord }) {
   );
 }
 
-export function ResponsePanel({
+export function HostCommandsPanel({
   mtlsDeviceId,
-  isolated,
   commands,
   readOnly,
 }: {
   mtlsDeviceId: string;
-  isolated: boolean;
   commands: CommandRecord[];
   readOnly?: boolean;
 }) {
   const [pending, setPending] = useState<string>("");
-  const [confirmAction, setConfirmAction] = useState<"isolate" | "revoke" | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"revoke" | null>(null);
   const [error, setError] = useState("");
-  const [killName, setKillName] = useState("");
-  const [query, setQuery] = useState<string>("processes");
+  const [query, setQuery] = useState<string>("listening_ports");
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([]);
   const [saveName, setSaveName] = useState("");
   const [release, setRelease] = useState<AgentRelease | null>(null);
@@ -175,8 +171,8 @@ export function ResponsePanel({
       <div className="rounded-xl border border-dashed p-6">
         <p className="font-medium">No mTLS agent on this host</p>
         <p className="mt-1 text-sm text-muted-foreground">
-          Signed isolate / kill requires <code className="text-foreground">defendsec-agentd</code>. The
-          Python inventory agent cannot receive control commands.
+          Host commands need <code className="text-foreground">defendsec-agentd</code>. The Python
+          inventory agent cannot receive control commands.
         </p>
       </div>
     );
@@ -191,9 +187,11 @@ export function ResponsePanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type, payload }),
       });
-      const data = (await response.json()) as { error?: string; message?: string };
+      const data = (await response.json()) as { error?: string; message?: string; reason?: string };
       if (!response.ok) {
-        throw new Error(data.error ?? `Request failed (${response.status})`);
+        throw new Error(
+          [data.error, data.reason].filter(Boolean).join(". ") || `Request failed (${response.status})`,
+        );
       }
       window.location.reload();
     } catch (cause) {
@@ -245,8 +243,7 @@ export function ResponsePanel({
     return (
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Signed in with a viewer token. Response commands and certificate revoke require an admin
-          token.
+          Signed in with a viewer token. Host commands and certificate revoke require an admin token.
         </p>
         {commands.length === 0 ? (
           <p className="text-sm text-muted-foreground">No signed commands yet for this agent.</p>
@@ -273,63 +270,19 @@ export function ResponsePanel({
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ShieldAlert className="size-4" />
-            Host containment
+            Agent certificate
           </CardTitle>
           <CardDescription>
-            Commands are Ed25519-signed by defendsec-apid and verified by this agent.
+            Commands are Ed25519-signed by defendsec-apid and verified by this agent. They are off
+            until the operator sets DEFENDSEC_ALLOW_COMMANDS on the server.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-        <Button
-          variant={isolated ? "outline" : "destructive"}
-          size="sm"
-          disabled={Boolean(pending) || isolated}
-          onClick={() => setConfirmAction("isolate")}
-        >
-          {pending === "isolate" ? "Sending…" : isolated ? "Already isolated" : "Isolate host"}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={Boolean(pending) || !isolated}
-          onClick={() => send("release")}
-        >
-          {pending === "release" ? "Sending…" : "Release isolation"}
-        </Button>
-        <Button variant="outline" size="sm" disabled={Boolean(pending)} onClick={() => setConfirmAction("revoke")}>
-          {pending === "revoke" ? "Revoking…" : "Revoke certificate"}
-        </Button>
+          <Button variant="outline" size="sm" disabled={Boolean(pending)} onClick={() => setConfirmAction("revoke")}>
+            {pending === "revoke" ? "Revoking…" : "Revoke certificate"}
+          </Button>
         </CardContent>
       </Card>
-      <form
-        className="rounded-xl border bg-card p-4"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!killName.trim()) return;
-          void send("kill_process", { name: killName.trim() });
-        }}
-      >
-        <div className="mb-3">
-          <p className="flex items-center gap-2 font-medium"><Terminal className="size-4" /> Process response</p>
-          <p className="mt-1 text-sm text-muted-foreground">Send SIGTERM to an allowlisted process name.</p>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-          <div className="min-w-0 flex-1 space-y-1">
-            <Label htmlFor="kill-name">Process name</Label>
-            <Input
-              id="kill-name"
-              name="name"
-              placeholder="sleep"
-              value={killName}
-              onChange={(event) => setKillName(event.target.value)}
-              autoComplete="off"
-            />
-          </div>
-          <Button type="submit" variant="destructive" size="sm" disabled={Boolean(pending) || !killName.trim()}>
-            {pending === "kill_process" ? "Sending…" : "Send SIGTERM"}
-          </Button>
-        </div>
-      </form>
       <form
         className="space-y-3 rounded-xl border bg-card p-4"
         onSubmit={(event) => {
@@ -498,13 +451,9 @@ export function ResponsePanel({
             <AlertDialogMedia>
               <ShieldAlert className="text-destructive" />
             </AlertDialogMedia>
-            <AlertDialogTitle>
-              {confirmAction === "isolate" ? "Isolate this host?" : "Revoke this certificate?"}
-            </AlertDialogTitle>
+            <AlertDialogTitle>Revoke this certificate?</AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmAction === "isolate"
-                ? "The agent will restrict network access until you explicitly release isolation."
-                : "The agent will disconnect and must re-enroll before it can report inventory or receive commands."}
+              The agent will disconnect and must re-enroll before it can report inventory or receive commands.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -512,13 +461,11 @@ export function ResponsePanel({
             <AlertDialogAction
               variant="destructive"
               onClick={() => {
-                const action = confirmAction;
                 setConfirmAction(null);
-                if (action === "isolate") void send("isolate");
-                if (action === "revoke") void revokeDevice();
+                void revokeDevice();
               }}
             >
-              {confirmAction === "isolate" ? "Isolate host" : "Revoke certificate"}
+              Revoke certificate
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

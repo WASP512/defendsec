@@ -80,19 +80,59 @@ The deliverable per client is:
   sync service `defendsec-feeds` in slice 3 (see [FEEDS.md](FEEDS.md)). The script is deleted: it
   sent the fleet's package names to a third party.
 
-## What is removed
+## What was removed
 
-Removed in slice 6, after the feed pipeline and matcher are merged (see rule 4 below):
+Removed in slice 6, after the feed pipeline and matcher were merged (see rule 4 below). Each line
+says what happened, not what was planned:
 
-- Go packages `internal/{sensor,events,sigma,proclist,playbook,policy,mcp,triage,etw,forward}`
-- `packs/sigma`
-- `cmd/defendsec-loadtest` and `scripts/test-isolation-netns.sh`
-- The Windows service, MSI and ETW sensor
-- Console pages Detection, Response and Proposals
-- Command types `isolate`, `release`, `kill_process`, `quarantine_path`, `run_script`
+- **Detection:** Go packages `internal/{sensor,events,sigma,proclist,etw}`, `packs/sigma`, the
+  committed BPF object and `make bpf`, the agent's event shipper, `BehaviourEvent`/`EventBatch` in
+  the agent protocol, the detection coverage API and page.
+- **Response and governance:** `internal/{policy,mcp,playbook,triage}`, two-person approval,
+  break-glass, host classes, bounded autonomy, AI agent principals, the Response and Proposals
+  pages and the approvals API. The command types `isolate`, `release`, `kill_process`,
+  `quarantine_path` and `run_script` are gone from the agent and the server, and so are the
+  `processes` live query and the package-change history that only triage read.
+- **Tests and CI:** `scripts/test-isolation-netns.sh` and the `isolation` CI job.
+- **Claims:** the control catalog no longer says DefendSec detects or contains anything.
 
-Until slice 6 lands, this code is still in the tree and still builds. It is not maintained and
-not promoted, and new work on it is out of scope.
+Kept, with the reason:
+
+- **`live_query` and `agent_update`.** They are signed, attributed and chained, and they are **off
+  until the operator names them in `DEFENDSEC_ALLOW_COMMANDS`**, which is what the policy engine
+  used to guarantee in practice (no install ships a policy file, so no command could be issued).
+  This is the smallest gate that keeps that default; there is no approval flow in front of them.
+  `live_query` is read-only host investigation, which is the part of this that sits closest to the
+  line, and it is a candidate for removal if the product wants none.
+- **`cmd/defendsec-loadtest`.** It enrolls simulated agents, reports inventory, heartbeats and
+  pages the fleet API; it sends no events or commands. It is how a 10,000-host timing gets measured.
+- **`internal/forward`.** Alerts (file-integrity drift, failed configuration checks and
+  vulnerability findings) still go to syslog, CEF, webhook, OTLP, Slack or Teams. The event record
+  is gone. The audit ledger is **not** forwarded, and neither are exposure findings from the
+  surface scanner, the Microsoft 365 collector or repository health; that is a gap, not a removal.
+- **`internal/agentfim`.** It only watches paths and asks for a fresh inventory. Changes stay as
+  change events (the Integrity page, the SI-7 evidence) and as the baseline-drift alert, which
+  clears when the file returns to its baseline. The second, per-event alert is removed.
+- **The Windows agent's inventory, posture pack, service and MSI.** Only the Windows ETW sensor,
+  process sampler, firewall isolation and `kill_process` are removed. Without the agent, Windows
+  hosts have no coverage until the Datto RMM collector (slice 8) covers them.
+- **Database tables.** Migrations are append-only and no migration was added: the rows in
+  `policy_decisions`, `pending_commands` (and its approvals), `break_glass`, `agent_principals`,
+  `playbook_runs` (and its steps), `package_changes`, and the `devices.isolated` and
+  `devices.classes` columns belong to whoever ran them, and
+  nothing reads them any more. Dropping them would destroy an operator's own record for no gain.
+
+### Archive branch
+
+The branch `archive/action-governance` was pushed from `main` at commit
+`390ecafa0f53a4ea101625a891a2e70635d72cbb` (the merge of slice 7c), unchanged and before the first
+deletion of slice 6. It holds the policy engine (`internal/policy`), command signing
+(`internal/sign`), two-person approval, break-glass, host classes, the MCP propose/approve
+interface (`internal/mcp`, `internal/control/{mcp,agents,autonomy,approvals}.go`), playbooks and
+the detection pipeline, in the state they were last built and tested in, so that the governance
+work can be reused with the Hermes bot fleet. Recover with
+`git checkout -b <name> archive/action-governance`. It is not maintained and nothing builds from it
+in CI.
 
 ## Feed sources
 
@@ -170,8 +210,8 @@ run happens when the credentials exist. The order is 10, 11, EDR removal (6), re
 
 ## Open questions
 
-- Whether Windows stays as an inventory source after the Windows service and MSI are removed
-  (slice 8's RMM collector may cover it). No Windows agent code has ever been run on a real
+- Whether the Windows agent (service, MSI, inventory, posture) stays once slice 8's RMM collector
+  covers Windows hosts. It stays for now. No Windows agent code has ever been run on a real
   Windows machine.
 - How the external scanner is kept in scope (for example, scanning only domains the operator has
   declared). To be decided in slice 7.

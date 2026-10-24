@@ -31,11 +31,8 @@ import (
 	"defendsec/internal/forward"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
-	"defendsec/internal/playbook"
-	"defendsec/internal/policy"
 	"defendsec/internal/presence"
 	"defendsec/internal/secret"
-	"defendsec/internal/sigma"
 	"defendsec/internal/sign"
 	"defendsec/internal/sso"
 	"defendsec/internal/storepg"
@@ -385,20 +382,7 @@ func run(log *slog.Logger) error {
 	// Compliance (roadmap 1.7).
 	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
 	adminMux.HandleFunc("/v1/controls/check-coverage", svc.HandleCheckCoverage)
-	adminMux.HandleFunc("/v1/detection/coverage", svc.HandleDetectionCoverage)
-	adminMux.HandleFunc("/v1/detection/forwarding", svc.HandleForwarding)
-
-	// Triage assistance (roadmap 4.3). Deterministic correlation over
-	// DefendSec's own records; no model is involved and nothing leaves the box.
-	adminMux.HandleFunc("/v1/triage", svc.HandleTriage)
-	adminMux.HandleFunc("/v1/packages/changes", svc.HandlePackageChanges)
-
-	// AI agent principals (roadmap 4.1). Admin-only: registering a principal
-	// hands out a credential that can read the fleet and propose responses.
-	adminMux.HandleFunc("/v1/agents", svc.HandleAgents)
-	// Bounded autonomy (roadmap 4.4). Off for every principal by default, and
-	// still gated by a policy rule marked autonomous.
-	adminMux.HandleFunc("/v1/agents/autonomy", svc.HandleAgentAutonomy)
+	adminMux.HandleFunc("/v1/forwarding", svc.HandleForwarding)
 
 	// The audit layer (roadmap 1.9).
 	adminMux.HandleFunc("/v1/audit/periods", svc.HandleAuditPeriods)
@@ -407,59 +391,30 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/audit/assessment", svc.HandleAuditAssessment)
 	adminMux.HandleFunc("/v1/audit/evidence", svc.HandleEvidenceExport)
 
-	// Policy sits between the API and the signer (roadmap 2.1). A deployment
-	// with no policy file denies every command, which is the correct posture
-	// for an unconfigured response tool — but it would be a surprise, so it
-	// is stated loudly at startup rather than discovered at an incident.
-	if path := strings.TrimSpace(os.Getenv("DEFENDSEC_POLICY_FILE")); path != "" {
-		doc, err := policy.Load(path)
-		if err != nil {
-			// Refused rather than started without it. Coming up with no
-			// policy because the file had a typo would silently disable every
-			// host action, and the operator would find out during an incident.
-			return fmt.Errorf("policy: %w", err)
-		}
-		svc.SetPolicy(policy.NewEngine(doc))
-		log.Info("policy loaded", "name", doc.Name, "rules", len(doc.Rules),
-			"limits", len(doc.Limits), "hash", doc.Hash[:16], "source", doc.Source)
+	// Signed host commands. The policy engine, two-person approval and the
+	// MCP interface were removed in slice 6 (see docs/DIRECTION.md); what is
+	// left is a short allow-list, empty by default, so a fresh install can
+	// issue no host command at all, as before.
+	allowed := control.ParseAllowedCommands(os.Getenv("DEFENDSEC_ALLOW_COMMANDS"))
+	svc.SetAllowedCommands(allowed)
+	if len(allowed) == 0 {
+		log.Info("no host commands enabled", "fix", "set DEFENDSEC_ALLOW_COMMANDS=live_query,agent_update to enable them")
 	} else {
-		log.Warn("no policy file configured; every host command will be denied",
-			"fix", "set DEFENDSEC_POLICY_FILE to a policy document, for example packaging/policy/default.yaml")
+		log.Warn("host commands enabled", "types", allowed)
+	}
+	for _, name := range []string{"DEFENDSEC_POLICY_FILE", "DEFENDSEC_PLAYBOOK_DIR", "DEFENDSEC_SIGMA_DIR", "DEFENDSEC_MCP_ADDR", "DEFENDSEC_MCP_ORIGINS"} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			log.Warn("setting ignored: the feature it configured was removed in slice 6", "name", name)
+		}
 	}
 
-	// Behavioural detection rules (roadmap 3.3). Unlike policy and packs, a
-	// rule directory is routinely a synced copy of a community repository, so
-	// rules that will not compile are counted and surfaced rather than
-	// failing the start.
-	sigmaDir := strings.TrimSpace(os.Getenv("DEFENDSEC_SIGMA_DIR"))
-	if sigmaDir == "" {
-		sigmaDir = firstExistingDir("packs/sigma", "/opt/defendsec/packs/sigma")
-	}
-	if sigmaDir != "" {
-		set, err := sigma.LoadDir(sigmaDir)
-		if err != nil {
-			return fmt.Errorf("sigma rules: %w", err)
-		}
-		svc.SetDetection(sigma.NewEngine(set))
-		log.Info("detection rules loaded", "rules", set.Len(), "skipped", len(set.Skipped()), "dir", sigmaDir)
-		for _, skipped := range set.Skipped() {
-			// Named individually: an operator needs to know which detection
-			// is not running, not just how many.
-			log.Warn("detection rule not loaded", "rule", skipped.Source, "reason", skipped.Reason)
-		}
-	} else {
-		log.Warn("no detection rules found; behavioural detection is not running",
-			"fix", "set DEFENDSEC_SIGMA_DIR to a directory of Sigma rules")
-	}
-
-	// Forwarding to the operator's own log platform (roadmap 3.6). DefendSec
-	// keeps a short window for alert context and is deliberately not a log
-	// store; everything goes to the platform they already run.
+	// Forwarding to the operator's own log platform. DefendSec is deliberately
+	// not a log store; alerts go to the platform the operator already runs.
 	if raw := strings.TrimSpace(os.Getenv("DEFENDSEC_FORWARD")); raw != "" {
 		destinations, err := forward.ParseDestinations(raw, "defendsec")
 		if err != nil {
 			// Refused rather than skipped, as with anchors: an operator who
-			// believes their events are being forwarded and is wrong stops
+			// believes their alerts are being forwarded and is wrong stops
 			// looking at the reason they are not.
 			return fmt.Errorf("DEFENDSEC_FORWARD: %w", err)
 		}
@@ -470,34 +425,9 @@ func run(log *slog.Logger) error {
 			log.Info("forwarding configured", "destination", d.Name())
 		}
 	} else {
-		log.Info("no event forwarding configured",
-			"note", "DefendSec keeps a short event window for alert context and is not a log store",
-			"fix", "set DEFENDSEC_FORWARD to send events to your own platform")
-	}
-
-	// Playbooks (roadmap 2.5-2.6). Every step is still policy-checked and
-	// signed individually, so loading a playbook grants nothing on its own.
-	if dir := strings.TrimSpace(os.Getenv("DEFENDSEC_PLAYBOOK_DIR")); dir != "" {
-		set, err := playbook.LoadDir(dir)
-		if err != nil {
-			// One bad file fails the load. A partial set means the operator
-			// believes a playbook exists when it does not, and finds out
-			// during the incident it was written for.
-			return fmt.Errorf("playbooks: %w", err)
-		}
-		svc.SetPlaybooks(set)
-		var automatic int
-		for _, pb := range set.All() {
-			if pb.Automatic {
-				automatic++
-			}
-		}
-		log.Info("playbooks loaded", "count", set.Len(), "automatic", automatic, "dir", dir)
-		if automatic > 0 {
-			log.Warn("automatic response is enabled for some playbooks",
-				"automatic", automatic,
-				"note", "these run without human confirmation when policy permits every step")
-		}
+		log.Info("no alert forwarding configured",
+			"note", "DefendSec is not a log store",
+			"fix", "set DEFENDSEC_FORWARD to send alerts to your own platform")
 	}
 
 	// Transparency anchoring (roadmap 1.6).
@@ -507,14 +437,6 @@ func run(log *slog.Logger) error {
 	// shared token rather than the admin one, so a peer never holds admin
 	// access to the instance it anchors for.
 	adminMux.HandleFunc("/v1/anchors/receive", svc.HandleAnchorReceive)
-
-	// Policy-governed response (roadmap 2.1-2.4).
-	adminMux.HandleFunc("/v1/policy", svc.HandlePolicy)
-	adminMux.HandleFunc("/v1/policy/decisions", svc.HandlePolicyDecisions)
-	adminMux.HandleFunc("/v1/policy/approvals", svc.HandleApprovals)
-	adminMux.HandleFunc("/v1/policy/break-glass", svc.HandleBreakGlass)
-	adminMux.HandleFunc("/v1/policy/host-classes", svc.HandleHostClasses)
-	adminMux.HandleFunc("/v1/playbooks", svc.HandlePlaybooks)
 
 	// First-run setup window. Restarting defendsec-apid reopens it while no
 	// account exists, which is the point: restarting requires access to the
@@ -586,31 +508,6 @@ func run(log *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	// Playbooks (roadmap 2.5-2.6). Every step is still policy-checked and
-	// signed individually, so loading a playbook grants nothing on its own.
-	if dir := strings.TrimSpace(os.Getenv("DEFENDSEC_PLAYBOOK_DIR")); dir != "" {
-		set, err := playbook.LoadDir(dir)
-		if err != nil {
-			// One bad file fails the load. A partial set means the operator
-			// believes a playbook exists when it does not, and finds out
-			// during the incident it was written for.
-			return fmt.Errorf("playbooks: %w", err)
-		}
-		svc.SetPlaybooks(set)
-		var automatic int
-		for _, pb := range set.All() {
-			if pb.Automatic {
-				automatic++
-			}
-		}
-		log.Info("playbooks loaded", "count", set.Len(), "automatic", automatic, "dir", dir)
-		if automatic > 0 {
-			log.Warn("automatic response is enabled for some playbooks",
-				"automatic", automatic,
-				"note", "these run without human confirmation when policy permits every step")
-		}
-	}
-
 	// Transparency anchoring (roadmap 1.6). Unset means no anchoring, which is
 	// a real posture rather than a broken one — the ledger is still
 	// tamper-evident against anyone who cannot also sign checkpoints.
@@ -677,41 +574,6 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("grpc listen: %w", err)
 	}
 
-	// The MCP endpoint for AI agents (roadmap 4.1).
-	//
-	// Off unless configured. An MCP endpoint is a control surface, and one
-	// listening by default is an attack surface the operator did not ask for.
-	// It gets its own listener rather than a path on the admin mux so it can
-	// be bound, firewalled and logged separately — an agent often runs
-	// somewhere the admin port deliberately is not reachable from.
-	var mcpSrv *http.Server
-	if addr := strings.TrimSpace(os.Getenv("DEFENDSEC_MCP_ADDR")); addr != "" {
-		if pg == nil {
-			// Agent principals live in Postgres, so without it there is no
-			// way to authenticate one. Refusing to start beats listening on
-			// an endpoint that can only ever answer 401.
-			return fmt.Errorf("DEFENDSEC_MCP_ADDR is set but no database is configured; agent principals cannot be authenticated without one")
-		}
-		var origins []string
-		if raw := strings.TrimSpace(os.Getenv("DEFENDSEC_MCP_ORIGINS")); raw != "" {
-			for _, o := range strings.Split(raw, ",") {
-				if o = strings.TrimSpace(o); o != "" {
-					origins = append(origins, o)
-				}
-			}
-		}
-		mcpMux := http.NewServeMux()
-		mcpMux.Handle("/mcp", svc.MCPTransport(origins))
-		mcpSrv = &http.Server{
-			Addr:              addr,
-			Handler:           mcpMux,
-			ReadHeaderTimeout: 10 * time.Second,
-		}
-		log.Info("mcp endpoint configured", "addr", addr,
-			"origins", origins,
-			"detail", "agents may read fleet state and propose responses; proposals are recorded unsigned and need a human approval")
-	}
-
 	errCh := make(chan error, 4)
 	go func() {
 		log.Info("https enroll listening", "addr", *httpAddr, "secret_fp", control.HashSecret(secretValue))
@@ -725,13 +587,6 @@ func run(log *slog.Logger) error {
 		log.Info("admin commands listening", "addr", *adminAddr)
 		errCh <- adminSrv.ListenAndServe()
 	}()
-	if mcpSrv != nil {
-		go func() {
-			log.Info("mcp listening", "addr", mcpSrv.Addr)
-			errCh <- mcpSrv.ListenAndServe()
-		}()
-	}
-
 	// Profiling, for diagnosing load (roadmap 5.5). Off unless set, and
 	// refused on anything but a loopback address: profiles expose memory
 	// contents and internal state.
@@ -780,9 +635,6 @@ func run(log *slog.Logger) error {
 		defer cancel()
 		_ = httpSrv.Shutdown(ctx)
 		_ = adminSrv.Shutdown(ctx)
-		if mcpSrv != nil {
-			_ = mcpSrv.Shutdown(ctx)
-		}
 		grpcSrv.GracefulStop()
 		return nil
 	}
@@ -842,15 +694,4 @@ func runCheckpointLoop(
 		}
 		cancel()
 	}
-}
-
-// firstExistingDir returns the first path that is a directory, so a packaged
-// install and a source checkout both find their rules without configuration.
-func firstExistingDir(paths ...string) string {
-	for _, p := range paths {
-		if info, err := os.Stat(p); err == nil && info.IsDir() {
-			return p
-		}
-	}
-	return ""
 }

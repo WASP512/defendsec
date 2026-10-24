@@ -53,3 +53,15 @@ func TestLoggedInUsersEmptyOK(t *testing.T) {
 	}
 	t.Log(out)
 }
+
+// The process list was removed with the rest of the process telemetry (slice
+// 6): a live query can still name ports, users, scheduled jobs, services and
+// mounts, but not what is running.
+func TestParseLiveQueryPayloadRejectsProcessList(t *testing.T) {
+	if _, err := ParseLiveQueryPayload([]byte(`{"query":"processes"}`)); err == nil {
+		t.Fatal("processes was accepted")
+	}
+	if _, err := RunLiveQuery("processes"); err == nil {
+		t.Fatal("RunLiveQuery ran processes")
+	}
+}

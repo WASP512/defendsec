@@ -347,10 +347,10 @@ func (d *FileDestination) Close() error { return nil }
 // ParseDestinations reads the DEFENDSEC_FORWARD configuration: a
 // comma-separated list of destinations.
 //
-//	syslog=tcp://collector:514,webhook=https://siem.example/ingest#token,file=/var/log/defendsec-events.jsonl
+//	syslog=tcp://collector:514,webhook=https://siem.example/ingest#token,file=/var/log/defendsec-alerts.jsonl
 //
 // A malformed entry is an error rather than a skip, for the same reason a
-// mistyped anchor target is: an operator who believes their events are being
+// mistyped anchor target is: an operator who believes their alerts are being
 // forwarded and is wrong stops looking.
 func ParseDestinations(raw, tag string) ([]Destination, error) {
 	var out []Destination

@@ -40,13 +40,13 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 		INSERT INTO devices (
 			id, hostname, platform, os_name, os_version, arch, serial, hardware_model, cpu, memory_mb,
 			disk_encryption, firewall, ip_addresses, username, uptime_seconds, software, pending_updates,
-			patch_inventory, fim, fim_baseline, last_seen, connected, isolated, cert_fingerprint, transport, agent_public_key_pem, updated_at,
+			patch_inventory, fim, fim_baseline, last_seen, connected, cert_fingerprint, transport, agent_public_key_pem, updated_at,
 			distro, distro_release, package_manager, os_edition, repo_health
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
 			$11,$12,$13::jsonb,$14,$15,$16::jsonb,$17::jsonb,
-			$18,$19::jsonb,$20::jsonb,$21::timestamptz,$22,$23,$24,$25,$26,now(),
-			$27,$28,$29,$30,$31::jsonb
+			$18,$19::jsonb,$20::jsonb,$21::timestamptz,$22,$23,$24,$25,now(),
+			$26,$27,$28,$29,$30::jsonb
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			hostname=EXCLUDED.hostname,
@@ -71,7 +71,6 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 			fim_baseline=CASE WHEN EXCLUDED.fim_baseline <> '[]'::jsonb THEN EXCLUDED.fim_baseline ELSE devices.fim_baseline END,
 			last_seen=EXCLUDED.last_seen,
 			connected=EXCLUDED.connected,
-			isolated=EXCLUDED.isolated,
 			cert_fingerprint=COALESCE(NULLIF(EXCLUDED.cert_fingerprint,''), devices.cert_fingerprint),
 			agent_public_key_pem=COALESCE(NULLIF(EXCLUDED.agent_public_key_pem,''), devices.agent_public_key_pem),
 			transport=EXCLUDED.transport,
@@ -82,7 +81,7 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 			updated_at=now()
 	`, d.ID, d.Hostname, d.Platform, d.OSName, d.OSVersion, d.Arch, d.Serial, d.HardwareModel, d.CPU, d.MemoryMb,
 		d.DiskEncryption, d.Firewall, string(ips), d.Username, d.UptimeSeconds, string(sw), string(pend),
-		d.PatchInventory, string(fim), string(base), lastSeen, d.Connected, d.Isolated, d.CertFingerprint, d.Transport,
+		d.PatchInventory, string(fim), string(base), lastSeen, d.Connected, d.CertFingerprint, d.Transport,
 		d.AgentPublicKeyPEM, d.Distro, d.DistroRelease, d.PackageManager, d.OSEdition, repoHealthJSON(d))
 	return err
 }
@@ -122,11 +121,6 @@ func (s *Store) AppendFimEvent(ctx context.Context, ev presence.FimEvent) error 
 
 func (s *Store) SetConnected(ctx context.Context, id string, connected bool) error {
 	_, err := s.pool.Exec(ctx, `UPDATE devices SET connected=$2, updated_at=now() WHERE id=$1`, id, connected)
-	return err
-}
-
-func (s *Store) SetIsolated(ctx context.Context, id string, isolated bool) error {
-	_, err := s.pool.Exec(ctx, `UPDATE devices SET isolated=$2, updated_at=now() WHERE id=$1`, id, isolated)
 	return err
 }
 
@@ -600,7 +594,7 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]map[string]any, err
 func (s *Store) ExportAgentsJSON(ctx context.Context) ([]byte, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, hostname, platform, os_name, os_version, os_edition, arch, uptime_seconds, last_seen, connected,
-		       cert_fingerprint, transport, isolated, serial, hardware_model, cpu, memory_mb,
+		       cert_fingerprint, transport, serial, hardware_model, cpu, memory_mb,
 		       disk_encryption, firewall, ip_addresses, username, software, pending_updates,
 		       patch_inventory, fim, fim_baseline, repo_health
 		FROM devices WHERE transport = 'mtls-grpc' OR cert_fingerprint <> ''
@@ -622,7 +616,7 @@ func (s *Store) ExportAgentsJSON(ctx context.Context) ([]byte, error) {
 		var lastSeen time.Time
 		if err := rows.Scan(
 			&d.ID, &d.Hostname, &d.Platform, &d.OSName, &d.OSVersion, &d.OSEdition, &d.Arch, &d.UptimeSeconds, &lastSeen, &d.Connected,
-			&d.CertFingerprint, &d.Transport, &d.Isolated, &d.Serial, &d.HardwareModel, &d.CPU, &d.MemoryMb,
+			&d.CertFingerprint, &d.Transport, &d.Serial, &d.HardwareModel, &d.CPU, &d.MemoryMb,
 			&d.DiskEncryption, &d.Firewall, &ips, &d.Username, &sw, &pend, &d.PatchInventory, &fim, &base, &repoHealth,
 		); err != nil {
 			return nil, err

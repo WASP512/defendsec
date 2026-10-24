@@ -58,8 +58,6 @@ const (
 	// SignalVulnAssessment — installed versions assessed against advisories,
 	// with distro backports handled rather than guessed at.
 	SignalVulnAssessment Signal = "vuln.assessment"
-	// SignalPatchAction — the signed action that remediates a finding.
-	SignalPatchAction Signal = "patch.action"
 	// SignalSoftwareSupported — installed software from outside the
 	// distribution is checked against its upstream support lifecycle, so
 	// software that no longer receives security fixes is found.
@@ -84,12 +82,6 @@ const (
 	// SignalAlertLifecycle — findings are triaged, acknowledged and resolved
 	// by a named account.
 	SignalAlertLifecycle Signal = "alert.lifecycle"
-	// SignalIsolation — a host can be isolated in response to an incident.
-	SignalIsolation Signal = "response.isolation"
-	// SignalDetection — behavioural detection: process execution, network
-	// and file activity matched against rules, rather than state compared
-	// between snapshots (roadmap 3.3).
-	SignalDetection Signal = "detection.behaviour"
 
 	// SignalFIPSCrypto — the cryptographic posture is reported and can be
 	// constrained to approved algorithms (roadmap 1.8).
@@ -167,7 +159,6 @@ var signalTitles = map[Signal]string{
 	SignalInventoryHardware: "Hardware and host inventory",
 	SignalInventorySoftware: "Installed software inventory",
 	SignalVulnAssessment:    "Vulnerability assessment",
-	SignalPatchAction:       "Remediation actions",
 	SignalSoftwareSupported: "Software support lifecycle",
 	SignalRepoHealth:        "Package repository health",
 	SignalFIM:               "File integrity monitoring",
@@ -175,8 +166,6 @@ var signalTitles = map[Signal]string{
 	SignalTransportMTLS:     "Mutually authenticated agent transport",
 	SignalCertRevocation:    "Host certificate revocation",
 	SignalAlertLifecycle:    "Finding triage and resolution",
-	SignalIsolation:         "Host isolation",
-	SignalDetection:         "Behavioural detection",
 	SignalFIPSCrypto:        "Approved cryptographic algorithms",
 	SignalEvidenceExport:    "Signed evidence export",
 	SignalBackup:            "Evidence store backup",

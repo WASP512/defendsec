@@ -3,7 +3,8 @@ import { APID_ADMIN_URL } from "@/lib/commands";
 import { getAdminToken } from "@/lib/auth";
 
 export type AlertStatus = "open" | "acknowledged" | "resolved" | "suppressed";
-export type AlertKind = "fim" | "sca" | "vuln" | "response" | "system";
+// Rows written before slice 6 may carry another kind (detection); they are shown as stored.
+export type AlertKind = "fim" | "sca" | "vuln";
 export type AlertSeverity = "critical" | "high" | "medium" | "low" | "info";
 
 export type Alert = {

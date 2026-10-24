@@ -40,15 +40,12 @@ func (s *Server) RegisterMetrics(buildCommit string) {
 		[]string{"platform", "state"}, func() []metrics.Sample {
 			var out []metrics.Sample
 			now := time.Now()
-			byPlatform := map[string][3]int{}
+			byPlatform := map[string][2]int{}
 			for _, d := range s.store.List() {
 				c := byPlatform[d.Platform]
 				c[0]++
 				if seen, err := time.Parse(time.RFC3339, d.LastSeen); err == nil && now.Sub(seen) < 2*time.Minute {
 					c[1]++
-				}
-				if d.Isolated {
-					c[2]++
 				}
 				byPlatform[d.Platform] = c
 			}
@@ -58,8 +55,7 @@ func (s *Server) RegisterMetrics(buildCommit string) {
 				}
 				out = append(out,
 					metrics.Sample{Labels: []string{p, "enrolled"}, Value: float64(c[0])},
-					metrics.Sample{Labels: []string{p, "online"}, Value: float64(c[1])},
-					metrics.Sample{Labels: []string{p, "isolated"}, Value: float64(c[2])})
+					metrics.Sample{Labels: []string{p, "online"}, Value: float64(c[1])})
 			}
 			return out
 		})
