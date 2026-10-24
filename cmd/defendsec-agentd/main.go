@@ -76,6 +76,7 @@ func run(ctx context.Context, log *slog.Logger, args []string) error {
 	tlsServerName := flag.String("tls-server-name", "localhost", "SNI / hostname to verify on the server certificate")
 	heartbeatEvery := flag.Duration("heartbeat", 20*time.Second, "unary heartbeat interval")
 	showVersion := flag.Bool("version", false, "print the agent version and build commit, then exit")
+	printInventory := flag.Bool("print-inventory", false, "print this host's package inventory (distro, release, packages with source names) as JSON, then exit; contacts nothing")
 	if err := flag.Parse(args); err != nil {
 		return err
 	}
@@ -83,6 +84,12 @@ func run(ctx context.Context, log *slog.Logger, args []string) error {
 	if *showVersion {
 		fmt.Printf("%s %s\n", agentVersion, buildCommit)
 		return nil
+	}
+
+	if *printInventory {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(hostinv.CollectPackages())
 	}
 
 	secret := *enrollSecret
@@ -557,6 +564,9 @@ func inventoryReport(log *slog.Logger, snap hostinv.Snapshot, stateDir string) *
 		IpAddresses:    snap.IPAddresses,
 		Username:       snap.Username,
 		PatchInventory: snap.PatchInventory,
+		Distro:         snap.Distro,
+		DistroRelease:  snap.DistroRelease,
+		PackageManager: snap.PackageManager,
 	}
 	rep.Host.Hostname = snap.Hostname
 	rep.Host.OsName = snap.OSName
@@ -565,7 +575,10 @@ func inventoryReport(log *slog.Logger, snap hostinv.Snapshot, stateDir string) *
 	rep.Host.Platform = snap.Platform
 	rep.Host.UptimeSeconds = snap.UptimeSeconds
 	for _, item := range snap.Software {
-		rep.Software = append(rep.Software, &defendsecv1.SoftwareItem{Name: item.Name, Version: item.Version})
+		rep.Software = append(rep.Software, &defendsecv1.SoftwareItem{
+			Name: item.Name, Version: item.Version,
+			SourcePackage: item.SourcePackage, SourceVersion: item.SourceVersion,
+		})
 	}
 	for _, item := range snap.PendingUpdates {
 		rep.PendingUpdates = append(rep.PendingUpdates, &defendsecv1.PendingUpdate{Name: item.Name, Current: item.Current, Available: item.Available})

@@ -20,8 +20,13 @@ import (
 )
 
 type Software struct {
-	Name    string
-	Version string
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	// SourcePackage is the source the binary was built from (dpkg Source:, rpm
+	// SOURCERPM); SourceVersion is set when it differs from Version. Both are
+	// empty on platforms without a package manager.
+	SourcePackage string `json:"source_package,omitempty"`
+	SourceVersion string `json:"source_version,omitempty"`
 }
 
 type Update struct {
@@ -53,6 +58,12 @@ type Snapshot struct {
 	Username       string
 	UptimeSeconds  int64
 	Software       []Software
+	// Distro and DistroRelease are os-release ID and VERSION_ID; PackageManager
+	// is "dpkg" or "rpm". They select which advisory feed and which version
+	// comparator apply to Software. Empty on Windows.
+	Distro         string
+	DistroRelease  string
+	PackageManager string
 	PendingUpdates []Update
 	PatchInventory string
 	Fim            []FimFile
@@ -100,8 +111,10 @@ func Collect() Snapshot {
 		IPAddresses:    ipAddresses(),
 		Username:       username(),
 		UptimeSeconds:  id.UptimeSeconds,
-		Software:       softwareList(),
 	}
+	snap.PackageManager = packageManager()
+	snap.Distro, snap.DistroRelease = osReleaseIdentity()
+	snap.Software = collectPackages(snap.PackageManager)
 	updates, status := pendingUpdates()
 	snap.PendingUpdates = updates
 	snap.PatchInventory = status
@@ -451,68 +464,6 @@ func rpmBased() bool {
 	_, hasRPM := exec.LookPath("rpm")
 	_, hasDPKG := exec.LookPath("dpkg-query")
 	return hasRPM == nil && hasDPKG != nil
-}
-
-func softwareList() []Software {
-	items := make([]Software, 0)
-	seen := map[string]struct{}{}
-	add := func(name, version string) {
-		key := strings.ToLower(name)
-		if name == "" {
-			return
-		}
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
-		items = append(items, Software{Name: name, Version: version})
-	}
-	priority := []string{"openssh-server", "openssh", "openssl", "docker.io", "docker-ce", "containerd", "git", "python3"}
-	if rpmBased() {
-		for _, pkg := range priority {
-			raw := run("rpm", "-q", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}", pkg)
-			if name, ver, ok := strings.Cut(raw, "\t"); ok && !strings.Contains(raw, "not installed") {
-				add(name, ver)
-			}
-		}
-		raw := run("rpm", "-qa", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}\n")
-		for _, line := range strings.Split(raw, "\n") {
-			if name, ver, ok := strings.Cut(line, "\t"); ok {
-				add(name, ver)
-				if len(items) >= 80 {
-					break
-				}
-			}
-		}
-		return items
-	}
-	for _, pkg := range priority {
-		raw := run("dpkg-query", "-W", "-f=${Package}\t${Version}", pkg)
-		if name, ver, ok := strings.Cut(raw, "\t"); ok {
-			add(name, ver)
-		}
-	}
-	raw := run("dpkg-query", "-W", "-f=${Package}\t${Version}\n")
-	for _, line := range strings.Split(raw, "\n") {
-		if name, ver, ok := strings.Cut(line, "\t"); ok {
-			add(name, ver)
-			if len(items) >= 80 {
-				break
-			}
-		}
-	}
-	if len(items) <= 7 {
-		raw = run("rpm", "-qa", "--queryformat", "%{NAME}\t%{VERSION}-%{RELEASE}\n")
-		for _, line := range strings.Split(raw, "\n") {
-			if name, ver, ok := strings.Cut(line, "\t"); ok {
-				add(name, ver)
-				if len(items) >= 80 {
-					break
-				}
-			}
-		}
-	}
-	return items
 }
 
 func runAllowExit(name string, allowExit []int, args ...string) (string, int) {
