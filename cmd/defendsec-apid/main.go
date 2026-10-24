@@ -401,14 +401,13 @@ func run(log *slog.Logger) error {
 		}
 	}
 
-	// Forwarding to the operator's own log platform (roadmap 3.6). DefendSec
-	// keeps a short window for alert context and is deliberately not a log
-	// store; everything goes to the platform they already run.
+	// Forwarding to the operator's own log platform. DefendSec is deliberately
+	// not a log store; alerts go to the platform the operator already runs.
 	if raw := strings.TrimSpace(os.Getenv("DEFENDSEC_FORWARD")); raw != "" {
 		destinations, err := forward.ParseDestinations(raw, "defendsec")
 		if err != nil {
 			// Refused rather than skipped, as with anchors: an operator who
-			// believes their events are being forwarded and is wrong stops
+			// believes their alerts are being forwarded and is wrong stops
 			// looking at the reason they are not.
 			return fmt.Errorf("DEFENDSEC_FORWARD: %w", err)
 		}
@@ -419,9 +418,9 @@ func run(log *slog.Logger) error {
 			log.Info("forwarding configured", "destination", d.Name())
 		}
 	} else {
-		log.Info("no event forwarding configured",
-			"note", "DefendSec keeps a short event window for alert context and is not a log store",
-			"fix", "set DEFENDSEC_FORWARD to send events to your own platform")
+		log.Info("no alert forwarding configured",
+			"note", "DefendSec is not a log store",
+			"fix", "set DEFENDSEC_FORWARD to send alerts to your own platform")
 	}
 
 	// Transparency anchoring (roadmap 1.6).
