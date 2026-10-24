@@ -365,6 +365,42 @@ parsed, 427 rpm packages including the kernel), which was previously unverified.
 **Still not shown:** zero findings on Rocky 9; the Ubuntu Pro heuristic (no Pro host); a host older than its
 latest point release; browser rendering; CI on the 4b branch.
 
+### Exit measurement, re-run on freshly synced feeds (2026-10-23 21:43 -06:00 / 2026-10-24 03:43 UTC)
+
+Same two inventories (`ubuntu-2204.json` sha256 `6668f98b…1b4c`, `rocky-9.json` sha256 `a4d4da67…6a`),
+matcher at `scout/4b-matcher-fixes` (epoch fix included), a new scratch database (`exit4`) and an empty feed
+cache, so every feed was downloaded again (`not_modified=false` on all nine). Snapshot **1** of that database;
+RHEL 9 OVAL `Last-Modified` 2026-10-23 21:44:21 GMT, fetched 03:43:37 UTC. Commands:
+`defendsec-feeds sync` then `defendsec-feeds match --all [--json] <inventory.json>` (`--all` also lists
+no-fix entries).
+
+| Host | Packages | Distro-mapped | Fixable (fix to install) | No fix published | Informational | KEV | Exit |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Ubuntu 22.04 (VM 120, Pro not attached) | 597 dpkg | 237 | **0** | 0 | 0 | 0 | 0 |
+| Rocky 9.8 (VM 121, matched as `rhel 9`) | 422 reported (see below) | 194 | **8** | 0 | 0 | **0** | 2 |
+
+Ubuntu: nothing open, and `--all` shows no no-fix or informational entries either, so there is no ESM-only
+row to classify. Rocky: the same 8 `kernel`
+findings as before (CVE-2025-22063, -38147, CVE-2026-64481, -68202, -68299, -68448, -80530, -80536;
+advisory ids = CVE ids, range ids 625098 … 625602, feed `rhel-9`, all `fixed`, EPSS 0.001–0.005, none in
+KEV), installed `5.14.0-687.59.1.el9_8`, fixed `0:5.14.0-687.60.1.el9_8`.
+
+Classification of the 8: **genuine distro lag, not a matcher bug.** At about 03:50 UTC the Rocky BaseOS mirror's
+newest kernel is still `kernel-5.14.0-687.59.1.el9_8` (listing of
+`dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/k/`: …687.56.1, .57.1, .58.1, .59.1; no .60.1), so
+the operator cannot install the build the finding names. The feed is correct for RHEL; the host is a Rocky host.
+These are Rocky-lag findings on a host that is fully patched, so they are false positives for a Rocky fleet
+until Rocky's own errata (Apollo RLSA / `updateinfo`) is loaded. Not fixed here: a new feed, not a matcher
+change. **The zero-findings criterion is met for Ubuntu 22.04 and NOT met for Rocky 9.**
+
+Package count: the card quoted 427 (`rpm -qa`) against 422 in the export. `ParseRPMQuery` drops
+`gpg-pubkey` pseudo-packages (`internal/hostinv/packages.go:135`, test `packages_test.go`), which would account for
+5 keys; the VM is powered off, so `rpm -qa | grep -c gpg-pubkey` was **not** run and the 5 is unconfirmed on
+the host itself.
+
+Not verified in this re-run: the Ubuntu Pro heuristic, other Rocky/Alma point releases, and the repeat of the
+negative control (done earlier, unchanged inputs).
+
 ### Toolchain
 
 `protoc` 3.21.12 (Maven Central `com.google.protobuf:protoc`, SHA-1 matched the `.sha1` beside it),
