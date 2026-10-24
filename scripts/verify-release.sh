@@ -22,7 +22,7 @@ set -euo pipefail
 
 usage() {
   cat <<'MSG'
-usage: verify-release.sh [--repo OWNER/REPO] [--tag TAG] [--reproduce] DIR
+usage: verify-release.sh [--repo OWNER/REPO] [--tag TAG] [--reproduce] [--strict] DIR
 
   DIR           directory containing the downloaded release artifacts,
                 including SHA256SUMS.
@@ -30,6 +30,14 @@ usage: verify-release.sh [--repo OWNER/REPO] [--tag TAG] [--reproduce] DIR
                 provenance identity. Default: WASP512/defendsec.
   --tag         release tag, used when rebuilding for --reproduce.
   --reproduce   also rebuild the Go binaries from source and compare.
+  --strict      a check that could not run (no cosign, no gh, no signature
+                files) counts as a failure instead of a note. Use it when the
+                answer decides whether you deploy.
+  --ref REGEX   git ref the signing workflow run must have been on. Default:
+                refs/tags/v[0-9].*, so only a tagged release workflow run counts.
+  --local-build DIR is a release built on this machine, not by the release
+                workflow: signature and provenance cannot exist and are reported
+                as not verified. Never combined with --strict.
 
 Exits non-zero if any check that ran failed.
 MSG
@@ -38,6 +46,9 @@ MSG
 REPO="WASP512/defendsec"
 TAG=""
 REPRODUCE=0
+STRICT=0
+LOCAL_BUILD=0
+REF_REGEX='refs/tags/v[0-9].*'
 DIR=""
 
 while [[ $# -gt 0 ]]; do
@@ -45,6 +56,9 @@ while [[ $# -gt 0 ]]; do
     --repo) REPO="$2"; shift 2 ;;
     --tag) TAG="$2"; shift 2 ;;
     --reproduce) REPRODUCE=1; shift ;;
+    --strict) STRICT=1; shift ;;
+    --local-build) LOCAL_BUILD=1; shift ;;
+    --ref) REF_REGEX="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) DIR="$1"; shift ;;
   esac
@@ -52,6 +66,10 @@ done
 
 if [[ -z "$DIR" || ! -d "$DIR" ]]; then
   usage
+  exit 2
+fi
+if (( STRICT == 1 && LOCAL_BUILD == 1 )); then
+  echo "error: --strict and --local-build contradict each other: a local build has no signature to require" >&2
   exit 2
 fi
 DIR="$(cd "$DIR" && pwd)"
@@ -85,7 +103,7 @@ else
   while IFS= read -r file; do
     rel="${file#./}"
     case "$rel" in
-      SHA256SUMS|SHA256SUMS.sig|SHA256SUMS.pem) continue ;;
+      SHA256SUMS|SHA256SUMS.sig|SHA256SUMS.pem|SHA256SUMS.intoto.jsonl) continue ;;
     esac
     if ! grep -qF "  $rel" "$DIR/SHA256SUMS"; then
       echo "   FAILED: ${rel} is present but not listed in SHA256SUMS"
@@ -102,7 +120,10 @@ echo
 
 # ---------------------------------------------------------------- signature
 echo "2. Signature over SHA256SUMS"
-if ! command -v cosign >/dev/null 2>&1; then
+if (( LOCAL_BUILD == 1 )); then
+  echo "   SKIPPED: --local-build (a local build is never signed)"
+  skipped+=("signature")
+elif ! command -v cosign >/dev/null 2>&1; then
   echo "   SKIPPED: cosign is not installed (https://docs.sigstore.dev/cosign/installation/)"
   skipped+=("signature")
 elif [[ ! -f "$DIR/SHA256SUMS.sig" || ! -f "$DIR/SHA256SUMS.pem" ]]; then
@@ -113,36 +134,64 @@ else
   # there is no long-lived key for anybody to lose or for an attacker to
   # steal — and nothing for the operator to fetch from a second channel they
   # would have to trust separately.
+  #
+  # The identity is pinned to a run on a tag (--ref), not just to the workflow
+  # file: the same workflow also runs on branches for dry runs, and a signature
+  # from one of those is not a release.
+  cosign_out="$(mktemp)"
   if cosign verify-blob \
       --certificate "$DIR/SHA256SUMS.pem" \
       --signature "$DIR/SHA256SUMS.sig" \
-      --certificate-identity-regexp "^https://github.com/${REPO}/\.github/workflows/release\.yml@" \
+      --certificate-identity-regexp "^https://github.com/${REPO}/\.github/workflows/release\.yml@(${REF_REGEX})\$" \
       --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-      "$DIR/SHA256SUMS" >/dev/null 2>&1; then
-    echo "   OK: signed by ${REPO}'s release workflow"
+      "$DIR/SHA256SUMS" >"$cosign_out" 2>&1; then
+    echo "   OK: signed by ${REPO}'s release workflow, on a ref matching ${REF_REGEX}"
   else
-    echo "   FAILED: the signature does not verify against ${REPO}'s release workflow"
-    echo "           Run the cosign command from this script by hand to see why."
+    echo "   FAILED: the signature does not verify against ${REPO}'s release workflow on ${REF_REGEX}"
+    sed 's/^/           cosign: /' "$cosign_out" | tail -n 4
     failed=$((failed + 1))
   fi
+  rm -f "$cosign_out"
 fi
 echo
 
 # --------------------------------------------------------------- provenance
 echo "3. Build provenance"
-if ! command -v gh >/dev/null 2>&1; then
+if (( LOCAL_BUILD == 1 )); then
+  echo "   SKIPPED: --local-build (a local build has no attestation)"
+  skipped+=("provenance")
+elif ! command -v gh >/dev/null 2>&1; then
   echo "   SKIPPED: the gh CLI is not installed"
   skipped+=("provenance")
 else
   # One artifact is enough to establish which workflow and commit produced
   # the release, and the checksum manifest already binds the rest to it.
   target="$DIR/SHA256SUMS"
-  if gh attestation verify "$target" --repo "$REPO" >/dev/null 2>&1; then
-    echo "   OK: GitHub attests which workflow and commit built this"
+  gh_out="$(mktemp)"
+  gh_args=(--repo "$REPO" --deny-self-hosted-runners
+    --cert-identity-regex "^https://github.com/${REPO}/\.github/workflows/release\.yml@(${REF_REGEX})\$")
+  gh_mode=""
+  if [[ -f "$DIR/SHA256SUMS.intoto.jsonl" ]]; then
+    # The attestation travels with the release, so this needs neither a GitHub
+    # login nor the API: it verifies offline against Sigstore's trusted root.
+    gh_mode="the bundle published with the release"
+    gh_args+=(--bundle "$DIR/SHA256SUMS.intoto.jsonl")
   else
-    echo "   FAILED: no verifiable provenance attestation for SHA256SUMS"
+    # Without a bundle gh asks the GitHub API, and gh refuses to do that
+    # without a login even for a public repository.
+    gh_mode="the GitHub API"
+  fi
+  if [[ "$gh_mode" == "the GitHub API" ]] && ! gh auth status >/dev/null 2>&1 && [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+    echo "   SKIPPED: this release has no SHA256SUMS.intoto.jsonl, and gh needs a login (gh auth login) to ask GitHub"
+    skipped+=("provenance")
+  elif gh attestation verify "$target" "${gh_args[@]}" >"$gh_out" 2>&1; then
+    echo "   OK: GitHub attests which workflow and commit built this (checked against ${gh_mode})"
+  else
+    echo "   FAILED: no verifiable provenance attestation for SHA256SUMS (checked against ${gh_mode})"
+    sed 's/^/           gh: /' "$gh_out" | tail -n 4
     failed=$((failed + 1))
   fi
+  rm -f "$gh_out"
 fi
 echo
 
@@ -216,6 +265,19 @@ echo
 echo "-------------------------------------------------------------"
 if (( ${#skipped[@]} > 0 )); then
   echo "Not verified: ${skipped[*]}"
+  if (( STRICT == 1 )); then
+    # A rebuild nobody asked for (no --reproduce) is not a check that failed to
+    # run; everything else that was skipped is.
+    strict_skips=0
+    for item in "${skipped[@]}"; do
+      if [[ "$item" == "reproducible rebuild" && "$REPRODUCE" -eq 0 ]]; then continue; fi
+      strict_skips=$((strict_skips + 1))
+    done
+    if (( strict_skips > 0 )); then
+      failed=$((failed + strict_skips))
+      echo "--strict: ${strict_skips} skipped check(s) count as failures."
+    fi
+  fi
 fi
 if (( failed > 0 )); then
   echo "RESULT: ${failed} check(s) FAILED. Do not deploy these artifacts."

@@ -1834,6 +1834,110 @@ listening on the LAN address, admin API on loopback.
 | Old (pre-slice 6) agent against the new apid | linux | — | — | 40 s, enrolled and heartbeating, no server warning |
 | Removed pages and routes are gone | Next.js 16 build | — | see the card | 404 over HTTP |
 
+## Slice 9 — v0.1.0 release: dry run, installer, verification (no migration)
+
+Branch `scout/9-release` from `2cda0ac` (main after slice 6). The release itself (tag, publish, pilot instance) is **not
+in this section**: it needs an explicit go, and its results are added after it happens.
+
+### What the dry run found
+
+The first run of anything release-shaped. Each of these would have broken the release or an install, and none was
+visible before running it.
+
+| # | Found by | Defect | Fix |
+| --- | --- | --- | --- |
+| 1 | reading the installer, then a lab install | `install-server.sh` built from source and **never installed `defendsec-feeds` or its timer**: a fresh server had no advisories, so no host could be matched | installs the binary, the unit and the timer, and starts the first sync |
+| 2 | local dry run | the installers were not release assets, and the "Proxmox installer from the release" was a source-build script | `install-server.sh` and `create-proxmox-ct.sh` ship in the release, stamped with the tag (`RELEASE_DEFAULT`); they install that release from prebuilt, `SHA256SUMS`-checked files |
+| 3 | local dry run, `verify-release.sh` | `gh attestation verify` refuses to run without a GitHub login, so on a clean machine the provenance check reported **FAILED** ("no verifiable attestation") for a good release | the attestation bundle is a release asset (`SHA256SUMS.intoto.jsonl`) and is verified offline; proven without a token on a real public attestation (below) |
+| 4 | reading `verify-release.sh` | signature identity matched `release.yml@` on any ref, so a signature from a branch run would count; a missing `.sig`/`.pem`, `cosign` or `gh` exited 0 | identity pinned to `refs/tags/v…` (`--ref`), `--strict` makes a check that could not run a failure, failures print the tool's message |
+| 5 | **release.yml dry run on CI** (runs 40099672690, 40099936553) | `build-sboms.sh` ran `cyclonedx-gomod` on `defendsec-agent-windows-amd64.msi`, and `2>/dev/null` hid the error: **the release build failed every time the MSI existed**, i.e. always on CI (locally `wixl` is absent, so the MSI is skipped) | `.msi` skipped (its agent has an SBOM); other failures print the tool's message. Reproduced locally with the old script on a dummy `.msi` (`s9/logs/test-sbom.txt`) |
+| 6 | lab run of the update helper | `update-server.sh`: `work` was `local` but the EXIT trap ran after the function returned, so with `set -u` **every update exited 1 and left 122 MB in `update-work.*`** (the update itself completed) | `work` is not local; rc 0 and no leftover, same VM, same release |
+| 7 | reading the helper | `update-server.sh` replaced only `defendsec-apid` and the console, never `defendsec-web` or `defendsec-feeds` | both are required assets, replaced, rolled back, health-checked; `test-server-update.sh` tampers each binary (fails on the old script at `defendsec-web`) |
+| 8 | Rocky 9.8 lab install | with SELinux enforcing the console crash-looped (`SELinux is preventing node from using the execmem access`): `node` was a symlink into `/usr/local/lib/nodejs` (`lib_t`), so systemd did not start it as `unconfined_service_t` | a copy in `/usr/local/bin` (`bin_t`); same release then passes all three health checks |
+| 9 | uninstall on both VMs | `uninstall-server.sh` left `defendsec-web`, the feed timer, the update path and the update backups | removed |
+
+### Commands and results
+
+Dry run exactly as `release.yml` builds (`VERSION=v0.1.0`, `COMMIT=<head>`, output outside the tree), on hermesagent:
+
+```
+scripts/build-release.sh                      rc 0 (215 s cold cache, 46 s warm; 43 files in dist)
+scripts/check-reproducible.sh                 rc 0, 7 targets "reproducible" (apid, agentd, verify, web, feeds linux/amd64; verify darwin/arm64; agentd windows/amd64)
+scripts/verify-release.sh --local-build dist  checksums OK, no unlisted files; signature, provenance and rebuild NOT verified (named in the output); rc 0
+```
+
+**Signing cannot happen on this machine.** Signature and provenance were exercised in CI, by the same `release.yml`
+run from the branch `scout/9-release-dryrun` (which publishes nothing): build, SBOMs with `wixl` present and
+`REQUIRE_MSI=1`, reproducibility check, `cosign sign-blob`, `attest-build-provenance`, and `verify-release.sh --strict
+--ref 'refs/heads/.*'` on the result. Run 40100363421 (head `a083b2c`): all steps green; runs 40099672690 and
+40099936553 failed at the SBOM step (defect 5). Run 40101137166 (head `3b775bc`, after the last script change; later commits are documentation only): all steps green. Branch CI on the same head: run 40101137141, green.
+
+Guard set from slice 6 (`s6/guards.sh`, head `a083b2c`, no Go or TypeScript changed in this slice): `go build ./...`,
+`go vet ./...`, `GOOS=windows go vet ./...`, `GOOS=darwin go vet ./cmd/defendsec-verify`, `gofmt -l`: rc 0. `go test
+-json ./...` without a database: 989 pass, 0 fail, 194 skipped (database tests). With the titan test database, CI's
+integration command: 301 pass, 0 fail (`storepg`, `db/migrations`, `control`, `feeds/runner`). `npm ci`, `lint`,
+`test` (215 pass), `build`, `tsc --noEmit`: rc 0. `govulncheck ./...`: "Your code is affected by 0 vulnerabilities".
+
+Installer, on two real lab VMs (clean images; 1 vCPU, about 2 GB; the release directory copied over, as the installer's
+`--release-dir`, because the release is not published):
+
+```
+Ubuntu 22.04 (VM 120)   install-server.sh, stamped v0.1.0 copy: rc 0 in 44 s, 8 stages, 3 health checks passed,
+                        defendsec-feeds.timer enabled, first sync started
+                        first sync: 14 feeds, 197 MiB downloaded, 6 min 12 s, rc 0 (Rocky's Apollo feed 178 s of it)
+Rocky 9.8 (VM 121)      SELinux enforcing: first attempt failed (defect 8); after the fix rc 0, 3 health checks passed
+update helper (VM 120)  defendsec-update apply in test mode against the local release: backup made, apid/web/feeds
+                        replaced (inodes changed), 3 services active; rc 1 before defect 6's fix, rc 0 after
+uninstall (both VMs)    --purge-data --purge-postgres: no unit, binary, port, directory, database or role left
+                        (the defendsec user, the postgresql packages and Node stay; defect 9 fixed after the run)
+```
+
+Agent enrollment from the release's own files (`install-agent.sh` served by the VM-120 server, console certificate pinned
+with `--download-ca`): both VMs enrolled (4 s and 8 s), `defendsec-agentd -version` prints `0.1.0 <commit>`. Two
+minutes later `/v1/exposure/summary`: 2 hosts assessed, 0 not assessed; Ubuntu 22.04: 0 findings; **Rocky 9.8: 8 fixable
+kernel findings** (`CVE-2026-68299` and seven more, fixed in `5.14.0-687.60.1.el9_8`, feed `rocky-9`, issued
+2026-10-24). The Rocky mirror's newest `kernel-core` is still `687.59.1` (checked in the repo listing and with `dnf`), and the
+VM is on it, so there is nothing to install. See "Not verified".
+
+Offline attestation check, without a GitHub login, on a real public artifact (cli/cli `gh_2.103.2_linux_arm64.tar.gz`,
+bundle fetched from the attestations API and decoded): `gh attestation verify … --bundle … --repo cli/cli
+--deny-self-hosted-runners --cert-identity-regex '…deployment\.yml@(refs/heads/.*)$'` rc 0; the same with a `release\.yml`
+identity, or with `refs/tags/v…` (that run was on a branch), fails. Without `--bundle` the same command stops at "please
+run gh auth login". A `cosign` v2.6.5 release signature (legacy `--signature`/`--certificate` files, the format
+`release.yml` writes) verifies with both cosign v2.6.5 and v3.1.4.
+
+### Feature × platform × evidence matrix — slice 9
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Release build, SBOMs, checksums | linux (CI runner, `wixl`) | `internal/supplychain` | `release.yml` dry run, run 40100363421 | built on hermesagent without the MSI |
+| Reproducible builds | linux, darwin, windows | `check-reproducible.sh` | CI + dry run | 7 targets reproducible |
+| Signature + provenance verified by `verify-release.sh --strict` | CI runner | — | dry-run run 40100363421 (branch identity) | **not run on a published release** |
+| Offline attestation verification without a login | any | — | — | public cli/cli artifact |
+| Release-mode server install | Ubuntu 22.04 | — | — | VM 120, 44 s |
+| Release-mode server install, SELinux enforcing | Rocky 9.8 | — | — | VM 121 |
+| Release-mode install on Debian 12 (the Proxmox LXC) | Debian 12 | — | — | **not run** |
+| `create-proxmox-ct.sh` | Proxmox VE | `bash -n` only | — | **not run** (no access to a Proxmox host) |
+| First feed sync from the installed server | Ubuntu 22.04 | — | — | VM 120, 197 MiB, 6 min 12 s |
+| Update helper (all three binaries, rollback list, exit status) | Ubuntu 22.04 | `test-server-update.sh` (3 tamper cases, missing asset; fails on the old script) | — | VM 120, test mode, local release |
+| Uninstaller | Ubuntu 22.04, Rocky 9.8 | — | — | both VMs |
+| Agent install and enrollment from the release | Ubuntu 22.04, Rocky 9.8 | — | — | both VMs |
+
+### Not verified
+
+- **A published release.** Nothing here has run against a real tag: the tag-only steps (publish, download, `--strict
+  --reproduce` against GitHub, the tag-pinned identity) are untested, and so is `--release latest`.
+- The signature and attestation were made by a branch run; a tag run uses the same steps and a different ref.
+- Debian 12, the Proxmox container script, Fedora, openSUSE and arm64 installs; `install-server.sh` on a host with
+  an existing source install; the Windows MSI built by `wixl` was not installed on a Windows machine.
+- `cosign` verification of the real release signature on a clean machine (cosign v3 was shown to read the legacy format
+  on another project's release only).
+- The SBOM contents, and the update helper against GitHub (it ran against a local copy in test mode).
+- **A Rocky/Alma host can show a fixable finding for a fix Rocky has published in errata but not on its mirrors.** Seen
+  once, on 2026-10-24; whether Apollo routinely publishes ahead of the mirror is not measured. The matcher is unchanged.
+- `README.md` and `docs/INSTALL.md` now describe the release install; the `RELEASE`/`--release` paths other than the
+  stamped copy and `--release-dir` were not run on the lab VMs.
+
 ## Slice 13 — Google Workspace identity posture (migration 032)
 
 - Date: 2026-10-24 (MDT). Host: `hermesagent`, go1.26.10, node 22, Postgres 16 on titan CT 119 (own database).
@@ -1947,6 +2051,26 @@ listening on the LAN address, admin API on loopback.
   (`TestGWSSettings`); `gmail.readonly` marked required (`TestGWSAPIEndToEnd`).
 - **Still not verified:** everything under "Not verified" above. In particular, no real Google Workspace domain was used, so the claim that a real domain's
   `getAutoForwarding` and `filters.list` accept `gmail.settings.basic` under domain-wide delegation rests on Google's documentation only.
+
+### Slice 13 — review fixes (nitpick, review t_33dbef96)
+
+- **What changed.** The standing "not assessed" text for mailbox delegation said DefendSec "asks only for read-only scopes". The default Gmail scope,
+  `gmail.settings.basic`, is a write scope for settings, so that was false (it was on `/identity/google`, in `GET /v1/identity/google/status` and in every run's
+  `not_assessed`). It now says DefendSec makes only GET requests and does not ask for `gmail.settings.sharing`. The same claim is gone from the comments in
+  `internal/gws/types.go`, `internal/gws/google/client.go` and `internal/controls/signals.go`, from the page intro ("Makes only read requests") and from
+  `docs/GOOGLE-WORKSPACE.md`.
+- **New tests.** `TestNotAssessedNeverClaimsReadOnlyScopes` (no standing entry may say "read-only scopes"; the delegation entry must say "only GET requests"),
+  `TestTwoStepEnforcedButNotEnrolledIsNotEnrolled` (a user with `Enforced2SV` true and `Enrolled2SV` false is still a finding), and two more rows in
+  `TestNewValidation` (`https://mail.google.com/` and `gmail.settings.sharing` are refused by `google.New`).
+- **3 mutations, each reverted, each fails a test (not a compile error):** `if u.Enrolled2SV || u.Enforced2SV` (`TestTwoStepEnforcedButNotEnrolledIsNotEnrolled`);
+  the old "asks only for read-only scopes" text put back (`TestNotAssessedNeverClaimsReadOnlyScopes`); `google.New` accepting `https://mail.google.com/`
+  (`TestNewValidation`).
+- **Merged `origin/main` (282489d, slice 9).** One conflict, `docs/VERIFIED.md` (both sides add sections, both kept). Migration 032 is still free.
+- **Runs after the merge** (`umask 0022`, `TZ=UTC`, own database on CT 119): `go build ./...`, `go vet ./...`, `gofmt -l .` clean; `go test -p 1 -count=1 ./...` with no
+  database: no failures; `go test -p 1 -count=1 -v ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/... ./internal/rmm/...`:
+  exit 0, 357 PASS lines, 0 FAIL, all packages `ok`; `./internal/gws/... ./internal/idposture/...` on the database: `ok`, 39 PASS lines. `npm test` 220/220,
+  `npm run lint` and `tsc --noEmit` clean, `npm run build` green.
+- **Still not verified:** unchanged from above (no real Google response, no real JWT exchange, the Admin console menu paths).
 
 ## Feature × platform × evidence matrix — additions from slice 13
 

@@ -26,6 +26,8 @@ tar -tzf "$backup_path" | awk '
 printf '%s\n' 'console fixture' >"${ASSETS}/console/server.js"
 tar -C "${ASSETS}/console" -czf "${ASSETS}/defendsec-console.tar.gz" .
 for name in defendsec-apid-linux-amd64 defendsec-apid-linux-arm64 \
+  defendsec-web-linux-amd64 defendsec-web-linux-arm64 \
+  defendsec-feeds-linux-amd64 defendsec-feeds-linux-arm64 \
   defendsec-agentd-linux-amd64 defendsec-agentd-linux-arm64; do
   printf '#!/usr/bin/env bash\necho %s\n' "$name" >"${ASSETS}/${name}"
   chmod +x "${ASSETS}/${name}"
@@ -43,6 +45,10 @@ jq -n --arg base "file://${ASSETS}" '{
   assets: [
     "defendsec-apid-linux-amd64",
     "defendsec-apid-linux-arm64",
+    "defendsec-web-linux-amd64",
+    "defendsec-web-linux-arm64",
+    "defendsec-feeds-linux-amd64",
+    "defendsec-feeds-linux-arm64",
     "defendsec-agentd-linux-amd64",
     "defendsec-agentd-linux-arm64",
     "defendsec-console.tar.gz",
@@ -59,18 +65,33 @@ DEFENDSEC_UPDATE_TEST_MODE=1 \
 DEFENDSEC_RELEASE_API_URL="file://${TMP}/release.json" \
   bash "${ROOT}/packaging/proxmox/update-server.sh" verify-request "${TMP}/request.json"
 
-printf '%s\n' 'tampered' >>"${ASSETS}/defendsec-apid-linux-amd64"
+# Every binary the update installs must be checked: tamper with each in turn
+# (this host's architecture) and require a rejection, then restore it.
 case "$(uname -m)" in
-  aarch64|arm64)
-    printf '%s\n' 'tampered' >>"${ASSETS}/defendsec-apid-linux-arm64"
-    ;;
+  aarch64|arm64) arch=arm64 ;;
+  *) arch=amd64 ;;
 esac
+for bin in defendsec-apid defendsec-web defendsec-feeds; do
+  asset="${ASSETS}/${bin}-linux-${arch}"
+  cp "$asset" "${asset}.orig"
+  printf '%s\n' 'tampered' >>"$asset"
+  if DEFENDSEC_UPDATE_TEST_MODE=1 \
+    DEFENDSEC_RELEASE_API_URL="file://${TMP}/release.json" \
+    bash "${ROOT}/packaging/proxmox/update-server.sh" verify-request "${TMP}/request.json" >/dev/null 2>&1; then
+    echo "tampered ${bin} unexpectedly passed verification" >&2
+    exit 1
+  fi
+  mv -f "${asset}.orig" "$asset"
+  echo "tampered ${bin} was rejected"
+done
+
+# A release with no web or feeds binary is refused, not half-installed.
+jq 'del(.assets[] | select(.name | startswith("defendsec-feeds-linux-")))' "${TMP}/release.json" >"${TMP}/release-nofeeds.json"
 if DEFENDSEC_UPDATE_TEST_MODE=1 \
-  DEFENDSEC_RELEASE_API_URL="file://${TMP}/release.json" \
+  DEFENDSEC_RELEASE_API_URL="file://${TMP}/release-nofeeds.json" \
   bash "${ROOT}/packaging/proxmox/update-server.sh" verify-request "${TMP}/request.json" >/dev/null 2>&1; then
-  echo "tampered release unexpectedly passed verification" >&2
+  echo "a release without defendsec-feeds unexpectedly passed verification" >&2
   exit 1
 fi
-
-echo "tampered release was rejected"
+echo "a release missing defendsec-feeds was rejected"
 
