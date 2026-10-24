@@ -157,6 +157,9 @@ type Finding struct {
 	EPSS          *float64
 	CVSS          *float64
 	Reason        string
+	// UpstreamFixedOn is, for an awaiting_vendor finding, the date (YYYY-MM-DD)
+	// Red Hat published the fix the host's own distribution has not released.
+	UpstreamFixedOn string
 }
 
 // Key identifies a finding across runs: one per advisory per package family.
@@ -710,6 +713,7 @@ func judge(w *work, cands []Candidate, scheme Scheme, onPro bool, distro, base s
 			"installed version is below the version the distro fixed this in"), judgeFinding
 	case bestUp != nil:
 		f := newFinding(*bestUp, w.pkg, bestUpVer, BasisDistro, KindAwaitingVendor, awaitingReason(*bestUp, distro))
+		f.UpstreamFixedOn = bestUp.Issued
 		return f, judgeFinding
 	case proOnly != nil:
 		return newFinding(*proOnly, w.pkg, versionFor(*proOnly, w.pkg), BasisDistro, KindUnfixed,

@@ -61,6 +61,24 @@ func vulnHost(dev presence.Device) vuln.Host {
 	return h
 }
 
+// vulnInventory is what the store needs to say why a finding closed: the host's
+// installed versions, and the ordering its package manager uses.
+func vulnInventory(h vuln.Host) *storepg.Inventory {
+	_, _, scheme := vuln.NormalizeDistro(h.Distro, h.Release, h.PackageManager)
+	if scheme == vuln.SchemeAuto && len(h.Packages) > 0 {
+		versions := make([]string, 0, len(h.Packages))
+		for _, p := range h.Packages {
+			versions = append(versions, p.Version)
+		}
+		scheme = vuln.DetectScheme(versions...)
+	}
+	inv := &storepg.Inventory{Scheme: scheme, Versions: make(map[string]string, len(h.Packages))}
+	for _, p := range h.Packages {
+		inv.Versions[p.Name] = p.Version
+	}
+	return inv
+}
+
 // vulnFingerprint identifies the inputs of a match: the host's identity and
 // packages, and the feed snapshot it is matched against.
 func vulnFingerprint(h vuln.Host, snapshotID int64) string {
@@ -110,7 +128,7 @@ func (s *Server) matchDevice(ctx context.Context, dev presence.Device) (*vuln.Re
 	if err != nil {
 		return nil, err
 	}
-	if err := s.pg.RecordFindings(ctx, dev.ID, res, snapID); err != nil {
+	if err := s.pg.RecordFindingsFor(ctx, dev.ID, res, snapID, vulnInventory(host)); err != nil {
 		return nil, err
 	}
 	s.syncVulnAlerts(ctx, dev, res)
