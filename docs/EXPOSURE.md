@@ -41,6 +41,14 @@ Most urgent first (`internal/exposure`, mirrored by `lib/exposure-model.ts` `com
 
 A missing EPSS or CVSS score ranks after any score, including 0: unknown is not zero.
 
+**End-of-life software** (slice 10, [EOL.md](EOL.md)) is in the fix bucket beside the patches: upgrading is the fix. It has
+no EPSS or CVSS, so it ranks **among the unscored findings**, after every finding that has an exploitation score and by
+severity label against the other unscored ones: a release past security support is `high`, one past active support is
+`low`. The ranking code is unchanged. The row's reason reads "Past end of security support since 2023-11-26 · no one
+patches it any more, so every future flaw stays open · no exploitation score applies · installed from deb.sury.org, not
+the distribution · ranks with the unscored findings by severity (high)", and the row names the release
+("PHP 8.0") and the upgrade target rather than a fixed version.
+
 Every row carries the reason it ranks where it does, and **CVSS is never the headline**:
 
 - KEV: "Exploited in the wild since 2026-09-14 · EPSS 0.71 · CVSS 9.8"

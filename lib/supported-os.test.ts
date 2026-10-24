@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { distroOf, floorsFrom, supportedOs } from "./supported-os.ts";
+import { readFileSync } from "node:fs";
+
+import type { OsRelease } from "./os-lifecycle.ts";
+import { distroOf, floorsFrom, supportedOs, windowsSupportOf } from "./supported-os.ts";
 
 const linux = (osName: string, osVersion: string) => supportedOs({ platform: "linux", osName, osVersion });
 
@@ -27,13 +30,36 @@ test("unknown is not a failure", () => {
   assert.equal(supportedOs({ platform: "darwin", osName: "macOS", osVersion: "15.1" }), null);
 });
 
-test("Windows by build number", () => {
-  const win = (v: string) => supportedOs({ platform: "windows", osName: "Microsoft Windows 11 Pro", osVersion: v });
-  assert.equal(win("10.0.22631"), true); // Windows 11 23H2 — the old check reported this unsupported
-  assert.equal(win("10.0.26100"), true); // Server 2025 / Windows 11 24H2
-  assert.equal(win("10.0.20348"), true); // Server 2022
-  assert.equal(win("10.0.19045"), false); // Windows 10 22H2
-  assert.equal(win(""), null);
+// A real feed fetch (see os-lifecycle.test.ts); the Windows judgement needs the calendar.
+const calendar = (JSON.parse(readFileSync(new URL("./testdata/os-calendar.json", import.meta.url), "utf8")) as { releases: OsRelease[] }).releases;
+const TODAY = new Date("2026-10-24T12:00:00Z");
+
+test("Windows by edition and build, from the calendar", () => {
+  const win = (osName: string, v: string, osEdition = "") =>
+    supportedOs({ platform: "windows", osName, osVersion: v, osEdition }, floorsFrom(undefined), calendar, TODAY);
+  assert.equal(win("Microsoft Windows Server 2016 Standard", "10.0.14393", "ServerStandard"), true); // the old build floor said false
+  assert.equal(win("Microsoft Windows Server 2019 Standard", "10.0.17763", "ServerStandard"), true); // and this
+  assert.equal(win("Microsoft Windows Server 2022 Standard", "10.0.20348", "ServerStandard"), true);
+  assert.equal(win("Microsoft Windows 11 Enterprise", "10.0.22631", "Enterprise"), true);
+  assert.equal(win("Microsoft Windows 10 Pro", "10.0.19045", "Professional"), false);
+  assert.equal(win("Microsoft Windows 10 Enterprise 2016 LTSB", "10.0.14393", "EnterpriseS"), false);
+  assert.equal(win("Microsoft Windows", "10.0.17763"), null); // edition unknown, build shared
+  assert.equal(win("Microsoft Windows 11 Pro", ""), null);
+});
+
+test("Windows is unknown, not unsupported, until the calendar is loaded", () => {
+  const d = { platform: "windows", osName: "Microsoft Windows Server 2016 Standard", osVersion: "10.0.14393", osEdition: "ServerStandard" };
+  assert.equal(supportedOs(d, floorsFrom(undefined), null, TODAY), null);
+  assert.equal(supportedOs(d, floorsFrom(undefined), [], TODAY), null);
+});
+
+test("DEFENDSEC_SUPPORTED_OS windows=<build> still forces a build floor over the calendar", () => {
+  const floors = floorsFrom("windows=20348");
+  const s2016 = { platform: "windows", osName: "Microsoft Windows Server 2016 Standard", osVersion: "10.0.14393", osEdition: "ServerStandard" };
+  assert.equal(supportedOs(s2016, floors, calendar, TODAY), false); // the operator asked for it
+  assert.equal(supportedOs({ ...s2016, osVersion: "10.0.20348" }, floors, calendar, TODAY), true);
+  assert.equal(supportedOs({ ...s2016, osVersion: "" }, floors, calendar, TODAY), null);
+  assert.match(windowsSupportOf(s2016, floors, calendar, TODAY).reason, /configured minimum 20348/);
 });
 
 test("distro names", () => {

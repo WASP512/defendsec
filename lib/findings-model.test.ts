@@ -96,3 +96,40 @@ test("an exploited CVE awaiting the vendor gets a red notice, and nothing else d
   assert.match(many.title, /^3 exploited-in-the-wild vulnerabilities are fixed upstream/);
   assert.match(many.detail, /KEV/);
 });
+
+// ---- end-of-life findings (slice 10) ---------------------------------------------------------
+
+import { eolAssessmentNote, eolStageLabel, originLabel, upgradeLabel } from "./findings-model.ts";
+
+test("upgradeLabel names the release to move to and how long it is supported", () => {
+  const e = { productLabel: "PHP", upgradeTo: "8.4", upgradeToSupportedUntil: "2028-12-31" };
+  assert.equal(upgradeLabel(e), "upgrade to PHP 8.4 (security support until 2028-12-31)");
+  assert.equal(upgradeLabel({ productLabel: "PHP", upgradeTo: "8.4" }), "upgrade to PHP 8.4");
+  assert.equal(upgradeLabel({ productLabel: "PHP", upgradeTo: "" }), "upgrade needed; no newer supported release is listed");
+});
+
+test("eolStageLabel and originLabel read the way an operator says them", () => {
+  assert.equal(eolStageLabel({ stage: "eol", stageFrom: "2023-11-26" }), "end of life since 2023-11-26");
+  assert.equal(eolStageLabel({ stage: "eoas", stageFrom: "2024-12-31" }), "past active support since 2024-12-31");
+  assert.equal(eolStageLabel({ stage: "eol", stageFrom: "" }), "end of life");
+  assert.equal(originLabel({ origin: "deb.sury.org", originRepo: "https://packages.sury.org/php" }), "deb.sury.org (https://packages.sury.org/php)");
+  assert.equal(originLabel({ origin: "Debian" }), "Debian");
+  assert.equal(originLabel({}), "unknown");
+});
+
+test("fixLabel of an end-of-life finding is the upgrade", () => {
+  const eol = { product: "php", productLabel: "PHP", cycle: "8.0", stage: "eol" as const, stageFrom: "2023-11-26", packages: ["php8.0-cli"], origin: "deb.sury.org", upgradeTo: "8.4" };
+  assert.equal(fixLabel({ kind: "eol", fixed: "", fixState: "end_of_life", eol }), "upgrade to PHP 8.4");
+  assert.equal(fixLabel({ kind: "finding", fixed: "1.0", fixState: "fixed" }), "fixed in 1.0");
+});
+
+test("eolAssessmentNote says what the end-of-life check examined, and is silent when it examined nothing", () => {
+  assert.equal(eolAssessmentNote(null), null);
+  assert.equal(eolAssessmentNote({}), null);
+  assert.equal(eolAssessmentNote({ eolMapped: 0, eolDistro: 0, eolUnknown: 0 }), null);
+  assert.equal(
+    eolAssessmentNote({ eolMapped: 4, eolDistro: 3, eolUnknown: 1 }),
+    "4 installed packages are application software the lifecycle table knows; 3 from the distribution (judged by its own support lifecycle, not upstream's); 1 with no readable origin (not assessed)",
+  );
+  assert.equal(eolAssessmentNote({ eolMapped: 1, eolDistro: 0, eolUnknown: 0 }), "1 installed package is application software the lifecycle table knows");
+});

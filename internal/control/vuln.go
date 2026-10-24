@@ -56,6 +56,7 @@ func vulnHost(dev presence.Device) vuln.Host {
 	for _, sw := range dev.Software {
 		h.Packages = append(h.Packages, vuln.Package{
 			Name: sw.Name, Version: sw.Version, SourcePackage: sw.SourcePackage, SourceVersion: sw.SourceVersion,
+			Origin: sw.Origin, OriginRepo: sw.OriginRepo,
 		})
 	}
 	return h
@@ -85,7 +86,7 @@ func vulnFingerprint(h vuln.Host, snapshotID int64) string {
 	sum := sha256.New()
 	fmt.Fprintf(sum, "%s\x00%s\x00%s\x00%d\x00", h.Distro, h.Release, h.PackageManager, snapshotID)
 	for _, p := range h.Packages {
-		fmt.Fprintf(sum, "%s\x00%s\x00%s\x00%s\x00", p.Name, p.Version, p.SourcePackage, p.SourceVersion)
+		fmt.Fprintf(sum, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00", p.Name, p.Version, p.SourcePackage, p.SourceVersion, p.Origin, p.OriginRepo)
 	}
 	return hex.EncodeToString(sum.Sum(nil))
 }

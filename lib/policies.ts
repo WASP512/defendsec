@@ -1,4 +1,4 @@
-import { supportedOs } from "./supported-os.ts";
+import { supportedOs, windowsSupportOf } from "./supported-os.ts";
 import type { Device, FindingTriage, PolicyResult, PolicyStatus } from "./types";
 import { ONLINE_WINDOW_MS } from "./types";
 import { SAMPLE_KEEP_ONLINE } from "./demo";
@@ -63,7 +63,7 @@ export const POLICY_DEFS = [
   {
     id: "supported-os",
     name: "Supported OS",
-    description: "A vendor-supported release: Ubuntu 22.04+, Debian 12+, Fedora (current), RHEL 8+, openSUSE Leap 16+ / Tumbleweed, or Windows 11 / Server 2022+.",
+    description: "A vendor-supported release: Ubuntu 22.04+, Debian 12+, Fedora (current), RHEL 8+, openSUSE Leap 16+ / Tumbleweed, or a Windows edition and build that Microsoft still patches (from the endoflife.date calendar).",
   },
   {
     id: "vulns",
@@ -139,6 +139,13 @@ function vulnPolicy(vulns: VulnInput, triages: FindingTriage[]): { status: Polic
     : { status: "fail", detail: `${n} high, critical or KEV finding${n === 1 ? "" : "s"} with a fix available` };
 }
 
+function supportedOsDetail(device: Device): string {
+  const os = `${device.osName} ${device.osVersion}`.trim() || "Unknown OS";
+  if (device.platform !== "windows") return os;
+  const why = windowsSupportOf(device).reason;
+  return `${os}: ${why}`;
+}
+
 export function evaluateDevice(
   device: Device,
   _fimEvents: unknown[] = [],
@@ -187,7 +194,7 @@ export function evaluateDevice(
       name: "Supported OS",
       description: POLICY_DEFS[3].description,
       status: statusFrom(supportedOs(device)),
-      detail: `${device.osName} ${device.osVersion}`.trim() || "Unknown OS",
+      detail: supportedOsDetail(device),
     },
     {
       id: "vulns",

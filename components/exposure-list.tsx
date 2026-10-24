@@ -133,8 +133,11 @@ export function ExposureList({ query, page }: { query: ExposureListQuery; page: 
                     scroll={false}
                     className="font-medium underline-offset-2 hover:underline"
                   >
-                    {g.cve || g.advisoryId}
+                    {g.eol ? `${g.eol.productLabel} ${g.eol.cycle}` : g.cve || g.advisoryId}
                   </Link>
+                  {g.eol ? (
+                    <Badge variant="outline">{g.eol.stage === "eol" ? "End of life" : "Past active support"}</Badge>
+                  ) : null}
                   {g.cve && g.cve !== g.advisoryId ? (
                     <span className="text-xs text-muted-foreground">{g.advisoryId}</span>
                   ) : null}

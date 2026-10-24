@@ -11,7 +11,7 @@ import { ensureStore } from "@/lib/store";
 import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 import { apidId, evaluateDevice, fimDriftPaths, isOnline, type VulnInput } from "@/lib/policies";
 import { getFindings, getFindingsSummary } from "@/lib/findings";
-import { coverageNotice, exploitedAwaitingNotice, findingStatus } from "@/lib/findings-model";
+import { coverageNotice, eolAssessmentNote, exploitedAwaitingNotice, findingStatus } from "@/lib/findings-model";
 import { CoverageBanner, ExploitedAwaitingBanner, FindingSummary } from "@/components/finding-summary";
 import {
   formatBytesMb,
@@ -49,8 +49,10 @@ export default async function DeviceDetailPage({
     : { available: false };
   const policies = evaluateDevice(device, fimEvents, store.triages, vulns);
   const findings = findingsResult?.findings ?? [];
-  const fixable = findings.filter((f) => f.kind === "finding");
-  const noFix = findings.filter((f) => f.kind !== "finding");
+  // End-of-life software is work for this week like a patch: upgrading is the fix.
+  const isFixable = (f: { kind: string }) => f.kind === "finding" || f.kind === "eol";
+  const fixable = findings.filter(isFixable);
+  const noFix = findings.filter((f) => !isFixable(f));
   const exploitedAwaiting = exploitedAwaitingNotice(findings.filter((f) => f.kind === "awaiting_vendor" && f.kev).length);
   const notice = findingsResult ? coverageNotice(findingsResult.state) : null;
   const drifts = fimDriftPaths(device);
@@ -187,6 +189,11 @@ export default async function DeviceDetailPage({
             {findingsResult.state?.release} advisories
             {findingsResult.state?.matchedAt ? ` (${relativeTime(findingsResult.state.matchedAt)})` : ""};{" "}
             {findingsResult.state?.distroMapped ?? 0} are covered by the distribution&apos;s feed.
+          </p>
+        ) : null}
+        {findingsResult && !notice && eolAssessmentNote(findingsResult.state) ? (
+          <p className="text-sm text-muted-foreground" data-eol-assessment>
+            End-of-life check: {eolAssessmentNote(findingsResult.state)}.
           </p>
         ) : null}
         {findingsResult && !notice && fixable.length === 0 ? (

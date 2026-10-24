@@ -3,7 +3,15 @@ import { AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { SeverityBadge } from "@/components/status-badge";
 import { cn } from "@/lib/utils";
-import { feedLabel, fixLabel, type CoverageNotice, type ExploitedNotice, type VulnFinding } from "@/lib/findings-model";
+import {
+  eolStageLabel,
+  feedLabel,
+  fixLabel,
+  originLabel,
+  type CoverageNotice,
+  type ExploitedNotice,
+  type VulnFinding,
+} from "@/lib/findings-model";
 import type { FindingStatus } from "@/lib/types";
 
 /** One finding: what, where, what fixes it, and what data it came from. */
@@ -34,6 +42,7 @@ export function FindingSummary({
             awaiting vendor
           </Badge>
         ) : null}
+        {finding.kind === "eol" && finding.eol ? <Badge variant="outline">{eolStageLabel(finding.eol)}</Badge> : null}
         {finding.kind === "unfixed" ? <Badge variant="outline">no fix published</Badge> : null}
         {finding.kind === "informational" ? <Badge variant="outline">informational</Badge> : null}
         {status === "acknowledged" ? <Badge variant="outline">acknowledged</Badge> : null}
@@ -55,6 +64,12 @@ export function FindingSummary({
       {finding.kind === "awaiting_vendor" && finding.reason ? (
         <p className="text-sm text-muted-foreground" data-awaiting-reason>
           {finding.reason}
+        </p>
+      ) : null}
+      {finding.kind === "eol" && finding.eol ? (
+        <p className="text-sm text-muted-foreground" data-eol-origin>
+          Installed from {originLabel(finding)}, not the distribution
+          {finding.eol.packages.length > 0 ? ` · ${finding.eol.packages.join(", ")}` : ""}
         </p>
       ) : null}
       {finding.summary ? <p className="text-sm text-muted-foreground">{finding.summary}</p> : null}
