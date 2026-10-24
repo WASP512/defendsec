@@ -98,8 +98,8 @@ that is missing, empty or from an older agent **does not close** it: missing evi
 
 A high-severity repository problem (a key problem, or no index on an apt host) is in the **urgent band**, after KEV, with the critical/high surface findings and security-EOL,
 CVSS-equivalent 8.0: a repository whose key has expired hides every vulnerability it would have fixed. A stale index (medium)
-is in the rest band at CVSS-equivalent 5.0, with the CVSS-only medium vulnerabilities. Ties are broken by the row id, bytewise:
-`EOL:` < `REPO:` < `surface:`. The rule lives in `internal/exposure/rank.go`, the SQL `k1`/`k4` in `internal/storepg/exposure.go`
+is in the rest band at CVSS-equivalent 5.0, with the CVSS-only medium vulnerabilities. Ties are broken by the kind of row
+(vulnerability, end-of-life, repository, identity, surface; `exposure.TieRank`), then by the row id. The rule lives in `internal/exposure/rank.go`, the SQL `k1`/`k4` in `internal/storepg/exposure.go`
 and `rankBand`/`effective` in `lib/exposure-model.ts`, and `TestRepoHealthRanksWithEverythingElse` checks SQL against Go with
 a row of every kind.
 

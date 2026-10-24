@@ -76,39 +76,77 @@ Two storage changes carry it:
   `first_seen` and lost the closed days, so the trend counted them as open. Now the interval that ended is copied to
   `surface_finding_intervals` and `first_seen` restarts, as `vuln_finding_intervals` does for vulnerabilities. Rows reopened
   before this slice already lost the closed gap; nothing can recover it.
-- **Every scan is attested in the audit chain.** `RecordSurfaceScan` appends a `surface_scan_recorded` entry (scan id, asset id,
-  SHA-256 digest, how many findings it opened and closed) in the same transaction that stores the scan, so there is never a
-  scan without its attestation or an attestation without its scan. `surface_scans.changes` keeps the findings the scan opened or
-  closed, so the digest can be recomputed at export time.
+- **Every scan is attested in the audit chain.** `RecordSurfaceScan` appends a `surface_scan_recorded` entry (digest version, scan
+  id, asset id, SHA-256 digest, how many findings it opened and closed) in the same transaction that stores the scan, so there is
+  never a scan without its attestation or an attestation without its scan. `surface_scans.changes` keeps the findings the scan
+  opened or closed and, since slice 7c (migration 031), `surface_scans.seen` keeps every finding the scan reported, so the digest
+  can be recomputed at export time. A scan recorded before 7c has `seen` NULL and was chained with the v1 digest.
 
 ## Evidence export
 
 Every evidence bundle (`GET /v1/audit/evidence`, scoped or not) carries a `surface` section when the instance has declared
 an asset: every asset (removed ones too: their findings are evidence), every scan with the raw observation of every check
-(record text, certificate fields, "not assessed" and why) and the findings it opened or closed, and every finding with each
-interval it was open.
+(record text, certificate fields, "not assessed" and why), the findings it opened or closed and every finding it saw, and every
+finding with each interval it was open. The section is read in one `REPEATABLE READ` read-only transaction, so a scan recorded
+while the export runs is in it whole or not at all.
 
 The findings, observations and assets are rows in Postgres, not entries of the hash chain, so on their own they prove nothing.
-They are made checkable the way the compliance section's audit counts are, and the bundle says exactly which part is which
-(`defendsec-verify` prints it):
+They are made checkable by the chained `surface_scan_recorded` entry of each scan, and `defendsec-verify` says exactly which
+part is which.
 
-- **Attested scan.** The verifier recomputes the scan's digest from the bundle's own copy (asset, times, trigger, every
-  observation, every change) and compares it with the chained `surface_scan_recorded` entry. A match means the observations
-  and the findings the scan opened or closed are exactly what the control plane stored when it ran, and the chain fixes the
-  date. Editing a record text, an observation's "assessed" flag, a change or a scan date in the database or in the bundle
-  fails the scan.
+### What this proves
+
+- **Attested scan.** The verifier recomputes the scan's digest from the bundle's own copy and compares it with the chained
+  entry. The v2 digest (slice 7c) covers the asset, the times, the trigger, every observation, every change and **every finding
+  the scan saw**: its id, subject, check, severity, title and a digest of its detail, fix, evidence and controls. A match means
+  those are exactly what the control plane stored when the scan ran, and the chain fixes the date. Editing a record text, an
+  observation's "assessed" flag, a change, a scan date, or any attested field of a seen finding fails the scan.
+- **The findings list is complete and unaltered, in both directions.**
+  - *Missing:* every finding an attested scan opened or closed must be in the bundle. Emptying `surface.findings`, or dropping
+    one finding, fails with "an attested scan recorded it, but the bundle does not list it (withheld)". (Slice 7b printed
+    VERIFIED for a bundle with no findings.)
+  - *Extra:* when every scan of an asset is attested, every finding the bundle lists for it must have been opened by one of
+    them, and may be listed once. An invented finding, a copy, or a finding moved to another asset fails.
+  - *Edited:* a finding's severity, title, check group, detail, fix, evidence and control tags must equal what **the latest
+    attested scan that saw it** recorded (a certificate's title and severity change from scan to scan, so the opening scan is
+    the wrong witness), and its first and last scan ids must match. Editing any of them in the bundle or in the database fails
+    the finding, naming it and the field.
+  - *Dropped section:* if the chain holds `surface_scan_recorded` entries and the bundle has no `surface` section, the bundle
+    fails ("the chain records N surface scans but the bundle carries no surface section").
+  - *Reordered:* scans, observations, findings and intervals in another order still verify; the digests sort their inputs.
 - **Open on date A, closed on date B.** A finding's intervals are recomputed from the attested scans that opened and closed it
   and compared with the dates the bundle claims. A match proves the dates under the chain's weight; a moved date fails the
   finding.
-- **Unattested** (not failed): a scan with no chained entry (it ran before slice 7b, or lies outside an exported audit range)
-  is carried and named, and so are the findings of its asset, because their history cannot be recomputed completely.
-- **Failed**: a chained entry whose scan is missing from the bundle, a digest that does not match, or an edited provenance
-  sentence. The section is read after the audit range on purpose, so a scan recorded in between is unattested, not "withheld".
+- **Self-consistency.** A v2 scan that opened a finding it did not see, closed one it saw, or listed one twice is refused even
+  though its digest matches: it was chained faithfully and cannot be trusted to say anything.
 
-What it does not prove: that the scanner's view was the internet's view (one vantage point), the asset list's authorisation
-facts (the chain records `surface_asset_add` and `surface_asset_authorise`, which are not cross-checked), or anything about a
-scan the chain does not hold. Bundle size grows with the number of scans (observations are never pruned); it has not been
-measured at a year of daily scans.
+### What this does not prove
+
+- **That what the scanner saw is true.** The chain proves the control plane stored a scan's observations at a time; it does not
+  prove that the internet looked that way (one vantage point), that a DNS answer was not forged on the way, or that the
+  scanner itself was not subverted. A checked bundle is evidence of what DefendSec recorded, not an independent test.
+- **The asset list's authorisation facts** (who confirmed an asset and when). The chain records `surface_asset_add` and
+  `surface_asset_authorise`, but they are not cross-checked against the list.
+- **Anything about a scan the chain does not hold.** A scan with no chained entry (it ran before slice 7b, or lies outside the
+  exported audit range) is carried and named **unattested**, not failed, and so are the findings of an asset with such a scan.
+  Narrowing the audit range of an export therefore turns evidence into unattested rows; it cannot turn it into a pass. A
+  bundle exported without the audit entries of its scans, and without a surface section, carries no surface check at all.
+- **Findings last seen by a v1 scan.** Scans chained before slice 7c (v1 digest, no `seen` list) prove the open and closed dates
+  and that the finding exists, and nothing about its title, severity or text. The report counts such findings separately
+  (`findingsDatesOnly`, "with dates only") and `defendsec-verify` says so. They become fully verified after the first scan
+  of this version that sees them again; a finding that closed before then stays dates-only.
+- **The text of an older sighting.** Only the latest sighting's detail, fix and evidence are in the bundle (rows are overwritten
+  as the finding is seen again); earlier sightings are kept as a digest and a title and severity. The auditor can see that
+  scan 12 saw a finding as high, titled "...in 9 days", and cannot read the rest of what scan 12 said.
+- **The chain itself.** Everything above is only as strong as the audit chain and its signed checkpoints: a bundle with no
+  checkpoint cannot show that its tail was not cut (the verifier says so), and whoever holds the control key can sign a rewritten
+  chain. See the bundle's own checks.
+- **Vulnerability findings.** The bundle carries no vulnerability rows at all (no `vuln_findings`, no intervals), so nothing
+  about them is exported, attested or checkable. This is a gap in the product, not in the verifier: there is no
+  vulnerability evidence export to harden. It is recorded as follow-up work.
+
+Bundle size grows with the number of scans (observations and seen lists are never pruned); it has not been measured at a
+year of daily scans.
 
 ## API (admin API, same auth as the neighbouring routes; viewers read, admins write)
 

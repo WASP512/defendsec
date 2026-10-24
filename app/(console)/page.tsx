@@ -25,7 +25,7 @@ import { parseTrendQuery } from "@/lib/exposure-model";
 import { loadAuditPeriods } from "@/lib/compliance";
 import { supportedOs } from "@/lib/supported-os";
 import { isReadOnlySession } from "@/lib/auth";
-import { FileWarning, MonitorCheck, Package, ShieldAlert } from "lucide-react";
+import { FileWarning, MonitorCheck, Package } from "lucide-react";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -50,8 +50,6 @@ export default async function HomePage({
     0,
   );
   const samples = store.devices.some((d) => d.sample);
-  // null when the control plane could not be asked: shown as unknown, not zero.
-  const serious = aggregates.serious;
   const patches = fleet.reduce((n, d) => n + d.pendingUpdates.length, 0);
   // Hosts whose pending-updates list cannot be believed: a clean count must not be shown for them.
   const patchUnreliable = fleet.filter((d) => isUnreliable(patchReliabilityOf(d))).length;
@@ -125,24 +123,14 @@ export default async function HomePage({
       )}
       <ExposureTrendCard trend={trend} query={trendQuery} periods={periods} />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* One number answers "what do I fix": the Fix this week card above. The tiles below are fleet facts, not a second count of it. */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard
           title="Hosts online"
           value={online}
           subtitle={`${fleet.length} enrolled`}
           icon={MonitorCheck}
           tone={online === fleet.length && fleet.length > 0 ? "good" : "neutral"}
-        />
-        <StatCard
-          title="Fix these"
-          value={serious ?? "?"}
-          subtitle={
-            serious === null
-              ? "Findings unavailable from the control plane"
-              : "Open critical, high or KEV findings with a fix"
-          }
-          icon={ShieldAlert}
-          tone={serious === null ? "neutral" : serious > 0 ? "critical" : "good"}
         />
         <StatCard
           title="Pending patches"

@@ -13,7 +13,7 @@ import (
 	"defendsec/internal/gws/google"
 )
 
-// Google Workspace settings (migration 031). Runs and findings use the shared
+// Google Workspace settings (migration 032). Runs and findings use the shared
 // identity tables of migration 028 with provider "google".
 
 // GWSSettings is the instance's one Google Workspace domain and how it is judged.

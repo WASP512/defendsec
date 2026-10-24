@@ -124,6 +124,12 @@ func printReport(b *evidence.Bundle, r evidence.Report) {
 		if r.Surface.ScansUnattested > 0 {
 			fmt.Printf("Note: %d external surface scan(s) carry no chained entry and are outside what this bundle can attest; their findings are listed but not proven.\n", r.Surface.ScansUnattested)
 		}
+		if r.Surface.FindingsDatesOnly > 0 {
+			fmt.Printf("Note: %d external surface finding(s) were last seen by a scan chained before slice 7c: their open and closed dates are proven, their title, severity and text are not.\n", r.Surface.FindingsDatesOnly)
+		}
+		if r.Surface.FindingsUnattested > 0 {
+			fmt.Printf("Note: %d external surface finding(s) belong to an asset with a scan the chain does not hold; they are listed but not proven.\n", r.Surface.FindingsUnattested)
+		}
 		return
 	}
 	fmt.Println("FAILED — this bundle does not verify. See the failing check above.")
@@ -136,8 +142,8 @@ func printSurface(sc *evidence.SurfaceScope, r evidence.SurfaceReport) {
 	fmt.Printf("  assets    %d declared\n", len(sc.Assets))
 	fmt.Printf("  scans     %d: %d attested by the chain, %d unattested, %d failed\n",
 		r.Scans, r.ScansAttested, r.ScansUnattested, r.ScansFailed)
-	fmt.Printf("  findings  %d: %d with dates recomputed from attested scans, %d unattested, %d failed\n",
-		r.Findings, r.FindingsVerified, r.FindingsUnattested, r.FindingsFailed)
+	fmt.Printf("  findings  %d: %d with dates and content matched to attested scans, %d with dates only, %d unattested, %d failed\n",
+		r.Findings, r.FindingsVerified, r.FindingsDatesOnly, r.FindingsUnattested, r.FindingsFailed)
 	fmt.Printf("  provenance: %s\n\n", sc.Provenance)
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -294,10 +295,11 @@ func isNumericText(s string) bool {
 //	    end-of-life finding minus 8.0 (security support ended) or 2.0 (active support ended), or for a
 //	    repository-health finding minus its severity's CVSS-equivalent (high 8.0, medium 5.0)
 //	k5  severity label rank
-//	k6  the row id: the advisory id, or "surface:<12 digits>" (compared bytewise, as Go does)
+//	k6  the kind of row as one digit (exposure.TieRank: 0 vulnerability, 1 end-of-life, 2 repository, 3 identity, 4 surface),
+//	    then the row id: the advisory id, or "surface:<12 digits>" (compared bytewise, as Go does)
 //
 // $1 kinds, $2 resolved?, $3 KEV only?
-const exposureRankedSQL = `
+var exposureRankedSQL = `
 	SELECT advisory_id, cve, summary, severity, kev, kev_added, epss, cvss, kinds, host_count, finding_count,
 	       host_ids, host_names, packages, fixed, first_seen, resolved_at, awaiting_since,
 	       eol_product, eol_cycle, eol_stage, eol_date, eol_label, eol_upgrade, eol_origins,
@@ -318,7 +320,11 @@ const exposureRankedSQL = `
 	             WHEN eol_stage = 'eoas' THEN -2.0
 	             ELSE -COALESCE(cvss, -1) END)::text AS k4,
 	       CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END AS k5,
-	       advisory_id COLLATE "C" AS k6
+	       ((CASE WHEN source = 'surface' THEN ` + strconv.Itoa(exposure.TieSurface) + `
+	              WHEN source = 'identity' THEN ` + strconv.Itoa(exposure.TieIdentity) + `
+	              WHEN 'repo_health' = ANY(kinds) THEN ` + strconv.Itoa(exposure.TieRepository) + `
+	              WHEN eol_stage IN ('eol', 'eoas') THEN ` + strconv.Itoa(exposure.TieEOL) + `
+	              ELSE ` + strconv.Itoa(exposure.TieVulnerability) + ` END)::text || advisory_id) COLLATE "C" AS k6
 	FROM (
 	  SELECT f.advisory_id,
 	         max(f.cve) AS cve, max(f.summary) AS summary,

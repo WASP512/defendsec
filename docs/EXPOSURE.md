@@ -37,7 +37,18 @@ Most urgent first (`internal/exposure`, mirrored by `lib/exposure-model.ts` `com
 2. **EPSS**, high to low (the probability of exploitation in the next 30 days).
 3. **CVSS** base score, high to low.
 4. The vendor's severity label (critical, high, medium, low, unknown).
-5. The advisory id, so the order is total and a keyset cursor is stable.
+5. **The kind of row** (a stated rule, `exposure.TieRank`): a vulnerability, then end-of-life software, then a package
+   repository, then an identity finding, then an external surface finding. It only matters when two rows agree on everything
+   above: the same band, the same CVSS-equivalent and the same severity label. A vulnerability goes first because it is a
+   vendor-confirmed advisory with a fix path; the rest follow the order in which a finding is about the software, the update
+   source, the account and, last, the exposed service.
+6. The row id, bytewise (`COLLATE "C"`), so the order is total and a keyset cursor is stable. A surface or identity id carries
+   its zero-padded finding id, so within one kind the older finding comes first.
+
+The kind used to be an accident of the ids' bytes (`EOL:` < `REPO:` < `identity:` < `surface:`, with a lowercase advisory
+id anywhere), which was true of the rows we tested and not a rule. It is now the same rule in three places: `TieRank` in
+`internal/exposure`, the leading digit of `k6` in the SQL of `internal/storepg/exposure.go` and `tieRank` in
+`lib/exposure-model.ts`, each tested against the others with a row of every kind.
 
 A missing EPSS or CVSS score ranks after any score, including 0: unknown is not zero.
 
@@ -48,7 +59,8 @@ surface finding does (rules in `internal/exposure/rank.go`, "End-of-life finding
 - **Past end of security support** (stage `eol`, severity `high`): the **urgent band**, right after KEV, with the critical
   and high surface findings, and before every vulnerability that is not on KEV, whatever its EPSS. Its
   CVSS-equivalent is 8.0 (`exposure.EOLScore`), so a critical surface finding (9.5) ranks above it; a high surface
-  finding ties on 8.0 and on the severity label, and the row id breaks the tie (`EOL:` sorts before `surface:`).
+  finding ties on 8.0 and on the severity label, and the kind of row breaks the tie: end-of-life first (see the ranking
+  list above).
 - **Past end of active support only** (stage `eoas`, severity `low`): security fixes still arrive. EPSS none, CVSS-equivalent
   2.0: the rest band, after every vulnerability that has an EPSS score, with the low CVSS-only ones, below every
   security-EOL row.
@@ -56,7 +68,8 @@ surface finding does (rules in `internal/exposure/rank.go`, "End-of-life finding
 **Repository health** (slice 11, [REPO_HEALTH.md](REPO_HEALTH.md)) is in the fix bucket as well: a package repository whose
 signing key has expired or is missing, or whose index has gone stale, is a dead source of updates. It ranks like a surface
 finding of the same severity: **high** (key problems, no index on apt) in the urgent band at 8.0, **medium** (stale index) in
-the rest band at 5.0. At equal score the row id breaks the tie bytewise: `EOL:` < `REPO:` < `surface:`.
+the rest band at 5.0. At equal score the kind of row breaks the tie: vulnerability, end-of-life, repository, identity,
+surface.
 
 The stage decides, not the severity label. The price of the first rule is the one the surface rule already pays: a non-KEV
 CVE with a very high EPSS ranks below an unpatchable release; revisit it with real data. The SQL `ORDER BY` (`k1` band, `k4`
@@ -104,6 +117,11 @@ The "why it ranks here" line never leads with a number that does not exist:
 
 - critical/high: "Live for anyone on the internet: no foothold or exploit needed · critical severity · ranks after exploited
   vulnerabilities and before every other vulnerability"
+- a certificate that **expires within 7 days** (`tls.expires_soon`, high) is in the same band but is not live yet, so it says
+  "Not yet in effect, but with a deadline: every visitor is refused when it lapses, and no attacker is needed · high severity ·
+  ranks after exploited vulnerabilities and before every other vulnerability, because the lapse is days away". An expired
+  certificate (`tls.expired`) keeps the "live" wording. The set of such findings is `UPCOMING_SURFACE_IDS` in
+  `lib/exposure-model.ts`.
 - medium/low: "No exploitation signal (external surface finding) · ranked by severity medium · alongside vulnerabilities with no
   EPSS score"
 
@@ -118,7 +136,8 @@ KEV callout (`kevOnly=1` keeps only exploited vulnerabilities), and a removed as
 **Summary and trend.**
 
 - `GET /v1/exposure/summary` gains `surface` (assets, unauthorised, scanned, findings, `bySeverity`, info, assetsAffected,
-  `lastScanAt`, `checksNotAssessed`) and `fixable.surface` / `fixable.total` (the length of the list). The Fleet page shows
+  `lastScanAt`, `checksNotAssessed`; `assetsAffected` counts assets with a ranked finding, so an asset whose only findings are
+  `info` is not affected) and `fixable.surface` / `fixable.total` (the length of the list). The Fleet page shows
   **"External surface: N findings (x high) across M assets, last scanned <time>"**; a surface never scanned reads "not scanned
   yet", never "0 findings", and checks that could not run are named. Fix this week now counts both kinds in its description
   and in its tab.
@@ -228,7 +247,8 @@ closed. The response says what the series is built from (`caveats`):
   banner, keyset paging (Previous/Next links; `back` keeps a stack of cursors because the
   cursor only moves forward), and a provenance drawer (`?advisory=<id>`, so a view is a URL).
 - **Fleet** (`/`): the feed-age banner, the red callout, the **Fix this week** card (top five
-  with host counts), **Also check** (unsupported OS, silent hosts, failed checks by severity,
+  with host counts; the only count of what to fix: slice 7c removed the older "Fix these N" tile, which counted another
+  unit and sat beside it), **Also check** (unsupported OS, silent hosts, failed checks by severity,
   the watch count) and **Is it getting better?** with a window selector (30/90/180 days or an
   audit period).
 

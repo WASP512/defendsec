@@ -167,7 +167,7 @@ the project, so an administrator can compare them with the two consoles. It neve
 says so, and says what to do about it (0600, rotate, delete the key in the Cloud console if the server is ever in doubt).
 
 The administrator's address, the Gmail scope choice, the super administrator limit, the trusted domains and the extra finance words are not secrets and
-are saved in the settings (`gws_settings`, migration 031), changed only by an administrator, with an `identity_settings_changed` entry in the hash-chained
+are saved in the settings (`gws_settings`, migration 032), changed only by an administrator, with an `identity_settings_changed` entry in the hash-chained
 audit ledger (same transaction).
 
 ## Setting it up, click by click

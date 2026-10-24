@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"sort"
 	"strings"
@@ -647,5 +648,46 @@ func TestTrendDayBoundariesIgnoreSessionTimezone(t *testing.T) {
 		if p.Open != wantOpen || p.Surface != wantOpen {
 			t.Errorf("%s: open %d, surface %d, want %d each", p.Day, p.Open, p.Surface, wantOpen)
 		}
+	}
+}
+
+// Every timestamp the API returns is UTC. surfaceSince used to come back in the
+// zone of the process (a -06:00 offset on a server set to America/Denver).
+func TestSurfaceTrendSinceIsUTCWhateverTheProcessZone(t *testing.T) {
+	s, _ := scratchStore(t)
+	ctx := context.Background()
+	denver := time.FixedZone("MDT", -6*3600)
+	saved := time.Local
+	time.Local = denver
+	t.Cleanup(func() { time.Local = saved })
+
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	a := surfaceAsset(t, s, "domain", "zone.example.com", true)
+	if _, err := s.RecordSurfaceScan(ctx, a.ID, "manual", report(a, now.Add(-30*time.Hour),
+		result("dmarc", true, "", finding("dmarc", "dmarc.p_none", "zone.example.com", surface.SevMedium)))); err != nil {
+		t.Fatal(err)
+	}
+	tr, err := s.ExposureTrend(ctx, now.AddDate(0, 0, -5), now, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.SurfaceSince == nil {
+		t.Fatal("surfaceSince missing")
+	}
+	if tr.SurfaceSince.Location() != time.UTC {
+		t.Fatalf("surfaceSince is in %v, want UTC", tr.SurfaceSince.Location())
+	}
+	raw, err := json.Marshal(tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back struct {
+		SurfaceSince string `json:"surfaceSince"`
+	}
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(back.SurfaceSince, "Z") || strings.Contains(back.SurfaceSince, "-06:00") {
+		t.Fatalf("surfaceSince on the wire = %q, want a UTC time ending in Z", back.SurfaceSince)
 	}
 }
