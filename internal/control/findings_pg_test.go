@@ -183,6 +183,15 @@ func TestVulnPipelineThroughApid(t *testing.T) {
 	if history.Total != 2 || history.Findings[0].ResolvedAt == nil {
 		t.Errorf("closed findings must stay on record: %+v", history)
 	}
+	// Patching the host is why they closed, and the record says so: the
+	// resolution and the version that fixed it come from the same inventory
+	// report that closed them.
+	patched := map[string]string{"openssh-server": "1:8.9p1-3ubuntu0.11", "curl": "7.81.0-1ubuntu1.18"}
+	for _, f := range history.Findings {
+		if f.Resolution != storepg.ResolutionFixed || f.ResolvedInstalled != patched[f.Package] {
+			t.Errorf("%s closed as %q at %q, want fixed at %q", f.Package, f.Resolution, f.ResolvedInstalled, patched[f.Package])
+		}
+	}
 	if alerts, _ := pg.ListAlerts(ctx, storepg.AlertFilters{DeviceID: dev.ID, Kind: "vuln", Status: "open"}); len(alerts) != 0 {
 		t.Errorf("alert still open after patching: %+v", alerts)
 	}

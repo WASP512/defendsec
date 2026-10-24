@@ -65,6 +65,9 @@ func TestRebuildLagIsAwaitingVendorNotFixable(t *testing.T) {
 				t.Errorf("%s: reason %q lacks %q", distro, f.Reason, want)
 			}
 		}
+		if f.UpstreamFixedOn != kernelUpstream {
+			t.Errorf("%s: UpstreamFixedOn = %q, want the Red Hat erratum date %s", distro, f.UpstreamFixedOn, kernelUpstream)
+		}
 		if f.Feed != "rhel-9" || f.SnapshotID == nil || f.RangeID == 0 {
 			t.Errorf("%s: an awaiting_vendor finding keeps its evidence (upstream feed, snapshot, range): %+v", distro, f)
 		}

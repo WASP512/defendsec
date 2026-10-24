@@ -1,59 +1,63 @@
-import Link from "next/link";
-import { FindingActions } from "@/components/finding-actions";
-import { CoverageBanner, ExploitedAwaitingBanner, FindingSummary } from "@/components/finding-summary";
-import { ActivityItem, ActivityList, EmptyState, PageHeader } from "@/components/console-ui";
+import { ExposureDetail } from "@/components/exposure-detail";
+import { ExposureDrawer } from "@/components/exposure-drawer";
+import { ExposureList, ExposureTabs } from "@/components/exposure-list";
+import { CoverageBanner } from "@/components/finding-summary";
+import { PageHeader } from "@/components/console-ui";
 import { FeedAgeBanner } from "@/components/feed-age-banner";
+import { KevWatchCallout } from "@/components/fix-this-week";
+import { isReadOnlySession } from "@/lib/auth";
 import { ensureStore } from "@/lib/store";
 import { getFeedStatus } from "@/lib/feeds";
-import { getFindings, getFindingsSummary } from "@/lib/findings";
-import { exploitedAwaitingNotice, findingStatus } from "@/lib/findings-model";
-import { listAlerts } from "@/lib/alerts";
-import { isReadOnlySession } from "@/lib/auth";
-import { ShieldCheck } from "lucide-react";
+import { getExposureAdvisory, getExposurePage, getExposureSummary } from "@/lib/exposure";
+import { closeDrawerHref, parseExposureQuery } from "@/lib/exposure-model";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdvisoriesPage() {
+type Search = Promise<Record<string, string | string[] | undefined>>;
+
+/**
+ * The exposure list: what is exploitable right now, ranked KEV, then EPSS,
+ * then CVSS, with the reason each row is where it is. The control plane ranks
+ * and pages it; this page asks for one page at a time. A row opens a drawer
+ * with the hosts, the installed and fixed versions, and the feed snapshot the
+ * finding came from.
+ */
+export default async function AdvisoriesPage({ searchParams }: { searchParams: Search }) {
+  const query = parseExposureQuery(await searchParams);
   const store = await ensureStore();
   const readOnly = await isReadOnlySession();
-  const [feedStatus, result, summaries, vulnAlerts] = await Promise.all([
+  const [feedStatus, page, summary, detail] = await Promise.all([
     getFeedStatus(),
-    getFindings({ kind: "finding", limit: 500 }),
-    getFindingsSummary(),
-    listAlerts({ kind: "vuln", status: "open", limit: 500 }).catch(
-      () => [] as Awaited<ReturnType<typeof listAlerts>>,
-    ),
+    getExposurePage(query),
+    getExposureSummary(1),
+    query.advisory ? getExposureAdvisory(query.advisory, query.bucket, query.status) : Promise.resolve(null),
   ]);
-  const alertBySource = new Map(vulnAlerts.map((alert) => [`${alert.deviceId}:${alert.sourceId}`, alert]));
-  const findings = result?.findings ?? [];
-  const unassessed = summaries ? [...summaries.values()].filter((s) => s.coverage !== "covered").length : 0;
-  const unfixed = summaries ? [...summaries.values()].reduce((n, s) => n + s.unfixed, 0) : 0;
-  const awaiting = summaries ? [...summaries.values()].reduce((n, s) => n + s.awaitingVendor, 0) : 0;
-  const kevAwaiting = summaries ? [...summaries.values()].reduce((n, s) => n + s.kevAwaitingVendor, 0) : 0;
-  const exploited = exploitedAwaitingNotice(kevAwaiting);
+  const group = page?.findings.find((g) => g.advisoryId === query.advisory) ?? null;
+  const unassessed = summary?.hosts.notAssessed ?? 0;
+  const watchTotal = summary ? summary.watch.unfixed.findings + summary.watch.awaitingVendor.findings : 0;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <PageHeader
-        title="Advisories"
+        title="Exposure"
         description={
           <>
-            Installed packages matched against the advisories your distribution publishes
-            (synced by <code>defendsec-feeds</code>), using the distribution&apos;s own fixed versions, so a
-            backported fix is not reported as a vulnerability. Most urgent first: CISA KEV, then severity,
-            then EPSS. KEV and critical findings also raise <code>vuln</code> alerts.
+            What is exploitable on your hosts right now, most urgent first: vulnerabilities attackers are using
+            (CISA KEV, newest first), then by EPSS, then CVSS. Only findings with a fix to install are on the
+            fix list; the rest wait on the watch list. Fixed versions are the distribution&apos;s own, so a
+            backported fix is not reported as a vulnerability.
           </>
         }
       />
       <FeedAgeBanner status={feedStatus} />
-      {exploited ? <ExploitedAwaitingBanner notice={exploited} /> : null}
-      {result === null ? (
+      {summary ? <KevWatchCallout summary={summary} /> : null}
+      {page === null ? (
         <CoverageBanner
           notice={{
             tone: "amber",
-            title: "Findings unavailable",
+            title: "Exposure unavailable",
             detail:
-              "The control plane could not be reached, or it is older than the findings API. An empty page here would not mean the fleet is clean.",
+              "The control plane could not be reached, or it is older than the exposure API. An empty page here would not mean the fleet is clean.",
           }}
         />
       ) : null}
@@ -63,58 +67,35 @@ export default async function AdvisoriesPage() {
             tone: "amber",
             title: `${unassessed} host${unassessed === 1 ? "" : "s"} not assessed`,
             detail:
-              "No advisory feed covers these hosts' distribution and release, or the agent did not report one, so they have no findings because nothing was checked. Open a host to see which.",
+              "No advisory feed covers these hosts' distribution and release, the agent did not report one, or no match has run yet, so they have no findings because nothing was checked. Open a host to see which.",
           }}
         />
       ) : null}
-      {result?.truncated ? (
-        <p className="text-sm text-muted-foreground">Showing the first {result.total} findings, most urgent first.</p>
+      <ExposureTabs query={query} fixCount={summary ? summary.fixable.advisories : null} />
+      {query.bucket === "watch" && query.status === "open" && summary ? (
+        <p className="text-sm text-muted-foreground">
+          {watchTotal} finding{watchTotal === 1 ? "" : "s"} across the fleet have nothing to install yet:{" "}
+          {summary.watch.unfixed.findings} with no fix published, {summary.watch.awaitingVendor.findings} fixed by Red
+          Hat and awaiting Rocky or AlmaLinux. They are never counted as work for this week.
+        </p>
       ) : null}
-      {result !== null && findings.length === 0 ? (
-        <EmptyState
-          title="No findings with a fix available"
-          description={[
-            "No assessed host has a vulnerability with a fix to install.",
-            awaiting > 0
-              ? `${awaiting} ${awaiting === 1 ? "is" : "are"} fixed upstream by Red Hat but not yet released by Rocky Linux or AlmaLinux.`
-              : "",
-            unfixed > 0
-              ? `${unfixed} finding${unfixed === 1 ? " has" : "s have"} no fix published yet.`
-              : "",
-            awaiting > 0 || unfixed > 0 ? "They are listed on each host." : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          icon={ShieldCheck}
-        />
-      ) : (
-        <ActivityList>
-          {findings.map((finding) => {
-            const status = findingStatus(finding.key, store.triages);
-            const alert = alertBySource.get(`${finding.deviceId}:${finding.advisoryId}`);
-            return (
-              <ActivityItem
-                key={finding.id}
-                tone={finding.kev || finding.severity === "critical" || finding.severity === "high" ? "critical" : "warning"}
-                title={
-                  <div className="space-y-1">
-                    <FindingSummary finding={finding} status={status} showHost />
-                    {alert ? (
-                      <Link
-                        href={`/alerts?kind=vuln&deviceId=${finding.deviceId}`}
-                        className="text-xs underline text-muted-foreground"
-                      >
-                        vuln alert
-                      </Link>
-                    ) : null}
-                  </div>
-                }
-                actions={!readOnly ? <FindingActions findingKey={finding.key} status={status} /> : null}
-              />
-            );
-          })}
-        </ActivityList>
-      )}
+      {page ? <ExposureList query={query} page={page} /> : null}
+
+      {query.advisory ? (
+        <ExposureDrawer
+          title={group?.cve || detail?.advisory?.cve || query.advisory}
+          description="Where this finding came from and which hosts it is on."
+          closeHref={closeDrawerHref(query)}
+        >
+          {detail ? (
+            <ExposureDetail group={group} detail={detail} triages={store.triages} readOnly={readOnly} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No open findings for this advisory in this list. It may have been resolved, or moved to another list.
+            </p>
+          )}
+        </ExposureDrawer>
+      ) : null}
     </div>
   );
 }

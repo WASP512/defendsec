@@ -695,7 +695,7 @@ the list order: sorting `kind` alphabetically would put `awaiting_vendor` before
 - Apollo availability: the walker retries 5xx and network errors three times per page; a longer outage fails the feed
   and keeps the loaded data. Not exercised against a real outage.
 - Rocky/Alma 10: no feed (Red Hat has no v2 OVAL for 10).
-- Not opened as a PR; CI has not run on the branch (`gh` has no token).
+- Not opened as a PR; CI had not run on the branch when this was written. (Since then: branch CI was green on `0ff9fe1` and main CI on `5b9eae0`, per the reviewer.)
 
 ## Feature × platform × evidence matrix — additions from slice 4c
 
@@ -705,3 +705,105 @@ the list order: sorting `kind` alphabetically would put `awaiting_vendor` before
 | `awaiting_vendor` matching | rpm, Rocky/Alma | 9 matcher tests, storepg + apid integration (titan PG) | not checked | Rocky 9.8 VM 121: **0 fixable, 8 awaiting_vendor** (met); Alma: synthetic relabel only |
 | Flip awaiting → fixable | rpm, Rocky/Alma | fixtures + Postgres + apid | not checked | **not observed** (Rocky has not shipped 687.60.1) |
 | Console: awaiting badge, KEV red notice | any | model logic unit-tested | not checked | **not rendered** |
+
+## Slice 5 — exposure view (migration 024)
+
+Branch `scout/5-exposure-view`, from `5b9eae0` (slice 4c merged), merged with `origin/main` at `b9ee4f6` (slice 7a took
+migration 023, so this slice's is **024**). Date of the runs: 2026-10-24 UTC.
+
+### What changed
+
+- `internal/exposure`: the ranking rule (KEV newest-first, EPSS, CVSS, severity label, advisory id), as code.
+- `internal/storepg/exposure.go`: advisories grouped by bucket, ranked and paged by keyset in SQL (`ListExposure`),
+  one advisory's hosts and snapshots (`GetExposureDetail`), the Monday summary (`ExposureSummary`), the daily trend
+  (`ExposureTrend`). `RecordFindingsFor` records how a finding closed from the host's inventory.
+- `internal/control/exposure.go`: `GET /v1/exposure/{summary,findings,advisory,trend}`.
+- Migration `024_exposure.sql`: `vuln_findings.resolution`, `resolved_installed`, `upstream_fixed_on`;
+  `vuln_finding_intervals`; one index.
+- Console: Exposure page (`/advisories`), Fleet page cards, provenance drawer, feed-age banner on both, window
+  selector over days or audit periods. `lib/exposure-model.ts` holds the ranking check and the rank-reason text.
+- `scripts/seed-exposure-demo.sql` (synthetic data, refuses to run unless the database name contains `demo`),
+  `docs/screenshots/*.png`, `docs/EXPOSURE.md`.
+
+### Commands and results (this box, Postgres 16 on titan CT 119 for the integration tests)
+
+| # | Command | Result |
+| --- | --- | --- |
+| 1 | `go build ./...` | exit 0 |
+| 2 | `go vet ./...` and `GOOS=windows go vet ./...` | both clean |
+| 3 | `TMPDIR=/tmp TEST_DATABASE_URL=… go test -p 1 -count=1 -json ./...` | exit 0: **1,121 pass, 0 fail, 5 skip** (root/eBPF, pwsh, as before); 54 packages pass, 13 have no tests |
+| 4 | CI integration command: `go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/...` | all four `ok` |
+| 5 | `npm test` | `# tests 121 / # pass 121 / # fail 0` (was 83 before this slice; 30 new in `lib/exposure-model.test.ts`, 8 from slice 7a) |
+| 6 | `npm run lint`, `npx tsc --noEmit -p .` | clean, clean |
+| 7 | `npm run build` | green, `/advisories` dynamic |
+
+New tests: `internal/exposure` (5, the rule and its edge cases), `internal/storepg/exposure_test.go` (4, in a throwaway
+database per run: SQL order equals `exposure.Compare` at page sizes 1, 3, 5 and 200 with no repeat or gap, buckets and
+summary counts, resolution classification for dpkg and rpm, trend from `first_seen`/`resolved_at` including a recurrence and
+days before history), `internal/control/exposure_test.go` (2, through apid's handler: auth, paging by cursor, drawer data,
+summary, trend by window and by audit period, every 400, UTC timestamps under `TZ=America/Denver`),
+and an assertion in `TestVulnPipelineThroughApid` that patching a host closes its findings as `fixed` at the installed
+version.
+
+Mutation checks (each applied to the working tree, test run, then reverted): EPSS sorted ascending, KEV date sorted oldest
+first (`ListExposure` order test fails both times); archive-on-reopen disabled (trend test fails: the recurrence loses
+its earlier interval); KEV date comparison reversed in `compareRank` (1 npm test fails); the headline made to lead with
+CVSS (3 npm tests fail).
+
+### Real runs
+
+**Real data, in-place upgrade** (scratch database `slice5real`, a copy of slice 4's database: 70,913 advisories from the
+nine real feeds synced 2026-10-24 02:55 UTC, one real host (this box, Debian 13), schema at 021). `defendsec-apid` built
+from this branch started against it and applied 022 to 024 in place (`vuln_finding_intervals` exists afterwards; before it
+did not). The matcher then re-ran for the host against the real feeds and the console (`npm run dev`) rendered:
+
+- Fleet: "Vulnerability feeds are current — 9 feeds current, oldest confirmed 2 hours ago"; **Fix this week: 5
+  vulnerabilities across 1 host**, ranked EPSS first (all five under 0.01, shown to three places so the order is
+  visible), then CVSS; the card names the package and the distro's fixed version. Failed configuration checks: 5 high,
+  6 medium, 3 low on 1 host (the real open `sca` alerts). Watch: 1,143 with no fix published, 0 awaiting vendor.
+  The 307 informational findings appear nowhere.
+- Exposure, watch list: 1,143 advisories, 25 per page; following `Next` gives rows 26–50 of 1,143 with **no row in
+  common** with page 1; `Previous` is offered. The page took 0.4 s.
+- Trend: one known day (the first snapshot is from today), the earlier 89 days drawn as "no data".
+
+**Synthetic demo data** (scratch database `expo_demo`, `scripts/seed-exposure-demo.sql`: 24 invented hosts, `CVE-2099-*`):
+screenshots of every surface the card asks for are in `docs/screenshots/`:
+`exposure-ranked-list.png` (KEV newest first, then EPSS, then CVSS; a CVSS 9.8 with EPSS 0.04 ranks 7th), 
+`exposure-provenance-drawer.png` (hosts, installed vs fixed version, age, feed and snapshot with SHA-256),
+`exposure-resolved-drawer.png` (closed findings: "Fixed: inventory shows demo-ssh 1.1-demo (fix was 1.1-demo)"),
+`exposure-watch-list.png` (no fix published; "Fixed by Red Hat on 2026-10-22; awaiting Rocky/Alma"; the red KEV callout),
+`fleet-fix-this-week.png`, `fleet-trend.png`. Acknowledging one host's finding through `POST /api/findings` showed
+`acknowledged` on that row only in the drawer, and reopening restored `open`.
+
+### Not verified
+
+- **Branch CI** is green on `60d8e7f` (all six jobs: go, postgres-integration, node, isolation, provisioning, secrets-scan; run 40066538275). This file was edited after that run, so the head moved by a docs-only commit; its run is in the handoff.
+- **Ranking and the red callout on real KEV data.** The real host has no KEV finding, so KEV ordering, the KEV callout and
+  `awaiting_vendor` rows are seen only on synthetic data and in tests. No real Rocky/Alma host was matched in this slice.
+- **The trend on real history.** It has one real day. The multi-month shape in the screenshot is synthetic.
+- **Resolution on a real host.** `fixed` / `package_removed` is proven by integration tests (dpkg and rpm comparators,
+  and through apid's `matchDevice`), not by patching a real host and watching it close. Findings that closed before
+  migration 024 show "the reason was not recorded".
+- **Load.** The grouped query has not been timed at 10,000 hosts; at one host it is 0.4 s end to end. Each page re-groups
+  open findings.
+- **Acknowledged** is the operator's console triage; it is shown per host in the drawer, not on list rows, and it does not
+  change any count or the ranking.
+- **Unsupported-OS hosts** are counted in the console from the fleet it already loads (the OS policy lives there); they
+  are not in `/v1/exposure/summary`.
+- **Windows hosts** have no feed coverage; they are counted as "not assessed", never as clean.
+- Trend counts use each finding's current kind for its whole interval (an awaiting-vendor finding that became fixable
+  counts as fixable from its first day).
+- Screenshots were taken against `npm run dev`, so the Next.js dev indicator is visible in the corner.
+- The agent → apid inventory path was not re-run for this slice (the matcher ran through apid's periodic refresh); that
+  code is unchanged except that it now passes the inventory to `RecordFindingsFor`.
+
+## Feature × platform × evidence matrix — additions from slice 5
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Ranking KEV → EPSS → CVSS (`internal/exposure`, SQL, `compareRank`) | any | Go + npm tests, 4 mutation checks | green (run 40066538275) | ranked a real host's 5 fixable findings; KEV not present |
+| `/v1/exposure/{summary,findings,advisory,trend}` | linux, Postgres 16 | storepg + control integration (titan PG) | green (run 40066538275) | called through a real apid on a real database |
+| Keyset paging | linux, Postgres 16 | page sizes 1/3/5/200, no gap or repeat | green (run 40066538275) | 1,143 advisories, page 2 has no overlap with page 1 |
+| Resolution recorded from inventory | dpkg, rpm | integration tests incl. through apid | green (run 40066538275) | not observed on a real host |
+| Trend from first_seen/resolved_at | linux, Postgres 16 | integration test with recurrence | green (run 40066538275) | one real day |
+| Console: Exposure, Fleet cards, drawer | any | model logic unit-tested | green (run 40066538275) | rendered in a browser on real and synthetic data |

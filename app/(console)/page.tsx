@@ -4,18 +4,32 @@ import { parseDeviceListQuery } from "@/lib/device-list";
 import { loadDevicePage } from "@/lib/devices-server";
 import { SampleToggle } from "@/components/sample-toggle";
 import { PageHeader, StatCard } from "@/components/console-ui";
+import { CoverageBanner } from "@/components/finding-summary";
+import { FeedAgeBanner } from "@/components/feed-age-banner";
+import { AlsoCheckCard, FixThisWeekCard, KevWatchCallout } from "@/components/fix-this-week";
+import { ExposureTrendCard } from "@/components/exposure-trend-card";
 import { ensureStore, publicDevice } from "@/lib/store";
 import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 import { isOnline } from "@/lib/policies";
 import { fleetAggregates } from "@/lib/fleet-aggregates";
 import { getFindingsSummary } from "@/lib/findings";
+import { getFeedStatus } from "@/lib/feeds";
+import { getExposureSummary, getExposureTrend } from "@/lib/exposure";
+import { parseTrendQuery } from "@/lib/exposure-model";
+import { loadAuditPeriods } from "@/lib/compliance";
+import { supportedOs } from "@/lib/supported-os";
 import { isReadOnlySession } from "@/lib/auth";
 import { FileWarning, MonitorCheck, Package, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const trendQuery = parseTrendQuery(await searchParams);
   const store = await ensureStore();
   const readOnly = await isReadOnlySession();
   const fleet = await loadFleet(store.devices);
@@ -33,6 +47,20 @@ export default async function HomePage() {
   // null when the control plane could not be asked: shown as unknown, not zero.
   const serious = aggregates.serious;
   const patches = fleet.reduce((n, d) => n + d.pendingUpdates.length, 0);
+  // Everything the Monday view needs comes from the control plane a page at a
+  // time or as counts; the fleet itself stays on the server.
+  const [exposure, trend, feedStatus, periods] = await Promise.all([
+    getExposureSummary(5),
+    getExposureTrend(trendQuery),
+    getFeedStatus(),
+    loadAuditPeriods().catch(() => []),
+  ]);
+  // The OS support policy lives in the console (DEFENDSEC_SUPPORTED_OS), so the
+  // unsupported hosts are counted here, from the fleet the page already holds.
+  const unsupported = fleet
+    .filter((d) => !d.sample && supportedOs(d) === false)
+    .map((d) => ({ id: d.id, hostname: d.hostname, os: `${d.osName} ${d.osVersion}`.trim() }))
+    .sort((a, b) => a.hostname.localeCompare(b.hostname));
 
   return (
     <div className="mx-auto max-w-6xl space-y-8">
@@ -57,6 +85,27 @@ export default async function HomePage() {
           </div>
         ) : null}
       />
+
+      <FeedAgeBanner status={feedStatus} />
+      {exposure ? <KevWatchCallout summary={exposure} /> : null}
+      {exposure === null ? (
+        <CoverageBanner
+          notice={{
+            tone: "amber",
+            title: "Exposure unavailable",
+            detail:
+              "The control plane could not be reached, or it is older than the exposure API. Nothing below says the fleet is clean.",
+          }}
+        />
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            <FixThisWeekCard summary={exposure} />
+          </div>
+          <AlsoCheckCard summary={exposure} unsupported={unsupported.slice(0, 5)} unsupportedTotal={unsupported.length} />
+        </div>
+      )}
+      <ExposureTrendCard trend={trend} query={trendQuery} periods={periods} />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard

@@ -192,6 +192,13 @@ type VulnFinding struct {
 	FirstSeen     time.Time  `json:"firstSeen"`
 	LastSeen      time.Time  `json:"lastSeen"`
 	ResolvedAt    *time.Time `json:"resolvedAt"`
+	// Resolution says how a closed finding closed (see the Resolution
+	// constants); ResolvedInstalled is the version the host had then.
+	Resolution        string `json:"resolution"`
+	ResolvedInstalled string `json:"resolvedInstalled"`
+	// UpstreamFixedOn is, for an awaiting_vendor finding, the date Red Hat
+	// shipped the fix (YYYY-MM-DD); empty otherwise.
+	UpstreamFixedOn string `json:"upstreamFixedOn"`
 }
 
 // FindingKey is the key the console's triage store uses for a finding, so an
@@ -205,8 +212,8 @@ const (
 		INSERT INTO vuln_findings (
 			device_id, advisory_id, family, range_id, snapshot_id, feed, feed_date, kind, basis,
 			package, source_package, installed, fixed, fix_state, cve, severity, summary,
-			kev, epss, cvss_score, reason, first_seen, last_seen, resolved_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, now(), now(), NULL)
+			kev, epss, cvss_score, reason, upstream_fixed_on, first_seen, last_seen, resolved_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, NULLIF($22,'')::date, now(), now(), NULL)
 		ON CONFLICT (device_id, advisory_id, family) DO UPDATE SET
 			range_id=EXCLUDED.range_id, snapshot_id=EXCLUDED.snapshot_id, feed=EXCLUDED.feed,
 			feed_date=EXCLUDED.feed_date, kind=EXCLUDED.kind, basis=EXCLUDED.basis,
@@ -214,14 +221,31 @@ const (
 			installed=EXCLUDED.installed, fixed=EXCLUDED.fixed, fix_state=EXCLUDED.fix_state,
 			cve=EXCLUDED.cve, severity=EXCLUDED.severity, summary=EXCLUDED.summary,
 			kev=EXCLUDED.kev, epss=EXCLUDED.epss, cvss_score=EXCLUDED.cvss_score, reason=EXCLUDED.reason,
+			upstream_fixed_on=EXCLUDED.upstream_fixed_on,
 			last_seen=now(),
 			first_seen=CASE WHEN vuln_findings.resolved_at IS NULL THEN vuln_findings.first_seen ELSE now() END,
-			resolved_at=NULL`
+			resolved_at=NULL, resolution='', resolved_installed=''`
+
+	// A closed finding that comes back restarts first_seen; the interval that
+	// ended is copied to vuln_finding_intervals first so the history survives.
+	archiveReopenedSQL = `
+		INSERT INTO vuln_finding_intervals (device_id, advisory_id, family, kind, kev, opened_at, closed_at, resolution)
+		SELECT f.device_id, f.advisory_id, f.family, f.kind, f.kev, f.first_seen, f.resolved_at, f.resolution
+		FROM vuln_findings f
+		JOIN unnest($2::text[], $3::text[]) AS k(advisory_id, family)
+		  ON k.advisory_id = f.advisory_id AND k.family = f.family
+		WHERE f.device_id = $1 AND f.resolved_at IS NOT NULL
+		ON CONFLICT DO NOTHING`
 
 	// Anything the run did not confirm is closed, not deleted.
-	resolveStaleFindingsSQL = `
-		UPDATE vuln_findings SET resolved_at = now()
+	staleFindingsSQL = `
+		SELECT id, package, fixed FROM vuln_findings
 		WHERE device_id = $1 AND resolved_at IS NULL AND last_seen < $2`
+
+	closeFindingsSQL = `
+		UPDATE vuln_findings f SET resolved_at = now(), resolution = c.resolution, resolved_installed = c.installed
+		FROM unnest($1::bigint[], $2::text[], $3::text[]) AS c(id, resolution, installed)
+		WHERE f.id = c.id`
 
 	upsertHostStateSQL = `
 		INSERT INTO host_vuln_state (device_id, distro, release, coverage, packages, distro_mapped,
@@ -237,14 +261,56 @@ const (
 		f.id, f.device_id, COALESCE(d.hostname,''), f.advisory_id, f.cve, f.family, f.range_id, f.snapshot_id,
 		f.feed, f.feed_date, f.kind, f.basis, f.package, f.source_package, f.installed, f.fixed,
 		f.fix_state, f.severity, f.summary, f.kev, f.epss, f.cvss_score, f.reason,
-		f.first_seen, f.last_seen, f.resolved_at`
+		f.first_seen, f.last_seen, f.resolved_at, f.resolution, f.resolved_installed,
+		COALESCE(f.upstream_fixed_on::text, '')`
 )
 
-// RecordFindings stores the outcome of matching one host: it upserts every
-// finding, closes the host's findings the run did not confirm, and records what
-// was examined. All in one transaction, so a reader never sees a half-written
-// host. snapshotID is the latest feed snapshot at match time.
+// Resolution says how a finding came to be closed (vuln_findings.resolution).
+const (
+	ResolutionUnknown         = ""
+	ResolutionFixed           = "fixed"
+	ResolutionPackageRemoved  = "package_removed"
+	ResolutionNoLongerAffects = "no_longer_affected"
+)
+
+// Inventory is the host's installed packages at the time of a match, used to
+// tell a finding closed because the host installed the fix from one closed
+// because the package went away or the advisory data changed.
+type Inventory struct {
+	Scheme vuln.Scheme
+	// Versions maps an installed package name to its version.
+	Versions map[string]string
+}
+
+// Classify says why a finding for pkg (fixed in fixed, "" if no fix) is no
+// longer confirmed. A nil inventory cannot say.
+func (inv *Inventory) Classify(pkg, fixed string) (resolution, installed string) {
+	if inv == nil {
+		return ResolutionUnknown, ""
+	}
+	cur, ok := inv.Versions[pkg]
+	if !ok {
+		return ResolutionPackageRemoved, ""
+	}
+	if fixed != "" && vuln.Compare(cur, fixed, inv.Scheme) >= 0 {
+		return ResolutionFixed, cur
+	}
+	return ResolutionNoLongerAffects, cur
+}
+
+// RecordFindings stores the outcome of matching one host without knowing the
+// host's inventory; findings it closes carry no resolution. See
+// RecordFindingsFor.
 func (s *Store) RecordFindings(ctx context.Context, deviceID string, res vuln.Result, snapshotID *int64) error {
+	return s.RecordFindingsFor(ctx, deviceID, res, snapshotID, nil)
+}
+
+// RecordFindingsFor stores the outcome of matching one host: it upserts every
+// finding, closes the host's findings the run did not confirm (recording from
+// inv why, when it is given), and records what was examined. All in one
+// transaction, so a reader never sees a half-written host. snapshotID is the
+// latest feed snapshot at match time.
+func (s *Store) RecordFindingsFor(ctx context.Context, deviceID string, res vuln.Result, snapshotID *int64, inv *Inventory) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -256,6 +322,19 @@ func (s *Store) RecordFindings(ctx context.Context, deviceID string, res vuln.Re
 	var start time.Time
 	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&start); err != nil {
 		return err
+	}
+	advisories, families := make([]string, 0, len(res.Findings)), make([]string, 0, len(res.Findings))
+	for _, f := range res.Findings {
+		family := f.SourcePackage
+		if family == "" {
+			family = f.Package
+		}
+		advisories, families = append(advisories, f.AdvisoryID), append(families, family)
+	}
+	if len(advisories) > 0 {
+		if _, err := tx.Exec(ctx, archiveReopenedSQL, deviceID, advisories, families); err != nil {
+			return fmt.Errorf("archive reopened findings: %w", err)
+		}
 	}
 	for _, f := range res.Findings {
 		var rangeID *int64
@@ -270,11 +349,11 @@ func (s *Store) RecordFindings(ctx context.Context, deviceID string, res vuln.Re
 		if _, err := tx.Exec(ctx, upsertFindingSQL,
 			deviceID, f.AdvisoryID, family, rangeID, f.SnapshotID, f.Feed, f.FeedDate, string(f.Kind), string(f.Basis),
 			f.Package, f.SourcePackage, f.Installed, f.Fixed, f.FixState, f.CVE, normSeverity(f.Severity), f.Summary,
-			f.KEV, f.EPSS, f.CVSS, f.Reason); err != nil {
+			f.KEV, f.EPSS, f.CVSS, f.Reason, f.UpstreamFixedOn); err != nil {
 			return fmt.Errorf("record finding %s: %w", f.AdvisoryID, err)
 		}
 	}
-	if _, err := tx.Exec(ctx, resolveStaleFindingsSQL, deviceID, start); err != nil {
+	if err := closeStaleFindings(ctx, tx, deviceID, start, inv); err != nil {
 		return fmt.Errorf("close stale findings: %w", err)
 	}
 	if _, err := tx.Exec(ctx, upsertHostStateSQL, deviceID, res.Distro, res.Release, string(res.Coverage),
@@ -283,6 +362,36 @@ func (s *Store) RecordFindings(ctx context.Context, deviceID string, res vuln.Re
 		return fmt.Errorf("record host state: %w", err)
 	}
 	return tx.Commit(ctx)
+}
+
+// closeStaleFindings closes every open finding of the host that the run did not
+// confirm, recording why when the inventory is known.
+func closeStaleFindings(ctx context.Context, tx pgx.Tx, deviceID string, start time.Time, inv *Inventory) error {
+	rows, err := tx.Query(ctx, staleFindingsSQL, deviceID, start)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	var resolutions, installed []string
+	for rows.Next() {
+		var id int64
+		var pkg, fixed string
+		if err := rows.Scan(&id, &pkg, &fixed); err != nil {
+			rows.Close()
+			return err
+		}
+		r, v := inv.Classify(pkg, fixed)
+		ids, resolutions, installed = append(ids, id), append(resolutions, r), append(installed, v)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err = tx.Exec(ctx, closeFindingsSQL, ids, resolutions, installed)
+	return err
 }
 
 func normSeverity(s string) string {
@@ -354,7 +463,7 @@ func scanFinding(row pgx.Row) (VulnFinding, error) {
 	if err := row.Scan(&v.ID, &v.DeviceID, &v.Hostname, &v.AdvisoryID, &v.CVE, &v.Family, &v.RangeID, &v.SnapshotID,
 		&v.Feed, &v.FeedDate, &v.Kind, &v.Basis, &v.Package, &v.SourcePackage, &v.Installed, &v.Fixed,
 		&v.FixState, &v.Severity, &v.Summary, &v.KEV, &v.EPSS, &v.CVSS, &v.Reason,
-		&v.FirstSeen, &v.LastSeen, &v.ResolvedAt); err != nil {
+		&v.FirstSeen, &v.LastSeen, &v.ResolvedAt, &v.Resolution, &v.ResolvedInstalled, &v.UpstreamFixedOn); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return VulnFinding{}, ErrNoFinding
 		}

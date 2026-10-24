@@ -302,6 +302,7 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/feeds", svc.HandleFeeds)
 	adminMux.HandleFunc("/v1/findings", svc.HandleFindings)
 	adminMux.HandleFunc("/v1/findings/", svc.HandleFindings)
+	adminMux.HandleFunc("/v1/exposure/", svc.HandleExposure)
 	// External surface scanner (slice 7a): declared assets and what the
 	// internet sees of them.
 	adminMux.HandleFunc("/v1/assets", svc.HandleAssets)
