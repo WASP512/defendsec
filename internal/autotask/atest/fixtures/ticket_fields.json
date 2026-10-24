@@ -1,0 +1,45 @@
+{
+  "fields": [
+    {"name": "id", "dataType": "long", "length": 0, "isRequired": false, "isReadOnly": true, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": false, "picklistValues": null, "picklistParentValueField": ""},
+    {"name": "companyID", "dataType": "integer", "length": 0, "isRequired": true, "isReadOnly": false, "isQueryable": true, "isReference": true, "referenceEntityType": "Company", "isPickList": false, "picklistValues": null, "picklistParentValueField": ""},
+    {"name": "title", "dataType": "string", "length": 255, "isRequired": true, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": false, "picklistValues": null, "picklistParentValueField": ""},
+    {"name": "description", "dataType": "string", "length": 8000, "isRequired": false, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": false, "picklistValues": null, "picklistParentValueField": ""},
+    {"name": "status", "dataType": "integer", "length": 0, "isRequired": true, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": true, "picklistParentValueField": "",
+     "picklistValues": [
+       {"value": "1", "label": "New", "isDefaultValue": true, "sortOrder": 1, "parentValue": "", "isActive": true, "isSystem": true},
+       {"value": "5", "label": "Complete", "isDefaultValue": false, "sortOrder": 5, "parentValue": "", "isActive": true, "isSystem": true},
+       {"value": "8", "label": "In Progress", "isDefaultValue": false, "sortOrder": 3, "parentValue": "", "isActive": true, "isSystem": false},
+       {"value": "9", "label": "Retired status", "isDefaultValue": false, "sortOrder": 9, "parentValue": "", "isActive": false, "isSystem": false}
+     ]},
+    {"name": "priority", "dataType": "integer", "length": 0, "isRequired": true, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": true, "picklistParentValueField": "",
+     "picklistValues": [
+       {"value": "1", "label": "P1 Urgent", "isDefaultValue": false, "sortOrder": 1, "parentValue": "", "isActive": true, "isSystem": false},
+       {"value": "2", "label": "P2 High", "isDefaultValue": false, "sortOrder": 2, "parentValue": "", "isActive": true, "isSystem": false},
+       {"value": "3", "label": "P3 Normal", "isDefaultValue": true, "sortOrder": 3, "parentValue": "", "isActive": true, "isSystem": false},
+       {"value": "4", "label": "P4 Low", "isDefaultValue": false, "sortOrder": 4, "parentValue": "", "isActive": false, "isSystem": false}
+     ]},
+    {"name": "queueID", "dataType": "integer", "length": 0, "isRequired": false, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": true, "picklistParentValueField": "",
+     "picklistValues": [
+       {"value": "100", "label": "Service Desk", "isDefaultValue": true, "sortOrder": 1, "parentValue": "", "isActive": true, "isSystem": false},
+       {"value": "101", "label": "Security Test Queue", "isDefaultValue": false, "sortOrder": 2, "parentValue": "", "isActive": true, "isSystem": false}
+     ]},
+    {"name": "source", "dataType": "integer", "length": 0, "isRequired": false, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": true, "picklistParentValueField": "",
+     "picklistValues": [
+       {"value": "-2", "label": "Client Portal", "isDefaultValue": true, "sortOrder": 1, "parentValue": "", "isActive": true, "isSystem": true},
+       {"value": "7", "label": "DefendSec", "isDefaultValue": false, "sortOrder": 2, "parentValue": "", "isActive": true, "isSystem": false}
+     ]},
+    {"name": "issueType", "dataType": "integer", "length": 0, "isRequired": false, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": true, "picklistParentValueField": "",
+     "picklistValues": [
+       {"value": "20", "label": "Cybersecurity & Cloud", "isDefaultValue": false, "sortOrder": 1, "parentValue": "", "isActive": true, "isSystem": false},
+       {"value": "21", "label": "Hardware", "isDefaultValue": false, "sortOrder": 2, "parentValue": "", "isActive": true, "isSystem": false}
+     ]},
+    {"name": "subIssueType", "dataType": "integer", "length": 0, "isRequired": false, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": true, "picklistParentValueField": "issueType",
+     "picklistValues": [
+       {"value": "200", "label": "Vulnerability remediation", "isDefaultValue": false, "sortOrder": 1, "parentValue": "20", "isActive": true, "isSystem": false},
+       {"value": "201", "label": "Email security", "isDefaultValue": false, "sortOrder": 2, "parentValue": "20", "isActive": true, "isSystem": false},
+       {"value": "210", "label": "Printer", "isDefaultValue": false, "sortOrder": 3, "parentValue": "21", "isActive": true, "isSystem": false}
+     ]},
+    {"name": "dueDateTime", "dataType": "datetime", "length": 0, "isRequired": false, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": false, "picklistValues": null, "picklistParentValueField": ""},
+    {"name": "completedDate", "dataType": "datetime", "length": 0, "isRequired": false, "isReadOnly": true, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": false, "picklistValues": null, "picklistParentValueField": ""}
+  ]
+}
