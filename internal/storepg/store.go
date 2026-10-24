@@ -146,16 +146,27 @@ const auditChainLock = "SELECT pg_advisory_xact_lock(hashtext('defendsec:audit-c
 // before it, so a later edit, deletion or reordering is detectable by
 // VerifyAuditChain.
 func (s *Store) Audit(ctx context.Context, actor, action, deviceID string, detail any) error {
-	raw, _ := json.Marshal(detail)
-	if len(raw) == 0 {
-		raw = []byte("{}")
-	}
-
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if err := auditInTx(ctx, tx, actor, action, deviceID, detail); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// auditInTx appends one entry to the audit chain inside tx, so a caller can
+// make the entry atomic with the change it records (a surface scan and its
+// digest commit or roll back together). It takes the chain lock, which the
+// transaction holds until it commits: do it last.
+func auditInTx(ctx context.Context, tx pgx.Tx, actor, action, deviceID string, detail any) error {
+	raw, _ := json.Marshal(detail)
+	if len(raw) == 0 {
+		raw = []byte("{}")
+	}
 
 	if _, err := tx.Exec(ctx, auditChainLock); err != nil {
 		return err
@@ -171,7 +182,7 @@ func (s *Store) Audit(ctx context.Context, actor, action, deviceID string, detai
 
 	var prevSeq int64
 	prevHash := auditchain.Genesis
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		SELECT seq, entry_hash FROM audit_log WHERE seq IS NOT NULL ORDER BY seq DESC LIMIT 1
 	`).Scan(&prevSeq, &prevHash)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -200,7 +211,7 @@ func (s *Store) Audit(ctx context.Context, actor, action, deviceID string, detai
 		controls.AuditActionSignalName(action), controlIDs(controls.TagAuditAction(action))); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 // ListAuditChain returns chained entries in sequence order, oldest first.
@@ -737,6 +748,16 @@ func (s *Store) ExportEvidence(ctx context.Context, controlPubPEM, server, scope
 			b.AgentPublicKeys = map[string]string{}
 		}
 		b.AgentPublicKeys[id] = pubPEM
+	}
+	// The surface section is read after the audit range on purpose: a scan
+	// recorded in between then shows up unattested (its chained entry lies past
+	// the range) instead of as an entry whose scan the bundle withheld.
+	if deviceID == "" {
+		sc, err := s.ExportSurfaceEvidence(ctx)
+		if err != nil {
+			return nil, err
+		}
+		b.Surface = sc
 	}
 	return b, nil
 }

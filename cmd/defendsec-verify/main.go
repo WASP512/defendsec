@@ -109,6 +109,9 @@ func printReport(b *evidence.Bundle, r evidence.Report) {
 	if b.Compliance != nil {
 		printCompliance(b.Compliance)
 	}
+	if b.Surface != nil {
+		printSurface(b.Surface, r.Surface)
+	}
 
 	if r.OK() {
 		fmt.Println("VERIFIED — every check passed.")
@@ -118,9 +121,24 @@ func printReport(b *evidence.Bundle, r evidence.Report) {
 		if r.AcksUnattested > 0 {
 			fmt.Printf("Note: %d acknowledgement(s) are unattested, so what was authorised is proven but not what was carried out.\n", r.AcksUnattested)
 		}
+		if r.Surface.ScansUnattested > 0 {
+			fmt.Printf("Note: %d external surface scan(s) carry no chained entry and are outside what this bundle can attest; their findings are listed but not proven.\n", r.Surface.ScansUnattested)
+		}
 		return
 	}
 	fmt.Println("FAILED — this bundle does not verify. See the failing check above.")
+}
+
+// printSurface renders the external surface section: what the chain attests
+// (scans and the open and closed dates of findings) and what it does not.
+func printSurface(sc *evidence.SurfaceScope, r evidence.SurfaceReport) {
+	fmt.Println("external surface")
+	fmt.Printf("  assets    %d declared\n", len(sc.Assets))
+	fmt.Printf("  scans     %d: %d attested by the chain, %d unattested, %d failed\n",
+		r.Scans, r.ScansAttested, r.ScansUnattested, r.ScansFailed)
+	fmt.Printf("  findings  %d: %d with dates recomputed from attested scans, %d unattested, %d failed\n",
+		r.Findings, r.FindingsVerified, r.FindingsUnattested, r.FindingsFailed)
+	fmt.Printf("  provenance: %s\n\n", sc.Provenance)
 }
 
 // printCompliance renders a scoped bundle's assessment.
