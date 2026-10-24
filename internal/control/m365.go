@@ -48,12 +48,15 @@ type m365Credentials struct {
 	Configured bool `json:"configured"`
 	// Method is "certificate" or "secret".
 	Method string `json:"method,omitempty"`
-	// Thumbprint (SHA-256, hex) and NotAfter identify a certificate credential: the
-	// thumbprint is what the Entra portal shows, so the operator can match them.
-	Thumbprint string     `json:"thumbprint,omitempty"`
-	NotAfter   *time.Time `json:"notAfter,omitempty"`
-	Problem    string     `json:"problem,omitempty"`
-	Warnings   []string   `json:"warnings"`
+	// ThumbprintSHA1 and Thumbprint (SHA-256), hex, and NotAfter identify a
+	// certificate credential. The operator matches ThumbprintSHA1 with the Entra
+	// portal's Certificates & secrets blade; the SHA-256 one is what the signed
+	// assertion carries.
+	ThumbprintSHA1 string     `json:"thumbprintSha1,omitempty"`
+	Thumbprint     string     `json:"thumbprint,omitempty"`
+	NotAfter       *time.Time `json:"notAfter,omitempty"`
+	Problem        string     `json:"problem,omitempty"`
+	Warnings       []string   `json:"warnings"`
 }
 
 type m365Runner struct {
@@ -104,7 +107,7 @@ func m365FromEnv(set storepg.M365Settings) (*m365.GraphSource, m365Credentials, 
 			return fail("DEFENDSEC_M365_CERT_FILE: " + err.Error())
 		}
 		cfg.Cert = cert
-		cr.Method, cr.Thumbprint = "certificate", cert.Thumbprint()
+		cr.Method, cr.Thumbprint, cr.ThumbprintSHA1 = "certificate", cert.Thumbprint(), cert.ThumbprintSHA1()
 		if na := cert.NotAfter(); !na.IsZero() {
 			na = na.UTC()
 			cr.NotAfter = &na
