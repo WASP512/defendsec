@@ -92,6 +92,22 @@ const (
 	// SignalManagedUpdate — operator-approved server and agent updates with
 	// checksum verification.
 	SignalManagedUpdate Signal = "update.managed"
+
+	// The external surface scanner (slice 7a). Each is what the outside world
+	// can be seen to do with a declared asset, from DNS, TLS handshakes, MTA-STS
+	// fetches and TCP connects only.
+
+	// SignalSurfaceEmail — the domain's published email authentication
+	// (SPF, DKIM, DMARC, MTA-STS, TLS-RPT) was read and judged.
+	SignalSurfaceEmail Signal = "surface.email"
+	// SignalSurfaceDNS — DNS hygiene (DNSSEC, CAA, dangling CNAME).
+	SignalSurfaceDNS Signal = "surface.dns"
+	// SignalSurfaceTLS — the certificate and protocol versions a declared
+	// hostname presents.
+	SignalSurfaceTLS Signal = "surface.tls"
+	// SignalSurfacePorts — which risky TCP ports on a declared IP accept a
+	// connection.
+	SignalSurfacePorts Signal = "surface.ports"
 )
 
 // SignalTitle is the human sentence for a signal, used wherever a control's
@@ -125,6 +141,10 @@ var signalTitles = map[Signal]string{
 	SignalEvidenceExport:    "Signed evidence export",
 	SignalBackup:            "Evidence store backup",
 	SignalManagedUpdate:     "Verified, operator-approved updates",
+	SignalSurfaceEmail:      "External email authentication check",
+	SignalSurfaceDNS:        "External DNS hygiene check",
+	SignalSurfaceTLS:        "External TLS check",
+	SignalSurfacePorts:      "External exposed-port check",
 }
 
 // SignalTitle returns the human name, falling back to the raw signal so an

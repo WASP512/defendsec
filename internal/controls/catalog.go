@@ -285,8 +285,8 @@ var native = []Control{
 		ID: MustParseID("nist-800-53:SC-8"), Family: "SC",
 		Title:    "Transmission confidentiality and integrity",
 		Coverage: CoverageEvidenced,
-		Signals:  []Signal{SignalTransportMTLS},
-		Note:     "Agent traffic is mutually authenticated TLS. Console TLS is terminated by the operator's reverse proxy and is the operator's to evidence.",
+		Signals:  []Signal{SignalTransportMTLS, SignalSurfaceTLS},
+		Note:     "Agent traffic is mutually authenticated TLS. Console TLS is terminated by the operator's reverse proxy and is the operator's to evidence. The external surface scanner also reports legacy TLS versions accepted by declared public hostnames.",
 	},
 	{
 		ID: MustParseID("nist-800-53:SC-13"), Family: "SC",
@@ -301,6 +301,45 @@ var native = []Control{
 		Coverage: CoveragePartial,
 		Signals:  []Signal{SignalSCA, SignalInventoryHardware},
 		Note:     "The agent reports whether host disk encryption is enabled, and a baseline check fails when it is not — so the state is evidenced per host. DefendSec does not configure encryption, and says nothing about the database's own encryption at rest or about key management.",
+	},
+
+	// --- External surface scanner (slice 7a) -------------------------------
+	// Seen from outside, from DNS, TLS handshakes and TCP connects only, and
+	// only on assets the operator declared and confirmed as authorised.
+	{
+		ID: MustParseID("nist-800-53:SC-7"), Family: "SC",
+		Title:    "Boundary protection",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalSurfacePorts},
+		Note:     "Which risky TCP ports on declared IP addresses accept a connection, seen from one vantage point. Firewall rules and segmentation are not read, and a refused connection from here does not prove a rule exists.",
+	},
+	{
+		ID: MustParseID("nist-800-53:CM-7"), Family: "CM",
+		Title:    "Least functionality — only essential services are exposed",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalSurfacePorts},
+		Note:     "A reachable SMB, RDP, database or similar port on a declared address is reported. Reachable is not vulnerable, and services only reachable internally are not seen.",
+	},
+	{
+		ID: MustParseID("nist-800-53:SC-17"), Family: "SC",
+		Title:    "Public key infrastructure certificates",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalSurfaceTLS},
+		Note:     "Expiry, hostname match and chain of the certificate a declared hostname presents. The issuing policy and private-key protection are not visible from outside.",
+	},
+	{
+		ID: MustParseID("nist-800-53:SC-20"), Family: "SC",
+		Title:    "Secure name and address resolution service (authoritative source)",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalSurfaceDNS},
+		Note:     "DNSSEC state of declared domains as a validating resolver reports it, CAA, and dangling CNAME targets. An unsigned zone is reported as informational, not as a failure.",
+	},
+	{
+		ID: MustParseID("nist-800-53:SI-8"), Family: "SI",
+		Title:    "Spam protection — email authentication that lets receivers reject spoofed mail",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalSurfaceEmail},
+		Note:     "SPF, DKIM, DMARC, MTA-STS and TLS-RPT records published for declared domains, judged for whether spoofed mail would be rejected. This is the nearest 800-53 control; inbound spam filtering itself is not assessed.",
 	},
 
 	// --- Controls DefendSec deliberately cannot evidence ------------------
@@ -426,6 +465,27 @@ var native = []Control{
 		Title:    "Deploy and maintain anti-malware software",
 		Coverage: CoverageNone,
 		Note:     "DefendSec is not an anti-malware product and does not scan for malware signatures.",
+	},
+	{
+		ID: MustParseID("cis-v8:3.10"), Family: "3",
+		Title:    "Encrypt sensitive data in transit",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalTransportMTLS, SignalSurfaceTLS},
+		Note:     "Agent traffic is mutually authenticated TLS, and the certificate and protocol versions on declared public hostnames are checked from outside. Traffic DefendSec cannot see is not assessed.",
+	},
+	{
+		ID: MustParseID("cis-v8:4.4"), Family: "4",
+		Title:    "Implement and manage a firewall on servers",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalSurfacePorts},
+		Note:     "Evidences what a connection from outside reaches on declared IPs. The host firewall's own rules are not read.",
+	},
+	{
+		ID: MustParseID("cis-v8:9.5"), Family: "9",
+		Title:    "Implement DMARC",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalSurfaceEmail},
+		Note:     "DMARC, SPF and DKIM records are read for declared domains and judged for enforcement. DKIM selectors cannot be enumerated, so a selector nobody declared is reported as not found, not as absent.",
 	},
 	{
 		ID: MustParseID("cis-v8:14.1"), Family: "14",

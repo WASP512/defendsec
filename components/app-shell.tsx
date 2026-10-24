@@ -23,6 +23,8 @@ import {
   ClipboardCheck,
   Gavel,
   BotMessageSquare,
+  Globe,
+  Network,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ConsoleTools } from "@/components/console-tools";
@@ -61,6 +63,9 @@ const nav = [
   { href: "/enroll", label: "Enroll", icon: Terminal },
   { href: "/accounts", label: "Accounts", icon: Users },
   { href: "/scope", label: "Scope", icon: Scale },
+  // External surface (slice 7a). Appended: the groups below slice this array by position.
+  { href: "/assets", label: "Assets", icon: Network },
+  { href: "/surface", label: "Surface", icon: Globe },
 ];
 
 const navGroups = [
