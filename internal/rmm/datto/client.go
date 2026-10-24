@@ -101,7 +101,7 @@ func Reason(err error) string {
 	case KindAuth:
 		return "Datto RMM refused the API key and secret (HTTP " + strconv.Itoa(e.Status) + "): check them, or generate new keys"
 	case KindForbidden:
-		return "Datto RMM answered 403 Forbidden: the API user's security level does not allow reading this (Sites > Sites: View and Sites > Devices: View are needed), or Datto has temporarily blocked this address after too many requests"
+		return "Datto RMM answered 403 Forbidden: the API user's security level does not allow reading this (Sites > Sites: View, Sites > Devices: View and Setup > Global Settings: View are needed, and the site must be inside the security level's device visibility), or Datto has temporarily blocked this address after too many requests"
 	case KindRateLimited:
 		return "Datto RMM is rate limiting this account (HTTP 429); the read stopped rather than keep asking"
 	case KindNotFound:

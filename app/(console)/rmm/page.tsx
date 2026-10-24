@@ -226,9 +226,11 @@ export default async function RmmPage() {
             In Datto RMM: <strong>Setup &gt; Global Settings &gt; Access Control</strong>, turn on <strong>Enable API Access</strong>.
           </li>
           <li>
-            <strong>Setup &gt; Users</strong>: create a dedicated user for DefendSec (not a person&apos;s account) whose security level can
-            only view: <strong>Sites &gt; Sites: View</strong> and <strong>Sites &gt; Devices: View</strong>, nothing that manages devices or
-            runs components.
+            <strong>Setup &gt; Security Levels</strong>: create a level for DefendSec that can only view, with device visibility limited to this
+            client&apos;s site: <strong>Sites &gt; Sites: View</strong>, <strong>Sites &gt; Devices: View</strong> and{" "}
+            <strong>Setup &gt; Global Settings: View</strong> (the site list needs it), every other permission None, all remote tools off.
+            Then <strong>Setup &gt; Users</strong>: create a dedicated user with that level (not a person&apos;s account), and give its API
+            Component Level no components.
           </li>
           <li>
             Open that user and click <strong>Generate API Keys</strong>. Copy the <strong>API Key</strong>, the <strong>API Secret Key</strong> (shown once)

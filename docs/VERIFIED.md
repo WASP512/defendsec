@@ -951,3 +951,84 @@ now present), unattested counted as attested: each made at least one test fail.
 | Surface drawer with raw observation | linux, Postgres 16 | storepg + control integration | see handoff | seeded data in a browser |
 | Reopened finding keeps its closed gap (migration 025) | linux, Postgres 16 | integration test | see handoff | not observed on a real domain |
 | Scan digest chained in the audit log; surface section verified by `defendsec-verify` | linux, Postgres 16 | evidence unit tests (10) + storepg/control integration | see handoff | exported by a real apid handler (fake resolver); verifier binary run on it, intact and three tampered ways |
+
+## Slice 8 — Datto RMM collector and Microsoft update feed (migration 026)
+
+- Date: 2026-10-24 (MDT). Host: `hermesagent`, go1.26.10 (toolchain download), node 22, Postgres 16 on titan CT 119 (own database).
+- Branch `lookout/8-datto-rmm`. What is in it: `internal/rmm/datto` (read-only API client), `internal/rmm` (collector), `internal/feeds/msrc`
+  (KB to CVE feed), `internal/vuln/windows.go` (missing-KB matcher), `internal/secret/file.go` (credentials from files), migration 026,
+  `internal/control/rmm.go` and the console pages. Design and the vendor facts it rests on: [DATTO-RMM.md](DATTO-RMM.md).
+
+### Commands run
+
+| # | Command | Result |
+| --- | --- | --- |
+| 1 | `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./internal/rmm/... ./internal/vuln/...` | exit 0, no output |
+| 2 | `unset TEST_DATABASE_URL; TMPDIR=/tmp go test -count=1 ./...` | 58 packages `ok`, 0 failed (the database tests skip) |
+| 3 | `TEST_DATABASE_URL=… go test -p 1 -count=1 -v <pkg>` (the CI integration packages plus `./internal/rmm/...`), tests and subtests counted by `--- PASS` | rmm 20, rmm/datto 18, feeds/msrc 7, feeds/runner 25, vuln 51, secret 2, control 165, storepg 120, db/migrations 5; **0 fail**. `internal/rmm` also reports 1 skip: a local demo seeder kept out of git (`.git/info/exclude`), absent in CI |
+| 4 | `npx tsc --noEmit`, `npm run lint`, `npm test`, `npm run build` | tsc and lint clean; **159 pass, 0 fail, 0 skipped**; `next build` green |
+
+`TestEveryIntegrationPackageRunsInCI` failed at first (`internal/rmm` has database tests CI did not run); `internal/rmm/...` is now in the
+`postgres-integration` job's command in `.github/workflows/ci.yml`, and the test passes.
+
+### What each claim rests on
+
+- **Client** (`internal/rmm/datto`, fixtures in `internal/rmm/dattotest/fixtures`, a fake Datto server): token flow and caching, refresh after expiry,
+  401 and 400 from the token endpoint as *auth* (credentials never echoed), 403 never retried, 429 waits `Retry-After` and gives up, 5xx retried then
+  failed, pagination of sites, devices and software (and a `nextPageUrl` on another host is refused, redirects are not followed), UIDs validated
+  before they reach a URL, request pacing, cancelled context, and `TestClientHasNoWriteCalls` (no method but GET plus the token request).
+  **Fixtures only; no call has been made to a real Datto account.**
+- **Collector** (`internal/rmm`, Postgres): read of a site maps missing KBs to CVEs; **a missing KB that fixes a KEV-listed CVE ranks first in Fix
+  this week** (`TestMissingKBThatFixesKEVRanksFirstInFixThisWeek`); an installed KB closes its findings as fixed; a KB no longer listed (and not
+  installed) is no longer affected; **a stale audit keeps its findings and is never clean**; a never-audited device is *no data*; coverage ages out
+  between reads without asking RMM; wrong credentials leave existing evidence alone; three 403s in a row stop the run; a 429 stops it with a
+  partial result; an unreadable device keeps its findings and the run is partial; a software failure does not stop the patch match; **no Microsoft
+  feed is `no_feed`, not clean**; a device that left the site, or a site change, retires rows; **an agent and RMM reporting the same machine are one
+  host** (serial first, then host name, ambiguity is no match); a new KEV listing re-ranks stored findings without calling RMM.
+- **Microsoft feed** (`internal/feeds/msrc`, `internal/feeds/runner`): reduction of a CVRF month, month selection, download of only the revised
+  months, a failed month fails the whole fetch, one range per (CVE, KB), KEV enrichment, opt-in configuration.
+- **API and audit** (`internal/control/rmm_test.go`, Postgres): auth per route, 403 for a viewer, site must be in the live list, bounds on the stale
+  threshold, waited read, 409 while another read runs, device list and detail, and that choosing a site and a read are written to the ledger.
+
+### Real runs
+
+- **The real Microsoft feed (the public API, no key).** `defendsec-feeds` with `msrc` enabled into a scratch database loaded **27,985 ranges for
+  3,778 advisories (26 of them KEV-listed) across 543 distinct KBs** from the 12 most recent monthly documents, `feed_snapshots` row
+  `msrc record_count 27985`. This is the only part of the slice that touched a real external service.
+- **Console and API in a browser against a fixture Datto server.** A real `defendsec-apid` and the production console build on a scratch database
+  (the real Microsoft feed above, two fixture devices: a Windows 10 22H2 PC audited 8 hours ago with three listed updates, and a Server 2019 whose
+  audit is 32 days old; the two KB numbers were replaced by the two real KBs with the most KEV CVEs so the ranking is real). Result: Fix this week
+  lists 30 vulnerabilities from that host led by KEV rows with "exploited in the wild since …"; the RMM page shows "2 Windows devices", "1 device not
+  assessed: audit older than 7 days, missing evidence, not a clean result", "Third-party application vulnerabilities are not assessed from RMM data"
+  and the stale server as *Evidence too old* with 0 findings and no clean mark; Windows 10 22H2 carries "unsupported OS"; every fact on the device
+  page names its source. Screenshots: `docs/screenshots/rmm-*.png`. A signed evidence export of that database verified (`defendsec-verify`: audit chain
+  intact, "VERIFIED — every check passed"). **Seeded data, not a client.**
+- **Not run: a read of a real Datto RMM site.** It needs the read-only API user Mason creates himself; the setup is in DATTO-RMM.md and the card is
+  waiting on it.
+
+### Not verified
+
+- **Any real Datto RMM response.** Field names, page sizes, whether a one-site security level can list sites, how many requests a real device costs
+  and whether `NOT_APPROVED` lists everything Windows offers are all unobserved. Fixtures follow Datto's published OpenAPI document.
+- **KB to CVE is only as good as the feed's window.** An update older than 12 months, or a KB whose Remediation names another product, is not mapped
+  (and counted, not guessed). Whether the CVE list RMM's KBs give matches what Microsoft Update would install on a given build was not checked.
+- **Third-party Windows software has no vulnerability matching** (by design, in this slice) and slice 10's end-of-life mapping was not applied to RMM
+  software: it has not merged.
+- **Evidence export:** RMM findings are in the same table as agent findings and flow into the exposure list and trend; the signed bundle (audit
+  chain, surface, compliance) does not carry host findings today for either source. Slice 7c is where that changes.
+- **Not run:** mutation checks, a load test with a large site, a Windows agent next to an RMM device on a real machine (the dedupe is tested with
+  fixtures), the Windows agent's own inventory against RMM's (no comparison made).
+- **Hosts table shows RMM devices as "Offline"** an hour after a read although RMM said online at read time (the online badge is derived from last seen,
+  as for agents).
+
+## Feature × platform × evidence matrix — additions from slice 8
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Datto RMM client (auth, paging, 401/403/429, read-only) | any | 18 tests against a fake Datto server | see handoff | **not run** against a real account |
+| RMM collector: OS, software, patch summary, per-KB list | Windows devices via RMM | 20 integration tests | see handoff | **not run** against a real account |
+| Missing KB to CVE to KEV ranking in Fix this week | Windows via RMM | matcher 6 + collector integration | see handoff | real Microsoft feed (27,985 ranges), fixture devices, in a browser |
+| Stale audit is missing evidence, never clean | Windows via RMM | integration tests | see handoff | fixture device with a 32-day-old audit, in a browser |
+| Agent and RMM dedupe (serial, host name) | Windows | unit + integration | see handoff | not run on a real machine |
+| Microsoft Security Update Guide feed (`msrc`) | any | 7 + 2 runner tests | see handoff | **real API**, 12 months |
+| Credentials from files (`internal/secret`) | linux | 2 tests | see handoff | not run with a real key |

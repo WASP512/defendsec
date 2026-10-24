@@ -369,6 +369,7 @@ func (s *Server) rmmSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not save the settings", http.StatusInternalServerError)
 		return
 	}
+	s.audit(s.actorIdentity(r), "rmm_site_select", "", map[string]any{"siteUid": req.SiteUID, "siteName": name, "staleAfterDays": days})
 	got, _ := s.pg.GetRMMSettings(r.Context())
 	writeJSON(w, http.StatusOK, got)
 }
@@ -443,6 +444,7 @@ func (s *Server) rmmSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := s.actorIdentity(r)
+	s.audit(actor, "rmm_sync", "", map[string]any{"siteUid": cfg.SiteUID, "wait": req.Wait})
 	if req.Wait {
 		defer s.releaseRMM()
 		out, err := s.runRMMSync(r.Context(), "manual:"+actor)
