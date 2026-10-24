@@ -25,7 +25,7 @@ var StandingNotAssessed = []NotAssessed{
 	},
 	{
 		What: "Mailbox delegation (another user allowed to read or send as a mailbox)",
-		Why:  "Gmail's delegates list needs the gmail.settings.sharing scope, which can also grant access. DefendSec asks only for read-only scopes, so a mailbox opened to another user would not show here.",
+		Why:  "Gmail's delegates list needs the gmail.settings.sharing scope, which can also grant access. DefendSec makes only GET requests and does not ask for that scope, so a mailbox opened to another user would not show here.",
 	},
 	{
 		What: "Which 2-Step Verification methods a user has, and whether a sign-in is phishing-resistant",

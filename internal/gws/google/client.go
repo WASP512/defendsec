@@ -1,5 +1,5 @@
-// Package google is DefendSec's read-only Google Workspace client for the identity
-// posture collector (slice 13).
+// Package google is DefendSec's Google Workspace client for the identity posture
+// collector (slice 13). It only reads: GET requests, no write method.
 //
 // It authenticates as a service account with domain-wide delegation: it signs an
 // RS256 JWT with the service account's private key, names the user to act as (the
@@ -7,8 +7,9 @@
 // settings reads) and exchanges it at Google's token endpoint. It makes GET
 // requests only. The one other request it can make is the token request, a POST to
 // the token endpoint. There is no method that creates, updates or deletes anything
-// in a Workspace account, and the scopes DefendSec asks for are read-only
-// (docs/GOOGLE-WORKSPACE.md).
+// in a Workspace account. The Directory scope is read-only; the default Gmail scope
+// (gmail.settings.basic) is a write scope for settings that this client never uses
+// to write, and the alternative (gmail.readonly) can read mail (docs/GOOGLE-WORKSPACE.md).
 //
 // Failures are classified (see Kind) and described without a key, a token or a
 // response body in the message, so a caller can say "delegation missing" or

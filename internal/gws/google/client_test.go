@@ -82,6 +82,8 @@ func TestNewValidation(t *testing.T) {
 		"admin not email":   func(c *google.Config) { c.AdminEmail = "alex" },
 		"admin two ats":     func(c *google.Config) { c.AdminEmail = "a@b@example.com" },
 		"unknown scope":     func(c *google.Config) { c.GmailScope = "https://www.googleapis.com/auth/gmail.modify" },
+		"full mail scope":   func(c *google.Config) { c.GmailScope = "https://mail.google.com/" },
+		"sharing scope":     func(c *google.Config) { c.GmailScope = "https://www.googleapis.com/auth/gmail.settings.sharing" },
 		"http token url":    func(c *google.Config) { c.TokenURL = "http://oauth.example.com/token" },
 		"http directory":    func(c *google.Config) { c.DirectoryURL = "http://admin.example.com" },
 		"gmail with a user": func(c *google.Config) { c.GmailURL = "https://user:pw@gmail.example.com" },

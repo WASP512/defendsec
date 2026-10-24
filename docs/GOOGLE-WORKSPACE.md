@@ -6,7 +6,7 @@
 
 DefendSec reads what a client's Google Workspace domain says about **how easily its accounts could be taken over, and how mail could be hidden or
 redirected once one is**. It is the counterpart of [M365.md](M365.md) and fills the same tables, the same Identity page area, the same finding kind
-(`identity`) and the same ranking in **Fix this week**. It is read-only, agentless and per client instance: one DefendSec instance reads one domain,
+(`identity`) and the same ranking in **Fix this week**. It makes only read (GET) requests, is agentless and per client instance: one DefendSec instance reads one domain,
 through one service account the client's super administrator authorises.
 
 Same lesson as slice 12: a mailbox filter that moves every QuickBooks/Intuit message out of the inbox hides a payment-redirection fraud from the owner. A

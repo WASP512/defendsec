@@ -55,6 +55,55 @@ func TestTwoStepSeverityByRole(t *testing.T) {
 	}
 }
 
+// A user for whom 2-Step Verification is enforced but who has not enrolled yet is
+// still a user without a second factor: enforcement is the domain's policy, not the
+// user's enrolment (mutation: "if u.Enrolled2SV || u.Enforced2SV").
+func TestTwoStepEnforcedButNotEnrolledIsNotEnrolled(t *testing.T) {
+	users := []User{
+		user("1", "late@example.com", func(u *User) { u.Enrolled2SV, u.Enforced2SV = false, true }),
+		user("2", "ok@example.com", nil),
+	}
+	res := CheckTwoStep(users)
+	f := findingFor(res, FindingNotEnrolled, "1")
+	if f == nil || f.Severity != SevMedium {
+		t.Fatalf("enforced, not enrolled: %+v", f)
+	}
+	if f.Evidence["isEnrolledIn2Sv"] != false || f.Evidence["isEnforcedIn2Sv"] != true {
+		t.Errorf("evidence = %+v", f.Evidence)
+	}
+	if findingFor(res, FindingNotEnrolled, "2") != nil {
+		t.Error("an enrolled user has a finding")
+	}
+	if res.Observed["notEnrolled"] != 1 {
+		t.Errorf("observed = %+v", res.Observed)
+	}
+}
+
+// The standing "not assessed" text is served on the page, by the status endpoint
+// and stored in every run. The default Gmail scope (gmail.settings.basic) is a write
+// scope for settings, so no text may claim the scopes are read-only.
+func TestNotAssessedNeverClaimsReadOnlyScopes(t *testing.T) {
+	if len(StandingNotAssessed) == 0 {
+		t.Fatal("no standing not-assessed entries")
+	}
+	for _, n := range StandingNotAssessed {
+		for _, bad := range []string{"read-only scopes", "read only scopes", "only for read"} {
+			if strings.Contains(strings.ToLower(n.What+" "+n.Why), bad) {
+				t.Errorf("%q says %q", n.What, bad)
+			}
+		}
+	}
+	var delegates *NotAssessed
+	for i := range StandingNotAssessed {
+		if strings.Contains(StandingNotAssessed[i].Why, "gmail.settings.sharing") {
+			delegates = &StandingNotAssessed[i]
+		}
+	}
+	if delegates == nil || !strings.Contains(delegates.Why, "only GET requests") {
+		t.Errorf("delegation entry = %+v", delegates)
+	}
+}
+
 func TestTwoStepLeavesOutGuestsSuspendedAndArchived(t *testing.T) {
 	users := []User{
 		user("1", "guest@other.example.org", func(u *User) { u.Guest, u.Enrolled2SV, u.Enforced2SV = true, false, false }),
@@ -85,6 +134,8 @@ func TestTwoStepEnforcementFinding(t *testing.T) {
 			"not enforced for 1 of 2 active users"},
 		"a user who is neither enrolled nor enforced": {[]User{
 			user("1", "a@example.com", func(u *User) { u.Enrolled2SV, u.Enforced2SV = false, false }), user("2", "b@example.com", nil)}, SevMedium, ""},
+		"enforced but not enrolled is not an enrolment": {[]User{
+			user("1", "a@example.com", func(u *User) { u.Enrolled2SV, u.Enforced2SV = false, true }), user("2", "b@example.com", nil)}, "", ""},
 		"an administrator is not covered": {[]User{
 			user("1", "a@example.com", func(u *User) { u.IsAdmin, u.Enforced2SV = true, false }), user("2", "b@example.com", nil)}, SevHigh, ""},
 		"a delegated administrator is not covered": {[]User{

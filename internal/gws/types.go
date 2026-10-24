@@ -1,7 +1,8 @@
 // Package gws is the Google Workspace identity posture collector (slice 13): what
 // a client's domain says about how easily its accounts can be taken over and how
 // mail could be hidden or redirected once one is, read through the Admin SDK
-// Directory API and the Gmail settings API with read-only scopes and nothing
+// Directory API and the Gmail settings API, with GET requests only (the default
+// Gmail scope is a write scope for settings that is never used to write) and nothing
 // installed. It is the counterpart of internal/m365 and fills the same Report.
 //
 // It reads who is enrolled in 2-Step Verification and who is a super

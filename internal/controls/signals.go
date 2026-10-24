@@ -128,7 +128,7 @@ const (
 
 	// The Google Workspace identity posture collector (slice 13): what a domain's
 	// own configuration was read to say, through the Admin SDK Directory API and the
-	// Gmail settings API with read-only scopes.
+	// Gmail settings API, with GET requests only.
 
 	// SignalGWS2SV — which users are enrolled in 2-Step Verification, and whether
 	// it is enforced (Directory API users.list).

@@ -40,7 +40,7 @@ export default async function GoogleIdentityPage() {
           <>
             How easily the client&apos;s Google Workspace accounts could be taken over, and how mail could be hidden or redirected once one is: who is not enrolled in
             2-Step Verification, whether it is enforced, how many super administrators there are, and Gmail forwarding and filters that send mail outside or hide it (the
-            pattern behind a payment-redirection fraud). Read-only, through a service account with domain-wide delegation; no message is ever read. Findings rank in{" "}
+            pattern behind a payment-redirection fraud). Makes only read requests, through a service account with domain-wide delegation; no message is ever read. Findings rank in{" "}
             <Link href="/advisories" className="underline">
               Fix this week
             </Link>
