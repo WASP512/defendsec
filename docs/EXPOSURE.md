@@ -42,12 +42,24 @@ Most urgent first (`internal/exposure`, mirrored by `lib/exposure-model.ts` `com
 A missing EPSS or CVSS score ranks after any score, including 0: unknown is not zero.
 
 **End-of-life software** (slice 10, [EOL.md](EOL.md)) is in the fix bucket beside the patches: upgrading is the fix. It has
-no EPSS or CVSS, so it ranks **among the unscored findings**, after every finding that has an exploitation score and by
-severity label against the other unscored ones: a release past security support is `high`, one past active support is
-`low`. The ranking code is unchanged. The row's reason reads "Past end of security support since 2023-11-26 · no one
-patches it any more, so every future flaw stays open · no exploitation score applies · installed from deb.sury.org, not
-the distribution · ranks with the unscored findings by severity (high)", and the row names the release
-("PHP 8.0") and the upgrade target rather than a fixed version.
+no EPSS or CVSS, and nothing will ever patch it, so it enters the order next to the high vulnerabilities, the way a
+surface finding does (rules in `internal/exposure/rank.go`, "End-of-life findings"):
+
+- **Past end of security support** (stage `eol`, severity `high`): the **urgent band**, right after KEV, with the critical
+  and high surface findings, and before every vulnerability that is not on KEV, whatever its EPSS. Its
+  CVSS-equivalent is 8.0 (`exposure.EOLScore`), so a critical surface finding (9.5) ranks above it; a high surface
+  finding ties on 8.0 and on the severity label, and the row id breaks the tie (`EOL:` sorts before `surface:`).
+- **Past end of active support only** (stage `eoas`, severity `low`): security fixes still arrive. EPSS none, CVSS-equivalent
+  2.0: the rest band, after every vulnerability that has an EPSS score, with the low CVSS-only ones, below every
+  security-EOL row.
+
+The stage decides, not the severity label. The price of the first rule is the one the surface rule already pays: a non-KEV
+CVE with a very high EPSS ranks below an unpatchable release; revisit it with real data. The SQL `ORDER BY` (`k1` band, `k4`
+score), `exposure.Compare` and `compareRank` state this one rule and are tested against each other with eol rows at
+page sizes 1, 2, 3 and 200. The row's reason reads "Past end of security support since 2023-11-26 · no one patches it any
+more, so every future flaw stays open · no exploitation score applies · installed from deb.sury.org, not the distribution
+· ranks after exploited vulnerabilities and before every other vulnerability, as no fix will ever come", and the row
+names the release ("PHP 8.0") and the upgrade target rather than a fixed version.
 
 Every row carries the reason it ranks where it does, and **CVSS is never the headline**:
 
@@ -61,6 +73,64 @@ records; it is not the date exploitation began.
 
 The console re-checks every page it is handed with `isRanked` and warns if apid returned it out
 of order (an apid and console that disagree on the rule).
+
+## External surface findings (slice 7b)
+
+The Fix this week list also holds the **external surface findings** of the scanner in
+[SURFACE.md](SURFACE.md): one row per finding (not per host), next to the vulnerabilities, in the same keyset-paged
+order. A surface row has no KEV flag, EPSS or CVSS, so it enters the order by its severity:
+
+| Order | Rows |
+| --- | --- |
+| 1 | KEV vulnerabilities (as above) |
+| 2 | **critical and high surface findings**: live for anyone on the internet with no foothold or exploit needed (an SMB, RDP or database port that answers, an expired certificate, `+all` in SPF, a missing DMARC record). Critical before high, then the older finding first |
+| 3 | everything else by EPSS, then CVSS, then severity. A **medium or low surface finding has no EPSS** and ranks like a vulnerability with no EPSS score and the CVSS-equivalent of its severity (medium 5.0, low 2.0), so DMARC `p=none` sits among the medium vulnerabilities |
+
+`info` findings (DNSSEC unsigned, SSH reachable on a server) are observations, never ranked and never counted, like an
+informational vulnerability. **Missing evidence never ranks**: a check that could not run produces no finding. A finding
+whose check could not run on its latest pass stays listed from its last confirmation and is marked *unconfirmed*
+(`surface.unconfirmed`), with the date; it is not refreshed and not dropped.
+
+The price of putting critical and high surface findings above every non-KEV vulnerability is that a non-KEV CVE with a very
+high EPSS ranks below an exposed RDP port. That is a judgement, written into `internal/exposure` and its tests; revisit it
+with real data.
+
+The "why it ranks here" line never leads with a number that does not exist:
+
+- critical/high: "Live for anyone on the internet: no foothold or exploit needed · critical severity · ranks after exploited
+  vulnerabilities and before every other vulnerability"
+- medium/low: "No exploitation signal (external surface finding) · ranked by severity medium · alongside vulnerabilities with no
+  EPSS score"
+
+Where the rule lives, three times and always the same: `internal/exposure` (`Band`, `SurfaceScore`, `Compare`), the SQL in
+`storepg/exposure.go` (tested against `Compare` at page sizes 1, 2, 4 and 200) and `lib/exposure-model.ts` (`rankBand`,
+`SURFACE_SCORE`, `compareRank`; the console warns if apid returns a page out of order).
+
+Surface rows are only in the fix bucket. They are never in the watch list (nothing is "waiting on a vendor"), never in the
+KEV callout (`kevOnly=1` keeps only exploited vulnerabilities), and a removed asset's findings leave every list and count
+(the rows are kept as evidence). A resolved surface finding is in the Resolved list, with the day it closed.
+
+**Summary and trend.**
+
+- `GET /v1/exposure/summary` gains `surface` (assets, unauthorised, scanned, findings, `bySeverity`, info, assetsAffected,
+  `lastScanAt`, `checksNotAssessed`) and `fixable.surface` / `fixable.total` (the length of the list). The Fleet page shows
+  **"External surface: N findings (x high) across M assets, last scanned <time>"**; a surface never scanned reads "not scanned
+  yet", never "0 findings", and checks that could not run are named. Fix this week now counts both kinds in its description
+  and in its tab.
+- `GET /v1/exposure/trend` gains a **series of its own**: `surface` (open critical, high, medium and low findings per UTC day),
+  `surfaceHigh` (the critical and high part) and `surfaceKnown` (false before the first surface scan: the zeros mean no data).
+  The console draws it as a second bar chart on its own scale: hundreds of vulnerabilities would flatten a handful of
+  findings, and the point is that an email-authentication fix visibly pays off. A finding that closed and came back counts
+  as closed in between (migration 025, `surface_finding_intervals`), except for findings reopened before slice 7b, whose
+  closed days were never recorded.
+
+**Drawer.** A surface row opens `/advisories?advisory=surface:<id>`: the finding, how to fix it, **open on / closed on** (every
+interval), and the raw observation behind it (the record text or certificate fields, so it can be compared with `dig` or
+`openssl`). `GET /v1/exposure/advisory?id=surface:<12 digits>` answers `{source: "surface", detail: {finding, intervals,
+confirmed, latest, unconfirmed}}`; a malformed key answers 400, an unknown one 404.
+
+**Evidence export.** Surface findings, intervals and every scan's raw observations ride in the signed evidence export (any
+bundle, scoped or not). What `defendsec-verify` proves, and what it does not, is in [SURFACE.md](SURFACE.md#evidence-export).
 
 ## Status
 
@@ -104,7 +174,8 @@ move: the cursor is a position in the order, not a snapshot.)
 
 Each row: `advisoryId`, `cve`, `summary`, `severity`, `kev`, `kevAdded`, `epss`, `cvss`,
 `kinds`, `hostCount` and the first five `hosts`, `findingCount`, `packages`, `fixed`,
-`firstSeen`, `resolvedAt`, `awaitingSince`. Bad parameters and bad cursors answer 400.
+`firstSeen`, `resolvedAt`, `awaitingSince`, `source` (`vulnerability` or `surface`) and, on a surface row,
+`surface` (asset, check, finding id, detail, fix, `lastSeen`, `unconfirmed`). Bad parameters and bad cursors answer 400.
 
 ### `GET /v1/exposure/advisory?id=<advisory id>&bucket=fix&status=open`
 
@@ -147,7 +218,7 @@ closed. The response says what the series is built from (`caveats`):
 
 ## Console
 
-- **Exposure** (`/advisories`): the ranked list with the reason on every row, tabs for
+- **Exposure** (`/advisories`): the ranked list (vulnerabilities and, since slice 7b, external surface findings) with the reason on every row, tabs for
   Fix this week, Watch and Resolved, the feed-age banner, the red KEV callout, a not-assessed
   banner, keyset paging (Previous/Next links; `back` keeps a stack of cursors because the
   cursor only moves forward), and a provenance drawer (`?advisory=<id>`, so a view is a URL).

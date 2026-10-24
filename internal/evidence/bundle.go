@@ -90,6 +90,11 @@ type Bundle struct {
 	// framework (roadmap 1.9). It is partly verifiable and says so; see
 	// compliance.go for exactly which part.
 	Compliance *ComplianceScope `json:"compliance,omitempty"`
+
+	// Surface is present when the instance has declared external surface
+	// assets (slice 7b). Like Compliance it is partly verifiable and says so;
+	// see surface.go.
+	Surface *SurfaceScope `json:"surface,omitempty"`
 }
 
 // Write serialises a bundle.
@@ -137,6 +142,10 @@ type Report struct {
 	// ComplianceControls is how many controls a scoped bundle asserts. Zero
 	// means the bundle carries no assessment, not that it passed one.
 	ComplianceControls int `json:"complianceControls"`
+
+	// Surface counts the external surface section: what the chain attests and
+	// what it does not. All zero means the bundle carries no surface section.
+	Surface SurfaceReport `json:"surface"`
 }
 
 // OK reports whether every check passed.
@@ -171,6 +180,7 @@ func Verify(b *Bundle) Report {
 	verifyCommands(b, pub, keyID, &rep)
 	verifyAcks(b, &rep)
 	verifyComplianceScope(b, &rep)
+	verifySurface(b, &rep)
 	return rep
 }
 

@@ -11,6 +11,32 @@ import { upgradeLabel } from "./findings-model.ts";
 import type { EolDetail, FindingKind, FindingSeverity } from "./findings-model.ts";
 import type { FindingTriage } from "./types.ts";
 
+/**
+ * What a row of the ranked list is: a vulnerability (one advisory, with the
+ * hosts it affects) or, since slice 7b, one external surface finding. An older
+ * control plane sends no `source`: that is a vulnerability.
+ */
+export type ExposureSource = "vulnerability" | "surface";
+
+/** The part of a surface row the list needs; the drawer fetches the rest. */
+export type SurfaceRow = {
+  findingId: number;
+  assetId: number;
+  assetKind: "domain" | "hostname" | "ip";
+  assetValue: string;
+  /** The check group: spf, dmarc, ports, tls-cert, ... */
+  check: string;
+  /** The condition: dmarc.p_none, ports.open, ... */
+  id: string;
+  subject: string;
+  detail: string;
+  fix: string;
+  /** When a scan last confirmed the finding. */
+  lastSeen: string;
+  /** The latest run of this check could not reach a conclusion; shown from the last confirmation. */
+  unconfirmed: boolean;
+};
+
 /** One advisory with the hosts it affects: a row of the ranked list. */
 export type ExposureGroup = {
   advisoryId: string;
@@ -35,6 +61,12 @@ export type ExposureGroup = {
   awaitingSince: string | null;
   /** Set on an end-of-life row (advisory id "EOL:<product>:<cycle>"). */
   eol?: ExposureEol | null;
+  source?: ExposureSource;
+  /**
+   * Set on a surface row. Its advisoryId is the row key ("surface:<12 digits>"),
+   * its summary the finding's title; it has no hosts, KEV, EPSS or CVSS.
+   */
+  surface?: SurfaceRow;
 };
 
 /** The release an end-of-life row is about. */
@@ -95,6 +127,8 @@ export type ExposureHostRow = {
 
 export type ExposureAdvisoryResponse = {
   advisoryId: string;
+  /** Absent from a control plane older than slice 7b; a surface row's drawer answers with another shape. */
+  source?: "vulnerability";
   bucket: ExposureBucket;
   status: "open" | "resolved";
   advisory: {
@@ -130,23 +164,69 @@ export type ExposureSummary = {
     silent: number;
     silentList: { deviceId: string; hostname: string; lastSeen: string }[];
   };
-  /** findings, advisories and hosts count patches to install and software to upgrade; eol is the upgrade part. */
-  fixable: { findings: number; advisories: number; hosts: number; kev: ExposureCount; eol?: ExposureCount };
+  /**
+   * findings, advisories and hosts count patches to install and software to upgrade; eol is the
+   * upgrade part (software past end of life from outside the distribution).
+   */
+  fixable: {
+    findings: number;
+    advisories: number;
+    hosts: number;
+    kev: ExposureCount;
+    eol?: ExposureCount;
+    /** Open external surface findings that rank (critical, high, medium, low). Absent from an older control plane. */
+    surface?: number;
+    /** advisories + surface: the length of the Fix this week list. */
+    total?: number;
+  };
   watch: { unfixed: ExposureCount; awaitingVendor: ExposureCount; kev: ExposureCount };
   sca: { total: number; hosts: number; bySeverity: Record<string, number> };
+  /** The external surface card. Absent from a control plane older than slice 7b. */
+  surface?: SurfaceSummary;
   fixThisWeek: ExposureGroup[];
   kevWatch: ExposureGroup[];
   latestSnapshotId: number | null;
   generatedAt: string;
 };
 
-export type TrendPoint = { day: string; known: boolean; open: number; kev: number; watch: number };
+export type SurfaceSummary = {
+  /** Declared, confirmed as authorised and not removed: the assets that get scanned. */
+  assets: number;
+  /** Declared but not confirmed, so never scanned. */
+  unauthorised: number;
+  /** Of `assets`, how many have been scanned at least once. */
+  scanned: number;
+  /** Open findings that rank: critical, high, medium, low. Info is never counted. */
+  findings: number;
+  bySeverity: Record<string, number>;
+  info: number;
+  assetsAffected: number;
+  lastScanAt: string | null;
+  /** Checks whose latest run could not reach a conclusion. */
+  checksNotAssessed: number;
+};
+
+export type TrendPoint = {
+  day: string;
+  known: boolean;
+  open: number;
+  kev: number;
+  watch: number;
+  /** External surface findings open that day (never info); a series of its own. */
+  surface?: number;
+  /** The critical and high part of `surface`. */
+  surfaceHigh?: number;
+  /** False before the first surface scan: the zeros mean no data. */
+  surfaceKnown?: boolean;
+};
 
 export type ExposureTrend = {
   from: string;
   to: string;
   points: TrendPoint[];
   historySince: string | null;
+  /** When the first surface scan started; null if none ever ran (or an older control plane). */
+  surfaceSince?: string | null;
   period: { id: string; name: string; closed: boolean } | null;
   caveats: string[];
   generatedAt: string;
@@ -158,7 +238,44 @@ const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2,
 
 export type Rankable = Pick<ExposureGroup, "advisoryId" | "severity" | "kev" | "kevAdded" | "epss" | "cvss"> & {
   eol?: ExposureEol | null;
+  source?: ExposureSource;
 };
+
+/** True for a row that is an external surface finding. */
+export function isSurfaceRow(g: Pick<Rankable, "source">): boolean {
+  return g.source === "surface";
+}
+
+/**
+ * The CVSS-equivalent a surface finding ranks by when it is not urgent. It makes
+ * the surface and vulnerability orders one order; it is never shown. Mirrors
+ * exposure.SurfaceScore.
+ */
+export const SURFACE_SCORE: Record<string, number> = { critical: 9.5, high: 8.0, medium: 5.0, low: 2.0 };
+
+/**
+ * The CVSS-equivalent an end-of-life row ranks by: that of a high vulnerability
+ * past end of security support, of a low one past end of active support. Never
+ * shown. Mirrors exposure.EOLScore.
+ */
+export const EOL_SCORE: Record<string, number> = { eol: 8.0, eoas: 2.0 };
+
+/**
+ * 0: a KEV vulnerability. 1: a critical or high surface finding, or software
+ * past end of security support. 2: everything else. Mirrors exposure.Band.
+ */
+export function rankBand(g: Rankable): 0 | 1 | 2 {
+  if (isSurfaceRow(g)) return g.severity === "critical" || g.severity === "high" ? 1 : 2;
+  if (g.eol && g.eol.stage in EOL_SCORE) return g.eol.stage === "eol" ? 1 : 2;
+  return g.kev ? 0 : 2;
+}
+
+// A surface or end-of-life row has no exploitation signal, and the CVSS-equivalent of its severity or stage.
+function effective(g: Rankable): Rankable {
+  if (isSurfaceRow(g)) return { ...g, kev: false, kevAdded: null, epss: null, cvss: SURFACE_SCORE[g.severity] ?? null };
+  if (g.eol && g.eol.stage in EOL_SCORE) return { ...g, kev: false, kevAdded: null, epss: null, cvss: EOL_SCORE[g.eol.stage] };
+  return g;
+}
 
 // Higher first; a missing score goes last (and is not the same as zero).
 function byScoreDesc(a: number | null, b: number | null): number {
@@ -170,17 +287,26 @@ function byScoreDesc(a: number | null, b: number | null): number {
 
 /**
  * The exposure order, most urgent first: on the KEV list before anything else;
- * among KEV, the most recently listed first (an undated entry last); then EPSS
- * high to low; then CVSS high to low; then the vendor's severity label; then
- * the advisory id, so the order is total. A missing score ranks after any
- * score, including 0. Mirrors internal/exposure.Compare.
+ * among KEV, the most recently listed first (an undated entry last); then the
+ * critical and high external surface findings (live for anyone on the internet,
+ * no foothold or exploit needed); then EPSS high to low; then CVSS high to low;
+ * then the vendor's severity label; then the row id, so the order is total. A
+ * missing score ranks after any score, including 0. A medium or low surface
+ * finding has no EPSS and the CVSS-equivalent of its severity, so it sits with
+ * the vulnerabilities that have no EPSS score. Mirrors internal/exposure.Compare.
  *
- * An end-of-life row has no EPSS or CVSS, so it ranks among the unscored: after
- * every scored finding, and by its severity label (high past security support,
- * low past active support) against the other unscored ones.
+ * An end-of-life row (slice 10) has no CVE and no score either. Software past
+ * end of security support is in the same urgent band as a high surface finding,
+ * the CVSS-equivalent of a high vulnerability (8.0): after KEV and before every
+ * other vulnerability, whatever its EPSS, because nothing will ever patch it.
+ * Past end of active support only, it ranks with the low CVSS-only
+ * vulnerabilities (2.0), below every vulnerability that has an EPSS score.
  */
-export function compareRank(a: Rankable, b: Rankable): number {
-  if (a.kev !== b.kev) return a.kev ? -1 : 1;
+export function compareRank(a0: Rankable, b0: Rankable): number {
+  const band = rankBand(a0) - rankBand(b0);
+  if (band !== 0) return band;
+  const a = effective(a0);
+  const b = effective(b0);
   if (a.kev && b.kev) {
     // KEV dates are YYYY-MM-DD, so comparing the strings compares the days.
     const da = a.kevAdded;
@@ -246,7 +372,20 @@ export function rankReason(g: Rankable): RankReason {
     );
     details.push("no exploitation score applies");
     if (e.origins.length > 0) details.push(`installed from ${e.origins.join(", ")}, not the distribution`);
-    details.push(`ranks with the unscored findings by severity (${g.severity})`);
+    details.push(
+      e.stage === "eol"
+        ? "ranks after exploited vulnerabilities and before every other vulnerability, as no fix will ever come"
+        : "ranks with the low-scored vulnerabilities, below every vulnerability that has an EPSS score",
+    );
+  } else if (isSurfaceRow(g)) {
+    // No KEV, EPSS or CVSS exists for a DNS or TLS finding; say what its place does rest on.
+    if (rankBand(g) === 1) {
+      headline = "Live for anyone on the internet: no foothold or exploit needed";
+      details.push(`${g.severity} severity`, "ranks after exploited vulnerabilities and before every other vulnerability");
+    } else {
+      headline = "No exploitation signal (external surface finding)";
+      details.push(`ranked by severity ${g.severity}`, "alongside vulnerabilities with no EPSS score");
+    }
   } else if (g.kev) {
     headline = g.kevAdded
       ? `Exploited in the wild since ${g.kevAdded}`
@@ -553,6 +692,50 @@ export function trendChart(points: TrendPoint[], width: number, height: number):
     .filter(Boolean)
     .join(" ");
   return { bars, watchPoints, max };
+}
+
+export type SurfaceBar = {
+  day: string;
+  known: boolean;
+  x: number;
+  width: number;
+  height: number;
+  /** The critical and high part of the bar. */
+  highHeight: number;
+  surface: number;
+  high: number;
+};
+
+export type SurfaceChart = { bars: SurfaceBar[]; max: number };
+
+/**
+ * The external surface findings as a series of its own, on its own scale: a few
+ * findings would be a flat line under hundreds of vulnerabilities, and the point
+ * of the line is that an email-authentication fix visibly pays off. One bar per
+ * day, the critical and high part marked within it; a day before the first
+ * surface scan is not drawn as zero.
+ */
+export function surfaceChart(points: TrendPoint[], width: number, height: number): SurfaceChart {
+  const n = points.length;
+  const max = Math.max(1, ...points.map((p) => (p.surfaceKnown ? (p.surface ?? 0) : 0)));
+  if (n === 0) return { bars: [], max };
+  const slot = width / n;
+  const bars = points.map((p, i): SurfaceBar => {
+    const known = p.surfaceKnown === true;
+    const surface = known ? (p.surface ?? 0) : 0;
+    const high = known ? Math.min(p.surfaceHigh ?? 0, surface) : 0;
+    return {
+      day: p.day,
+      known,
+      x: i * slot,
+      width: Math.max(1, slot * 0.8),
+      height: (surface / max) * height,
+      highHeight: (high / max) * height,
+      surface,
+      high,
+    };
+  });
+  return { bars, max };
 }
 
 /** One sentence the chart's reader can check: first and last known day. */

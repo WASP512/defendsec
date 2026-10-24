@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"defendsec/internal/exposure"
 )
 
 // The exposure view reads vuln_findings the way an operator does: not one row
@@ -126,6 +128,39 @@ type ExposureGroup struct {
 	AwaitingSince *string `json:"awaitingSince"`
 	// EOL is set on an end-of-life group (advisory id "EOL:<product>:<cycle>").
 	EOL *ExposureEOL `json:"eol"`
+
+	// Source is SourceVulnerability or SourceSurface. A surface row is one
+	// external-surface finding (slice 7b): AdvisoryID is its list key
+	// ("surface:<12 digits>"), Summary its title, Kinds is ["surface"], there
+	// are no hosts, and Surface carries the rest.
+	Source  string      `json:"source"`
+	Surface *SurfaceRow `json:"surface,omitempty"`
+}
+
+// The two kinds of row in the ranked list.
+const (
+	SourceVulnerability = "vulnerability"
+	SourceSurface       = "surface"
+)
+
+// SurfaceRow is what a surface row of the list says about its finding.
+type SurfaceRow struct {
+	FindingID  int64  `json:"findingId"`
+	AssetID    int64  `json:"assetId"`
+	AssetKind  string `json:"assetKind"`
+	AssetValue string `json:"assetValue"`
+	// Check is the check group ("dmarc", "ports"); ID the condition
+	// ("dmarc.p_none"); Subject tells apart several of one condition.
+	Check   string `json:"check"`
+	ID      string `json:"id"`
+	Subject string `json:"subject"`
+	Detail  string `json:"detail"`
+	Fix     string `json:"fix"`
+	// LastSeen is when a scan last confirmed the finding.
+	LastSeen time.Time `json:"lastSeen"`
+	// Unconfirmed is true when the latest run of the finding's check could not
+	// reach a conclusion: the finding is shown from its last confirmation.
+	Unconfirmed bool `json:"unconfirmed"`
 }
 
 // ExposureEOL describes the release an end-of-life group is about.
@@ -207,27 +242,38 @@ func isNumericText(s string) bool {
 	return true
 }
 
-// exposureRankedSQL groups the findings of one bucket by advisory and computes
-// the six sort keys, all ascending, so a keyset cursor is a row comparison:
+// exposureRankedSQL is the ranked list: the findings of one bucket grouped by
+// advisory, and (in the fix bucket) the open or resolved external-surface
+// findings, each with six sort keys, all ascending, so a keyset cursor is a row
+// comparison. It is the SQL form of internal/exposure.Compare:
 //
-//	k1  0 if on KEV, else 1
-//	k2  minus the KEV date as days since 1970 (0 when none or not KEV): newest first, undated last
-//	k3  minus EPSS (1 when none): highest first, unscored last
-//	k4  minus CVSS (1 when none, which sorts after any real score)
+//	k1  band: 0 a KEV vulnerability, 1 a critical or high surface finding or software past end of security support, 2 everything else
+//	k2  minus the KEV date as days since 1970 (0 when none, or not a KEV vulnerability): newest first, undated last
+//	k3  minus EPSS (1 when none, which every surface finding is): highest first, unscored last
+//	k4  minus CVSS (1 when none), or for a surface finding minus its severity's CVSS-equivalent, or for an
+//	    end-of-life finding minus 8.0 (security support ended) or 2.0 (active support ended)
 //	k5  severity label rank
-//	k6  advisory id
+//	k6  the row id: the advisory id, or "surface:<12 digits>" (compared bytewise, as Go does)
 //
 // $1 kinds, $2 resolved?, $3 KEV only?
 const exposureRankedSQL = `
 	SELECT advisory_id, cve, summary, severity, kev, kev_added, epss, cvss, kinds, host_count, finding_count,
 	       host_ids, host_names, packages, fixed, first_seen, resolved_at, awaiting_since,
 	       eol_product, eol_cycle, eol_stage, eol_date, eol_label, eol_upgrade, eol_origins,
-	       CASE WHEN kev THEN 0 ELSE 1 END AS k1,
-	       (CASE WHEN kev THEN -COALESCE(kev_added - DATE '1970-01-01', 0) ELSE 0 END)::text AS k2,
+	       source, s_id, s_asset_id, s_asset_kind, s_asset, s_check, s_finding, s_subject, s_detail, s_fix, s_last_seen, s_unconfirmed,
+	       CASE WHEN source = 'surface' THEN (CASE WHEN severity IN ('critical', 'high') THEN 1 ELSE 2 END)
+	            WHEN eol_stage = 'eol' THEN 1
+	            WHEN eol_stage = 'eoas' THEN 2
+	            WHEN kev THEN 0 ELSE 2 END AS k1,
+	       (CASE WHEN source = 'vulnerability' AND kev THEN -COALESCE(kev_added - DATE '1970-01-01', 0) ELSE 0 END)::text AS k2,
 	       (-COALESCE(epss, -1))::text AS k3,
-	       (-COALESCE(cvss, -1))::text AS k4,
+	       (CASE WHEN source = 'surface'
+	             THEN -(CASE severity WHEN 'critical' THEN 9.5 WHEN 'high' THEN 8.0 WHEN 'medium' THEN 5.0 ELSE 2.0 END)
+	             WHEN eol_stage = 'eol' THEN -8.0
+	             WHEN eol_stage = 'eoas' THEN -2.0
+	             ELSE -COALESCE(cvss, -1) END)::text AS k4,
 	       CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END AS k5,
-	       advisory_id AS k6
+	       advisory_id COLLATE "C" AS k6
 	FROM (
 	  SELECT f.advisory_id,
 	         max(f.cve) AS cve, max(f.summary) AS summary,
@@ -249,13 +295,33 @@ const exposureRankedSQL = `
 	         max(f.eol_date) AS eol_date,
 	         COALESCE(max(f.eol_detail->>'productLabel'), '') AS eol_label,
 	         COALESCE(max(f.eol_detail->>'upgradeTo'), '') AS eol_upgrade,
-	         COALESCE((array_agg(DISTINCT f.origin) FILTER (WHERE f.origin <> ''))[1:3], ARRAY[]::text[]) AS eol_origins
+	         COALESCE((array_agg(DISTINCT f.origin) FILTER (WHERE f.origin <> ''))[1:3], ARRAY[]::text[]) AS eol_origins,
+	         'vulnerability'::text AS source,
+	         NULL::bigint AS s_id, NULL::bigint AS s_asset_id, NULL::text AS s_asset_kind, NULL::text AS s_asset,
+	         NULL::text AS s_check, NULL::text AS s_finding, NULL::text AS s_subject, NULL::text AS s_detail,
+	         NULL::text AS s_fix, NULL::timestamptz AS s_last_seen, false AS s_unconfirmed
 	  FROM vuln_findings f
 	  JOIN devices d ON d.id = f.device_id AND NOT d.revoked
 	  LEFT JOIN advisories a ON a.id = f.advisory_id
 	  WHERE f.kind = ANY($1) AND (f.resolved_at IS NOT NULL) = $2
 	  GROUP BY f.advisory_id
 	  HAVING NOT $3 OR bool_or(f.kev)
+	  UNION ALL
+	  SELECT '` + exposure.SurfaceKeyPrefix + `' || lpad(sf.id::text, 12, '0'), '', sf.title, sf.severity,
+	         false, NULL::date, NULL::numeric, NULL::numeric,
+	         ARRAY['surface']::text[], 0::bigint, 1::bigint,
+	         ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[],
+	         sf.first_seen, sf.resolved_at, NULL::date,
+	         ''::text, ''::text, ''::text, NULL::date, ''::text, ''::text, ARRAY[]::text[],
+	         'surface'::text, sf.id, sa.id, sa.kind, sa.value,
+	         sf.check_group, sf.finding_id, sf.subject, sf.detail,
+	         sf.fix, sf.last_seen,
+	         sf.resolved_at IS NULL AND COALESCE((SELECT NOT o.assessed FROM surface_observations o
+	           WHERE o.asset_id = sf.asset_id AND o.check_group = sf.check_group
+	           ORDER BY o.observed_at DESC, o.id DESC LIMIT 1), false)
+	  FROM surface_findings sf
+	  JOIN surface_assets sa ON sa.id = sf.asset_id AND sa.removed_at IS NULL
+	  WHERE 'finding' = ANY($1) AND NOT $3 AND sf.severity <> 'info' AND (sf.resolved_at IS NOT NULL) = $2
 	) g`
 
 const exposureSample = "5"
@@ -313,14 +379,36 @@ func (s *Store) ListExposure(ctx context.Context, q ExposureQuery) (ExposurePage
 func scanExposureGroup(row pgx.Row) (ExposureGroup, exposureCursor, error) {
 	var g ExposureGroup
 	var c exposureCursor
-	var kevAdded, awaitingSince, eolDate *time.Time
+	var kevAdded, awaitingSince, sLastSeen, eolDate *time.Time
 	var ids, names, eolOrigins []string
+	var sID, sAssetID *int64
+	var sKind, sAsset, sCheck, sFinding, sSubject, sDetail, sFix *string
 	var eolProduct, eolCycle, eolStage, eolLabel, eolUpgrade string
+	var sUnconfirmed bool
 	if err := row.Scan(&g.AdvisoryID, &g.CVE, &g.Summary, &g.Severity, &g.KEV, &kevAdded, &g.EPSS, &g.CVSS,
 		&g.Kinds, &g.HostCount, &g.FindingCount, &ids, &names, &g.Packages, &g.Fixed, &g.FirstSeen, &g.ResolvedAt, &awaitingSince,
 		&eolProduct, &eolCycle, &eolStage, &eolDate, &eolLabel, &eolUpgrade, &eolOrigins,
+		&g.Source, &sID, &sAssetID, &sKind, &sAsset, &sCheck, &sFinding, &sSubject, &sDetail, &sFix, &sLastSeen, &sUnconfirmed,
 		&c.K1, &c.K2, &c.K3, &c.K4, &c.K5, &c.K6); err != nil {
 		return g, c, err
+	}
+	if g.Source == SourceSurface && sID != nil {
+		str := func(p *string) string {
+			if p == nil {
+				return ""
+			}
+			return *p
+		}
+		g.Surface = &SurfaceRow{
+			FindingID: *sID, AssetKind: str(sKind), AssetValue: str(sAsset), Check: str(sCheck), ID: str(sFinding),
+			Subject: str(sSubject), Detail: str(sDetail), Fix: str(sFix), Unconfirmed: sUnconfirmed,
+		}
+		if sAssetID != nil {
+			g.Surface.AssetID = *sAssetID
+		}
+		if sLastSeen != nil {
+			g.Surface.LastSeen = sLastSeen.UTC()
+		}
 	}
 	if eolProduct != "" {
 		d := ""
@@ -398,6 +486,9 @@ func (s *Store) GetExposureDetail(ctx context.Context, advisoryID, bucket, statu
 	}
 	if advisoryID == "" {
 		return ExposureDetail{}, fmt.Errorf("%w: advisory id is required", ErrBadExposureQuery)
+	}
+	if len(advisoryID) >= len(exposure.SurfaceKeyPrefix) && advisoryID[:len(exposure.SurfaceKeyPrefix)] == exposure.SurfaceKeyPrefix {
+		return ExposureDetail{}, fmt.Errorf("%w: %s is an external surface finding; use GetSurfaceDetail", ErrBadExposureQuery, advisoryID)
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+findingColumns+`
@@ -479,6 +570,11 @@ type ExposureSummary struct {
 		KEV        ExposureCount `json:"kev"`
 		// EOL is the part of the above that is end-of-life software.
 		EOL ExposureCount `json:"eol"`
+		// Surface is the open external-surface findings that rank (critical,
+		// high, medium, low): work for this week beside the vulnerabilities.
+		// Total is Advisories plus Surface: the length of the Fix this week list.
+		Surface int `json:"surface"`
+		Total   int `json:"total"`
 	} `json:"fixable"`
 	Watch struct {
 		Unfixed        ExposureCount `json:"unfixed"`
@@ -487,6 +583,8 @@ type ExposureSummary struct {
 		// the wild and has nothing to install: it needs a mitigation.
 		KEV ExposureCount `json:"kev"`
 	} `json:"watch"`
+	// Surface is the external surface card (slice 7b); see SurfaceExposureSummary.
+	Surface SurfaceExposureSummary `json:"surface"`
 	// SCA counts the open failed configuration checks by severity.
 	SCA struct {
 		Total    int            `json:"total"`
@@ -563,6 +661,12 @@ func (s *Store) ExposureSummary(ctx context.Context, now time.Time) (ExposureSum
 		return out, err
 	}
 
+	if out.Surface, err = s.SurfaceExposureSummary(ctx); err != nil {
+		return out, err
+	}
+	out.Fixable.Surface = out.Surface.Findings
+	out.Fixable.Total = out.Fixable.Advisories + out.Fixable.Surface
+
 	out.SCA.Severity = map[string]int{}
 	srows, err := s.pool.Query(ctx, `
 		SELECT a.severity, count(*), count(DISTINCT a.device_id)
@@ -608,6 +712,14 @@ type TrendPoint struct {
 	KEV  int `json:"kev"`
 	// Watch is findings with nothing to install (unfixed, awaiting vendor).
 	Watch int `json:"watch"`
+	// Surface is the external surface findings open that day (critical, high,
+	// medium and low; never info) and SurfaceHigh the critical and high part: a
+	// series of its own, so a client sees an email-auth fix pay off. A day
+	// before the first surface scan is SurfaceKnown false and its zeros mean
+	// no data.
+	Surface      int  `json:"surface"`
+	SurfaceHigh  int  `json:"surfaceHigh"`
+	SurfaceKnown bool `json:"surfaceKnown"`
 }
 
 // ExposureTrend is the daily series for a window.
@@ -618,6 +730,9 @@ type ExposureTrend struct {
 	// HistorySince is when the oldest feed snapshot was taken: the earliest
 	// moment findings could have been recorded. Nil if none exists.
 	HistorySince *time.Time `json:"historySince"`
+	// SurfaceSince is when the first surface scan started: the earliest moment
+	// a surface finding could have been recorded. Nil if none ever ran.
+	SurfaceSince *time.Time `json:"surfaceSince"`
 }
 
 // ErrBadTrendWindow is returned for a window the trend cannot answer.
@@ -654,7 +769,7 @@ func (s *Store) ExposureTrend(ctx context.Context, from, to, now time.Time) (Exp
 
 	rows, err := s.pool.Query(ctx, `
 		WITH days AS (
-		  SELECT d::date AS day, LEAST(d + interval '1 day', $3::timestamptz) AS asof
+		  SELECT d::date AS day, LEAST((d + interval '1 day') AT TIME ZONE 'UTC', $3::timestamptz) AS asof
 		  FROM generate_series($1::timestamp, $2::timestamp, interval '1 day') d
 		), spans AS (
 		  SELECT f.kind, f.kev, f.first_seen AS opened, f.resolved_at AS closed
@@ -690,5 +805,10 @@ func (s *Store) ExposureTrend(ctx context.Context, from, to, now time.Time) (Exp
 		}
 		out.Points = append(out.Points, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	rows.Close()
+	out.SurfaceSince, err = s.surfaceTrend(ctx, start, end, now, out.Points)
+	return out, err
 }

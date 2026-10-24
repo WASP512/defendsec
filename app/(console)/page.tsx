@@ -8,6 +8,7 @@ import { CoverageBanner } from "@/components/finding-summary";
 import { FeedAgeBanner } from "@/components/feed-age-banner";
 import { AlsoCheckCard, FixThisWeekCard, KevWatchCallout } from "@/components/fix-this-week";
 import { ExposureTrendCard } from "@/components/exposure-trend-card";
+import { SurfaceSummaryCard } from "@/components/surface-summary-card";
 import { ensureStore, publicDevice } from "@/lib/store";
 import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 import { isOnline } from "@/lib/policies";
@@ -102,7 +103,10 @@ export default async function HomePage({
           <div className="lg:col-span-2">
             <FixThisWeekCard summary={exposure} />
           </div>
-          <AlsoCheckCard summary={exposure} unsupported={unsupported.slice(0, 5)} unsupportedTotal={unsupported.length} />
+          <div className="space-y-4">
+            <SurfaceSummaryCard summary={exposure.surface} />
+            <AlsoCheckCard summary={exposure} unsupported={unsupported.slice(0, 5)} unsupportedTotal={unsupported.length} />
+          </div>
         </div>
       )}
       <ExposureTrendCard trend={trend} query={trendQuery} periods={periods} />

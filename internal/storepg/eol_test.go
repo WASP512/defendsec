@@ -2,10 +2,12 @@ package storepg
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"defendsec/internal/exposure"
 	"defendsec/internal/vuln"
 )
 
@@ -293,9 +295,13 @@ func TestEOLResolutionDistinguishesUpgradeFromDataChange(t *testing.T) {
 	}
 }
 
-// Findings with no score rank after every scored one and by severity among
-// themselves: past security support is high, past active support is low.
-func TestEOLRanksAmongUnscoredFindings(t *testing.T) {
+// End-of-life findings rank next to the high vulnerabilities: past security
+// support is in the urgent band, right after KEV and before every vulnerability
+// that is not on KEV, even one with an EPSS score; past active support only
+// ranks with the low CVSS-only ones, below the security-EOL finding and below
+// every scored vulnerability. The database order must be exposure.Compare's, at
+// every page size, with eol rows among them.
+func TestEOLRanksNextToHighVulnerabilities(t *testing.T) {
 	s, _ := scratchStore(t)
 	ctx := context.Background()
 	eolSetup(t, s)
@@ -326,9 +332,58 @@ func TestEOLRanksAmongUnscoredFindings(t *testing.T) {
 	for _, g := range page.Findings {
 		order = append(order, g.AdvisoryID)
 	}
-	want := []string{"A-kev", "B-scored", "D-unscored-high", "EOL:php:8.0", "C-unscored-medium", "EOL:nodejs:22"}
+	// KEV, then past-security-support PHP 8.0 above the EPSS-scored (0.0002) CVE,
+	// then past-active-support Node 22 (2.0 equivalent) above the CVEs with no
+	// score at all, which keep their severity order.
+	want := []string{"A-kev", "EOL:php:8.0", "B-scored", "EOL:nodejs:22", "D-unscored-high", "C-unscored-medium"}
 	if strings.Join(order, ",") != strings.Join(want, ",") {
 		t.Errorf("order = %v\nwant    %v", order, want)
+	}
+	for _, g := range page.Findings {
+		if strings.HasPrefix(g.AdvisoryID, "EOL:") && (g.EOL == nil || g.KEV || g.EPSS != nil || g.CVSS != nil) {
+			t.Errorf("%s: eol row carries %+v kev=%v epss=%v cvss=%v", g.AdvisoryID, g.EOL, g.KEV, g.EPSS, g.CVSS)
+		}
+	}
+
+	// The same order from the Go rule, over the whole list, and by keyset at
+	// several page sizes.
+	items := make([]exposure.Item, 0, len(page.Findings))
+	for _, g := range page.Findings {
+		it := exposure.Item{AdvisoryID: g.AdvisoryID, Severity: g.Severity, KEV: g.KEV, EPSS: g.EPSS, CVSS: g.CVSS}
+		if g.EOL != nil {
+			it.EOLStage = g.EOL.Stage
+		}
+		if g.KEVAdded != nil {
+			it.KEVAdded = day(*g.KEVAdded)
+		}
+		items = append(items, it)
+	}
+	sorted := append([]exposure.Item(nil), items...)
+	sort.Slice(sorted, func(i, j int) bool { return exposure.Compare(sorted[i], sorted[j]) < 0 })
+	for i := range items {
+		if items[i].AdvisoryID != sorted[i].AdvisoryID {
+			t.Fatalf("SQL order differs from exposure.Compare at %d: SQL %s, Go %s", i, items[i].AdvisoryID, sorted[i].AdvisoryID)
+		}
+	}
+	for _, size := range []int{1, 2, 3, 200} {
+		var got []string
+		cursor := ""
+		for pages := 0; pages < 20; pages++ {
+			p, err := s.ListExposure(ctx, ExposureQuery{Limit: size, Cursor: cursor})
+			if err != nil {
+				t.Fatalf("limit %d: %v", size, err)
+			}
+			for _, g := range p.Findings {
+				got = append(got, g.AdvisoryID)
+			}
+			if p.Next == "" {
+				break
+			}
+			cursor = p.Next
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("limit %d paged to\n %v\nwant\n %v", size, got, want)
+		}
 	}
 }
 

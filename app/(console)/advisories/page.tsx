@@ -1,4 +1,5 @@
 import { ExposureDetail } from "@/components/exposure-detail";
+import { SurfaceExposureDetail } from "@/components/surface-exposure-detail";
 import { ExposureDrawer } from "@/components/exposure-drawer";
 import { ExposureList, ExposureTabs } from "@/components/exposure-list";
 import { CoverageBanner } from "@/components/finding-summary";
@@ -10,6 +11,7 @@ import { ensureStore } from "@/lib/store";
 import { getFeedStatus } from "@/lib/feeds";
 import { getExposureAdvisory, getExposurePage, getExposureSummary } from "@/lib/exposure";
 import { closeDrawerHref, parseExposureQuery } from "@/lib/exposure-model";
+import { fixTotal, isSurfaceResponse } from "@/lib/surface-exposure";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +35,8 @@ export default async function AdvisoriesPage({ searchParams }: { searchParams: S
     query.advisory ? getExposureAdvisory(query.advisory, query.bucket, query.status) : Promise.resolve(null),
   ]);
   const group = page?.findings.find((g) => g.advisoryId === query.advisory) ?? null;
+  const surfaceDetail = isSurfaceResponse(detail) ? detail : null;
+  const vulnDetail = detail && !isSurfaceResponse(detail) ? detail : null;
   const unassessed = summary?.hosts.notAssessed ?? 0;
   const watchTotal = summary ? summary.watch.unfixed.findings + summary.watch.awaitingVendor.findings : 0;
 
@@ -42,10 +46,12 @@ export default async function AdvisoriesPage({ searchParams }: { searchParams: S
         title="Exposure"
         description={
           <>
-            What is exploitable on your hosts right now, most urgent first: vulnerabilities attackers are using
-            (CISA KEV, newest first), then by EPSS, then CVSS. Only findings with a fix to install are on the
-            fix list; the rest wait on the watch list. Fixed versions are the distribution&apos;s own, so a
-            backported fix is not reported as a vulnerability.
+            What to fix, most urgent first: vulnerabilities attackers are using (CISA KEV, newest first), then
+            critical and high findings on your external surface (an open SMB port, an expired certificate: live
+            for anyone on the internet), then by EPSS, then CVSS. Medium and low external findings rank with the
+            vulnerabilities that have no EPSS score. Only findings with something to fix are on the fix
+            list; the rest wait on the watch list. Fixed versions are the distribution&apos;s own, so a backported
+            fix is not reported as a vulnerability.
           </>
         }
       />
@@ -71,7 +77,7 @@ export default async function AdvisoriesPage({ searchParams }: { searchParams: S
           }}
         />
       ) : null}
-      <ExposureTabs query={query} fixCount={summary ? summary.fixable.advisories : null} />
+      <ExposureTabs query={query} fixCount={summary ? fixTotal(summary.fixable) : null} />
       {query.bucket === "watch" && query.status === "open" && summary ? (
         <p className="text-sm text-muted-foreground">
           {watchTotal} finding{watchTotal === 1 ? "" : "s"} across the fleet have nothing to install yet:{" "}
@@ -83,12 +89,18 @@ export default async function AdvisoriesPage({ searchParams }: { searchParams: S
 
       {query.advisory ? (
         <ExposureDrawer
-          title={group?.cve || detail?.advisory?.cve || query.advisory}
-          description="Where this finding came from and which hosts it is on."
+          title={surfaceDetail ? surfaceDetail.detail.finding.title : group?.cve || vulnDetail?.advisory?.cve || query.advisory}
+          description={
+            surfaceDetail
+              ? "What the scan saw, how long it has been open, and how to fix it."
+              : "Where this finding came from and which hosts it is on."
+          }
           closeHref={closeDrawerHref(query)}
         >
-          {detail ? (
-            <ExposureDetail group={group} detail={detail} triages={store.triages} readOnly={readOnly} />
+          {surfaceDetail ? (
+            <SurfaceExposureDetail group={group} response={surfaceDetail} />
+          ) : vulnDetail ? (
+            <ExposureDetail group={group} detail={vulnDetail} triages={store.triages} readOnly={readOnly} />
           ) : (
             <p className="text-sm text-muted-foreground">
               No open findings for this advisory in this list. It may have been resolved, or moved to another list.

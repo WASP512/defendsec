@@ -6,12 +6,14 @@ import { SeverityBadge } from "@/components/status-badge";
 import {
   fixedLabel,
   hostsLabel,
+  isSurfaceRow,
   kevWatchNotice,
   rankReason,
   watchLabel,
   type ExposureGroup,
   type ExposureSummary,
 } from "@/lib/exposure-model";
+import { fixDescription, fixEmptyText, fixTotal, surfaceWhere, unconfirmedNote } from "@/lib/surface-exposure";
 import { cn } from "@/lib/utils";
 
 function plural(n: number, one: string, many: string = `${one}s`) {
@@ -62,6 +64,38 @@ export function KevWatchCallout({ summary }: { summary: ExposureSummary }) {
 
 function FixRow({ group, rank }: { group: ExposureGroup; rank: number }) {
   const why = rankReason(group);
+  if (isSurfaceRow(group)) {
+    // An external surface finding: no CVE, no hosts; the asset and the check say where it is.
+    const unconfirmed = unconfirmedNote(group);
+    return (
+      <li className="flex gap-3 py-3 first:pt-0 last:pb-0" data-fix-row={group.advisoryId} data-source="surface">
+        <span className="w-5 shrink-0 pt-0.5 text-right text-sm font-medium tabular-nums text-muted-foreground">{rank}</span>
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/advisories?advisory=${encodeURIComponent(group.advisoryId)}`}
+              className="font-medium underline-offset-2 hover:underline"
+            >
+              {group.summary}
+            </Link>
+            <SeverityBadge severity={group.severity} />
+            <Badge variant="outline">external</Badge>
+          </div>
+          <p className="text-sm">
+            <span className="font-medium">{why.headline}</span>
+            {why.details.map((d) => (
+              <span key={d} className="text-muted-foreground">
+                {" · "}
+                {d}
+              </span>
+            ))}
+          </p>
+          <p className="text-sm text-muted-foreground">{surfaceWhere(group)}</p>
+          {unconfirmed ? <p className="text-xs text-amber-700 dark:text-amber-400">{unconfirmed}</p> : null}
+        </div>
+      </li>
+    );
+  }
   return (
     <li className="flex gap-3 py-3 first:pt-0 last:pb-0" data-fix-row={group.advisoryId}>
       <span className="w-5 shrink-0 pt-0.5 text-right text-sm font-medium tabular-nums text-muted-foreground">{rank}</span>
@@ -100,29 +134,21 @@ function FixRow({ group, rank }: { group: ExposureGroup; rank: number }) {
  * the card says how many were not.
  */
 export function FixThisWeekCard({ summary }: { summary: ExposureSummary }) {
-  const { fixable, hosts } = summary;
+  const { fixable } = summary;
   const rows = summary.fixThisWeek;
-  // fixable counts patches to install and end-of-life releases to upgrade.
-  const eolN = fixable.eol?.advisories ?? 0;
-  const vulnN = fixable.advisories - eolN;
   return (
     <Card data-fix-this-week>
       <CardHeader>
         <CardTitle className="text-lg">Fix this week</CardTitle>
         <CardDescription>
-          {fixable.advisories === 0
-            ? "Nothing with a fix to install."
-            : `${plural(vulnN, "vulnerability", "vulnerabilities")} with a fix to install${eolN > 0 ? ` and ${plural(eolN, "end-of-life release")} to upgrade` : ""}, across ${plural(fixable.hosts, "host")}. The top ${rows.length}, most urgent first:`}
+          {fixDescription(summary, rows.length)}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {rows.length === 0 ? (
           <p className="flex items-start gap-2 text-sm">
             <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-            {hosts.assessed === 0
-              ? "No host has been assessed yet, so this says nothing about the fleet."
-              : `Nothing to install on the ${plural(hosts.assessed, "assessed host")}.`}
-            {hosts.notAssessed > 0 ? ` ${plural(hosts.notAssessed, "host")} not assessed.` : ""}
+            {fixEmptyText(summary)}
           </p>
         ) : (
           <ol className="divide-y">
@@ -131,9 +157,9 @@ export function FixThisWeekCard({ summary }: { summary: ExposureSummary }) {
             ))}
           </ol>
         )}
-        {fixable.advisories > rows.length ? (
+        {fixTotal(fixable) > rows.length ? (
           <Link href="/advisories" className="inline-block text-sm font-medium underline">
-            All {fixable.advisories} on the exposure list
+            All {fixTotal(fixable)} on the exposure list
           </Link>
         ) : null}
       </CardContent>

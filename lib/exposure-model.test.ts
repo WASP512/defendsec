@@ -7,6 +7,7 @@ import {
   closeDrawerHref,
   compareRank,
   drawerHref,
+  EOL_SCORE,
   eolOfHosts,
   exposureApiPath,
   filterHref,
@@ -20,6 +21,9 @@ import {
   parseExposureQuery,
   parseTrendQuery,
   prevHref,
+  rankBand,
+  SURFACE_SCORE,
+  surfaceChart,
   rankReason,
   resolutionLabel,
   trendApiPath,
@@ -364,18 +368,49 @@ const eolPhp80 = {
   origins: ["deb.sury.org"],
 };
 
-test("end-of-life rows rank among the unscored: after every scored finding, by severity against the unscored", () => {
-  const rows = [
-    row("C-unscored-medium"),
-    row("EOL:nodejs:22", { severity: "low", eol: { ...eolPhp80, product: "nodejs", cycle: "22", stage: "eoas" } }),
-    row("EOL:php:8.0", { severity: "high", eol: eolPhp80 }),
-    row("D-unscored-high", { severity: "high" }),
-    row("B-scored", { epss: 0.0002, cvss: 4 }),
-    row("A-kev", { kev: true, kevAdded: "2026-10-01", epss: 0.5, cvss: 8 }),
+function eolRow(id: string, stage: "eol" | "eoas", severity: Rankable["severity"]): Rankable {
+  return row(id, { severity, eol: { ...eolPhp80, product: id.split(":")[1], cycle: id.split(":")[2], stage } });
+}
+
+// The same cases as TestEOLJoinsTheOrderNextToHighVulnerabilities in internal/exposure: the console and
+// the control plane must state one rule.
+test("end-of-life rows rank next to high vulnerabilities: security-EOL in the urgent band, active-support-EOL with the low ones", () => {
+  const want: Rankable[] = [
+    row("kev", { kev: true, kevAdded: "2021-01-01", epss: 0.001, cvss: 1 }),
+    surfaceRow("000000000002", "critical"), // 9.5: above an end-of-life release (8.0)
+    eolRow("EOL:php:8.0", "eol", "high"), // 8.0 and high like a high surface finding; the id breaks the tie
+    eolRow("EOL:php:8.1", "eol", "high"),
+    surfaceRow("000000000001", "high"),
+    row("epss-0.9", { epss: 0.9, cvss: 2 }), // a scored CVE ranks below software no one patches
+    row("epss-0.0005", { epss: 0.0005, cvss: 3, severity: "low" }), // even a tiny EPSS ranks above past-active-support
+    row("cvss-only-9.8", { cvss: 9.8, severity: "critical" }),
+    row("cvss-only-4.3", { cvss: 4.3, severity: "medium" }),
+    eolRow("EOL:nodejs:22", "eoas", "low"), // 2.0 equivalent; ties on severity, the id breaks it
+    row("cvss-only-2.0", { cvss: 2.0, severity: "low" }),
+    row("cvss-only-1.0", { cvss: 1.0, severity: "low" }),
+    row("no-scores-critical", { severity: "critical" }),
   ];
-  // The same order the Go test checks against the database.
-  assert.deepEqual(sorted(rows), ["A-kev", "B-scored", "D-unscored-high", "EOL:php:8.0", "C-unscored-medium", "EOL:nodejs:22"]);
-  assert.ok(isRanked([...rows].sort(compareRank)));
+  const shuffled = want.map((_, i) => want[(i * 5 + 3) % want.length]);
+  assert.equal(new Set(shuffled.map((r) => r.advisoryId)).size, want.length);
+  assert.deepEqual(sorted(shuffled), want.map((r) => r.advisoryId));
+  assert.ok(isRanked(want));
+});
+
+test("security-EOL ranks above active-support-EOL whatever the severity labels say, and ignores KEV, EPSS and CVSS it was handed", () => {
+  const eol = eolRow("EOL:php:8.0", "eol", "low");
+  const eoas = eolRow("EOL:php:8.4", "eoas", "critical");
+  assert.ok(compareRank(eol, eoas) < 0 && compareRank(eoas, eol) > 0);
+  assert.equal(rankBand(eol), 1);
+  assert.equal(rankBand(eoas), 2);
+  assert.ok(compareRank(eol, row("cve", { epss: 0.5, cvss: 9 })) < 0, "above a vulnerability that is not on KEV");
+  assert.ok(compareRank(eoas, row("cve", { epss: 0.5, cvss: 9 })) > 0, "below a vulnerability that has an EPSS score");
+  const odd: Rankable = { ...eoas, kev: true, epss: 0.99, cvss: 10 };
+  assert.equal(rankBand(odd), 2);
+  assert.ok(compareRank(row("z", { kev: true, kevAdded: "2019-01-01" }), eol) < 0, "KEV beats end-of-life");
+});
+
+test("the EOL_SCORE table matches the control plane's", () => {
+  assert.deepEqual(EOL_SCORE, { eol: 8.0, eoas: 2.0 });
 });
 
 test("rankReason for an end-of-life row says what the calendar says, never CVSS or a missing score", () => {
@@ -383,12 +418,13 @@ test("rankReason for an end-of-life row says what the calendar says, never CVSS 
   assert.equal(why.headline, "Past end of security support since 2023-11-26");
   assert.match(why.text, /no one patches it any more/);
   assert.match(why.text, /installed from deb\.sury\.org, not the distribution/);
-  assert.match(why.text, /ranks with the unscored findings by severity \(high\)/);
+  assert.match(why.text, /ranks after exploited vulnerabilities and before every other vulnerability/);
   assert.doesNotMatch(why.text, /CVSS|EPSS|No exploitation signal/);
 
   const active = rankReason(row("EOL:php:8.2", { severity: "low", eol: { ...eolPhp80, cycle: "8.2", stage: "eoas", date: "2024-12-31", origins: [] } }));
   assert.equal(active.headline, "Past end of active support since 2024-12-31");
   assert.match(active.text, /security fixes continue/);
+  assert.match(active.text, /below every vulnerability that has an EPSS score/);
   assert.doesNotMatch(active.text, /installed from/);
 
   // a vulnerability row is unaffected
@@ -412,4 +448,82 @@ test("eolOfHosts reads the release from the host findings when the drawer is ope
     origins: ["LP-PPA-ondrej-php", "deb.sury.org"],
   });
   assert.equal(eolOfHosts([{ eol: null }, {}]), null);
+});
+
+// ---- surface findings in the same order (slice 7b) -------------------------------------------------
+// The same cases as TestSurfaceFindingsJoinTheOrder in internal/exposure: the console and the control
+// plane must state one rule.
+
+function surfaceRow(id: string, severity: Rankable["severity"]): Rankable {
+  return { advisoryId: `surface:${id}`, severity, kev: false, kevAdded: null, epss: null, cvss: null, source: "surface" };
+}
+
+test("surface findings join the order: KEV, then critical and high surface, then EPSS, CVSS and severity", () => {
+  const want: Rankable[] = [
+    row("kev", { kev: true, kevAdded: "2021-01-01", epss: 0.001, cvss: 1 }),
+    surfaceRow("000000000002", "critical"), // SMB reachable, an expired certificate, SPF +all: the older finding first
+    surfaceRow("000000000007", "critical"),
+    surfaceRow("000000000001", "high"), // RDP, a database port, DMARC missing
+    surfaceRow("000000000009", "high"),
+    row("epss-0.9", { epss: 0.9, cvss: 2 }), // a non-KEV CVE with a high EPSS ranks below an exposed port
+    row("epss-0.003", { epss: 0.003, cvss: 9.8, severity: "critical" }),
+    row("cvss-only-9.8", { cvss: 9.8, severity: "critical" }),
+    row("cvss-only-7.5", { cvss: 7.5, severity: "high" }),
+    surfaceRow("000000000003", "medium"), // DMARC p=none sits with the medium vulnerabilities
+    row("cvss-only-4.3", { cvss: 4.3, severity: "medium" }),
+    surfaceRow("000000000004", "low"),
+    row("cvss-only-1.0", { cvss: 1.0, severity: "low" }),
+    row("no-scores-critical", { severity: "critical" }),
+  ];
+  const shuffled = want.map((_, i) => want[(i * 5 + 2) % want.length]);
+  assert.equal(new Set(shuffled.map((r) => r.advisoryId)).size, want.length);
+  assert.deepEqual(sorted(shuffled), want.map((r) => r.advisoryId));
+});
+
+test("a surface row ignores any KEV, EPSS or CVSS it was handed, and KEV still beats an exposed port", () => {
+  const odd: Rankable = { ...surfaceRow("000000000001", "medium"), kev: true, epss: 0.99, cvss: 10 };
+  assert.equal(rankBand(odd), 2);
+  assert.ok(compareRank(odd, row("v", { epss: 0.01, cvss: 1 })) > 0, "after a vulnerability that has an EPSS score");
+  const kev = row("z", { kev: true, kevAdded: "2019-01-01", epss: 0.001, cvss: 1 });
+  assert.ok(compareRank(kev, surfaceRow("000000000001", "critical")) < 0);
+  assert.ok(compareRank(surfaceRow("000000000001", "critical"), kev) > 0);
+});
+
+test("isRanked accepts a mixed page in rank order and refuses one out of order", () => {
+  const page = [row("kev", { kev: true, kevAdded: "2026-01-01" }), surfaceRow("000000000001", "high"), row("v", { epss: 0.5 })];
+  assert.equal(isRanked(page), true);
+  assert.equal(isRanked([page[1], page[0], page[2]]), false);
+  assert.equal(isRanked([page[0], page[2], page[1]]), false, "a high surface finding is not below a non-KEV vulnerability");
+});
+
+test("the SURFACE_SCORE table matches the control plane's", () => {
+  assert.deepEqual(SURFACE_SCORE, { critical: 9.5, high: 8.0, medium: 5.0, low: 2.0 });
+});
+
+test("the reason a surface row ranks where it does is never a CVSS or EPSS number", () => {
+  const urgent = rankReason(surfaceRow("000000000001", "critical"));
+  assert.match(urgent.headline, /Live for anyone on the internet/);
+  assert.deepEqual(urgent.details, ["critical severity", "ranks after exploited vulnerabilities and before every other vulnerability"]);
+  const rest = rankReason(surfaceRow("000000000002", "medium"));
+  assert.equal(rest.headline, "No exploitation signal (external surface finding)");
+  assert.match(rest.text, /ranked by severity medium/);
+  for (const r of [urgent, rest]) assert.doesNotMatch(r.text, /CVSS|EPSS \d/);
+});
+
+test("the surface series is a chart of its own, on its own scale, with no bar for a day before the first scan", () => {
+  const points = [
+    { day: "2026-10-01", known: true, open: 1, kev: 0, watch: 0, surface: 0, surfaceHigh: 0, surfaceKnown: false },
+    { day: "2026-10-02", known: true, open: 1, kev: 0, watch: 0, surface: 4, surfaceHigh: 1, surfaceKnown: true },
+    { day: "2026-10-03", known: true, open: 1, kev: 0, watch: 0, surface: 2, surfaceHigh: 0, surfaceKnown: true },
+  ];
+  // Hundreds of vulnerabilities must not flatten a handful of surface findings.
+  assert.equal(trendChart(points, 300, 100).max, 1, "the vulnerability scale ignores the surface series");
+  const chart = surfaceChart(points, 300, 100);
+  assert.equal(chart.max, 4);
+  assert.deepEqual(chart.bars.map((b) => [b.known, b.surface, b.high]), [[false, 0, 0], [true, 4, 1], [true, 2, 0]]);
+  assert.deepEqual(chart.bars.map((b) => b.height), [0, 100, 50]);
+  assert.equal(chart.bars[1].highHeight, 25);
+  // An older control plane sends no surface series at all: nothing is drawn as a measurement.
+  const old = surfaceChart([{ day: "2026-10-01", known: true, open: 3, kev: 0, watch: 0 }], 100, 100);
+  assert.deepEqual(old.bars.map((b) => [b.known, b.height]), [[false, 0]]);
 });

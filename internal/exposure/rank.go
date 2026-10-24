@@ -8,16 +8,71 @@
 //     others. Among them, the most recently added to KEV first (an entry added
 //     last week is newer news than one added in 2021); an entry with no
 //     recorded date goes last.
-//  2. EPSS, highest first: the probability of exploitation in the next 30 days.
+//  2. The urgent band, after KEV: external surface findings of critical or
+//     high severity (slice 7b), a reachable SMB port, a certificate that has
+//     expired, an SPF record that lets anyone send as the domain; and software
+//     past the end of its security support (slice 10), a PHP 8.0 from a third
+//     party repository that no one patches any more. See "Surface findings" and
+//     "End-of-life findings" below.
+//  3. EPSS, highest first: the probability of exploitation in the next 30 days.
 //     No score goes last.
-//  3. CVSS base score, highest first. No score goes last.
-//  4. The vendor's severity label (critical, high, medium, low, unknown), so
+//  4. CVSS base score, highest first. No score goes last.
+//  5. The vendor's severity label (critical, high, medium, low, unknown), so
 //     rows with no scores at all still order sensibly.
-//  5. Advisory id, so the order is total and a keyset cursor is stable.
+//  6. Advisory id, so the order is total and a keyset cursor is stable.
 //
 // EPSS and CVSS order the KEV group too, after the date. CVSS is last among the
 // scores on purpose: severity says what could happen, EPSS and KEV say what is
 // happening.
+//
+// # Surface findings
+//
+// A surface finding has no KEV flag, no EPSS and no CVSS: nobody scores "DMARC
+// is p=none". It enters the same order by the one thing it has, its severity,
+// under rules that keep the principle of the vulnerability rule (what is
+// happening now outranks what could happen):
+//
+//   - Critical and high findings are in effect now and reachable by anyone: no
+//     foothold and no exploit is needed. They rank right after the KEV
+//     vulnerabilities and before every vulnerability that is not on KEV,
+//     whatever its EPSS. Among themselves: critical before high, then the lower
+//     identifier (the older finding) first. The price of this rule is that a
+//     non-KEV CVE with a very high EPSS ranks below an exposed RDP port; revisit
+//     it with real data.
+//   - Medium and low findings carry no exploitation signal, so they rank like a
+//     vulnerability with no EPSS score and a CVSS equivalent to their severity
+//     (SurfaceScore): after every vulnerability that has an EPSS score,
+//     interleaved with the CVSS-only ones, so DMARC p=none sits with the medium
+//     vulnerabilities.
+//   - Info findings (DNSSEC unsigned, SSH reachable on a server) are
+//     observations, not work: they are never ranked and never counted, like an
+//     informational vulnerability.
+//   - Missing evidence never ranks. A check that could not run produces no
+//     finding, so there is nothing to rank; the store only hands this package
+//     findings that a check actually confirmed.
+//
+// # End-of-life findings
+//
+// A finding of kind eol (slice 10) is software from outside the distribution
+// whose upstream has stopped supporting the release. It has no CVE, no KEV flag,
+// no EPSS and no CVSS, and, unlike a vulnerability, nothing will ever fix it but
+// an upgrade: leaving it at the bottom with the unscored would hide the risk. It
+// enters the order at the level of a high vulnerability, the way a surface
+// finding does:
+//
+//   - Past end of security support (stage "eol", severity high): the urgent
+//     band, after KEV, together with the critical and high surface findings and
+//     before every vulnerability that is not on KEV, whatever its EPSS. Inside
+//     the band the CVSS-equivalent of high (8.0) puts it after a critical surface
+//     finding, and the severity label then the row id break ties with a high
+//     surface finding. The price is the same as for surface findings: a non-KEV
+//     CVE with a very high EPSS ranks below an unpatched EOL release; revisit it
+//     with real data.
+//   - Past end of active support only (stage "eoas", severity low): security
+//     fixes still arrive, so there is nothing to do this week that outranks an
+//     exploited or scored vulnerability. It has no EPSS and the CVSS-equivalent
+//     of low (2.0): the rest band, after every vulnerability with an EPSS score,
+//     with the CVSS-only ones, below the security-EOL findings.
 package exposure
 
 import (
@@ -27,6 +82,9 @@ import (
 
 // Item is what the ranking looks at.
 type Item struct {
+	// AdvisoryID is the unique id of the row: the advisory id of a
+	// vulnerability, or SurfaceKeyPrefix plus the zero-padded finding id of a
+	// surface finding. It is the last tie-breaker.
 	AdvisoryID string
 	Severity   string
 	KEV        bool
@@ -35,6 +93,97 @@ type Item struct {
 	KEVAdded *time.Time
 	EPSS     *float64
 	CVSS     *float64
+	// Surface marks an external-surface finding. Its KEV, EPSS and CVSS are
+	// ignored: it ranks by Severity under the surface rules above.
+	Surface bool
+	// EOLStage is "eol" or "eoas" on an end-of-life finding and empty on every
+	// other. Its KEV, EPSS and CVSS are ignored: it ranks by stage under the
+	// end-of-life rules above.
+	EOLStage string
+}
+
+// The bands an item falls into; a lower band ranks first.
+const (
+	BandKEV    = 0 // a vulnerability on the CISA KEV list
+	BandUrgent = 1 // a critical or high surface finding, or software past end of security support
+	BandRest   = 2 // everything else: EPSS, then CVSS, then severity
+)
+
+// The two stages of an end-of-life finding.
+const (
+	EOLStageEOL  = "eol"  // security support ended
+	EOLStageEOAS = "eoas" // active support ended; security fixes continue
+)
+
+// EOLScore is the CVSS-equivalent an end-of-life finding ranks by: that of a
+// high vulnerability past end of security support, of a low one past end of
+// active support. Like SurfaceScore it makes one order of the two kinds of row;
+// the console never shows it. Any other stage does not rank.
+func EOLScore(stage string) (score float64, ranked bool) {
+	switch stage {
+	case EOLStageEOL:
+		return 8.0, true
+	case EOLStageEOAS:
+		return 2.0, true
+	}
+	return 0, false
+}
+
+// SurfaceKeyPrefix starts the AdvisoryID of every surface row; no advisory id
+// of any feed starts with it.
+const SurfaceKeyPrefix = "surface:"
+
+// SurfaceScore is the CVSS-equivalent a surface finding of this severity ranks
+// by when it is not urgent, and whether the severity ranks at all (info does
+// not). It exists so the surface and vulnerability orders are one order, not to
+// pretend a DMARC policy has a CVSS score; the console never shows it.
+func SurfaceScore(severity string) (score float64, ranked bool) {
+	switch strings.ToLower(severity) {
+	case "critical":
+		return 9.5, true
+	case "high":
+		return 8.0, true
+	case "medium":
+		return 5.0, true
+	case "low":
+		return 2.0, true
+	}
+	return 0, false
+}
+
+// Band says which band an item falls into.
+func Band(i Item) int {
+	if i.Surface {
+		switch strings.ToLower(i.Severity) {
+		case "critical", "high":
+			return BandUrgent
+		}
+		return BandRest
+	}
+	if _, eol := EOLScore(i.EOLStage); eol {
+		if i.EOLStage == EOLStageEOL {
+			return BandUrgent
+		}
+		return BandRest
+	}
+	if i.KEV {
+		return BandKEV
+	}
+	return BandRest
+}
+
+// effective is what the order actually compares: a surface or end-of-life
+// finding has no exploitation signal and the CVSS-equivalent of its severity or
+// stage.
+func effective(i Item) Item {
+	if i.Surface {
+		score, _ := SurfaceScore(i.Severity)
+		return Item{AdvisoryID: i.AdvisoryID, Severity: i.Severity, CVSS: &score, Surface: true}
+	}
+	if score, ok := EOLScore(i.EOLStage); ok {
+		return Item{AdvisoryID: i.AdvisoryID, Severity: i.Severity, CVSS: &score, EOLStage: i.EOLStage}
+	}
+	return i
 }
 
 // SeverityRank orders the vendor's labels, most severe first; anything else
@@ -56,9 +205,10 @@ func SeverityRank(s string) int {
 // Compare orders two items: negative if a ranks before b, positive if after,
 // zero only for the same advisory.
 func Compare(a, b Item) int {
-	if c := cmpBool(a.KEV, b.KEV); c != 0 {
+	if c := Band(a) - Band(b); c != 0 {
 		return c
 	}
+	a, b = effective(a), effective(b)
 	if a.KEV && b.KEV {
 		if c := cmpDateDesc(a.KEVAdded, b.KEVAdded); c != 0 {
 			return c
@@ -74,17 +224,6 @@ func Compare(a, b Item) int {
 		return c
 	}
 	return strings.Compare(a.AdvisoryID, b.AdvisoryID)
-}
-
-// cmpBool puts true first.
-func cmpBool(a, b bool) int {
-	switch {
-	case a == b:
-		return 0
-	case a:
-		return -1
-	}
-	return 1
 }
 
 // cmpScoreDesc puts the higher score first and a missing score last.

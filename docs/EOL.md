@@ -112,15 +112,19 @@ or the origin reading changed: `no_longer_affected`.
 
 ### Where it ranks
 
-The exposure ranking is KEV, then EPSS, then CVSS, then the severity label. An end-of-life finding has no EPSS or CVSS,
-so it ranks **among the unscored findings**: after every finding that has an exploitation score, and by its severity
-label against the other unscored ones. A release past security support (`high`) sits with the unscored high-severity
-vulnerabilities; one past active support (`low`) sits with the unscored low ones. The ranking code is unchanged, and
-the "why it ranks here" line says what the calendar says instead of "no exploitation signal".
+The exposure ranking is KEV, then the urgent band, then EPSS, CVSS and the severity label (see
+[EXPOSURE.md](EXPOSURE.md)). An end-of-life finding has no EPSS or CVSS, so it enters at the level of a high
+vulnerability, as the card asked ("below KEV items, next to high vulnerabilities"; the CEO confirmed it on review):
 
-This is one reading of "below KEV and next to high vulnerabilities". It puts end-of-life behind every vulnerability with
-an EPSS score, however small. If it should sit higher, it is a one-key change in the SQL ranking, `internal/exposure` and
-`compareRank`, with their tests.
+- A release **past security support** is in the urgent band, right after KEV, with the critical and high external surface
+  findings: CVSS-equivalent 8.0, above every vulnerability that is not on KEV, whatever its EPSS. Nobody will ever patch it.
+- A release **past active support** only (security fixes still arrive) has the CVSS-equivalent 2.0: after every
+  vulnerability with an EPSS score, with the low CVSS-only ones, always below the security-EOL rows.
+
+The stage decides, not the severity label. `internal/exposure` (`EOLScore`, `Band`), the SQL `ORDER BY` and `compareRank`
+state one rule and are tested against each other. The "why it ranks here" line says what the calendar says instead of "no
+exploitation signal". An earlier draft ranked end-of-life below every EPSS-scored finding; review rejected that, because a
+CVSS 3 / EPSS 0.0005 finding then buried an unpatchable PHP 8.0.
 
 ## Windows end of support (the Supported OS policy)
 
@@ -142,7 +146,7 @@ Windows is now judged from the `windows` and `windows-server` products of the sa
 by **edition and build**:
 
 - **The edition** is the Windows `EditionID` registry value, reported by the agent as the optional `os_edition`
-  (`HeartbeatRequest` field 8; `devices.os_edition`, migration 025). Old agents leave it empty, and the OS caption then
+  (`HeartbeatRequest` field 8; `devices.os_edition`, migration 026). Old agents leave it empty, and the OS caption then
   stands in for it where it names the edition ("Windows Server 2016 Standard", "... Enterprise LTSC"); the verdict says
   when it was read from the caption. Datto RMM reports an edition too; slice 8 fills the same field.
 - **The cycle** is found by its newest build (`latest`, `10.0.14393`); the edition picks among the cycles that share it:

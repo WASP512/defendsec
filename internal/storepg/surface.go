@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"defendsec/internal/evidence"
 	"defendsec/internal/surface"
 )
 
@@ -200,14 +201,17 @@ func (s *Store) SurfaceAssetsDue(ctx context.Context, olderThan time.Duration) (
 
 // SurfaceScanSummary is what recording a scan changed.
 type SurfaceScanSummary struct {
-	ScanID            int64 `json:"scanId"`
-	New               int   `json:"new"`
-	Reopened          int   `json:"reopened"`
-	StillOpen         int   `json:"stillOpen"`
-	Resolved          int   `json:"resolved"`
-	Open              int   `json:"open"`
-	ChecksAssessed    int   `json:"checksAssessed"`
-	ChecksNotAssessed int   `json:"checksNotAssessed"`
+	ScanID int64 `json:"scanId"`
+	// Digest is the SHA-256 of the scan as stored (evidence.ScanDigest). It is
+	// chained in the audit log by the same transaction that stored the scan.
+	Digest            string `json:"digest"`
+	New               int    `json:"new"`
+	Reopened          int    `json:"reopened"`
+	StillOpen         int    `json:"stillOpen"`
+	Resolved          int    `json:"resolved"`
+	Open              int    `json:"open"`
+	ChecksAssessed    int    `json:"checksAssessed"`
+	ChecksNotAssessed int    `json:"checksNotAssessed"`
 }
 
 func findingKey(id, subject string) string { return id + "\x01" + subject }
@@ -240,10 +244,22 @@ func (s *Store) RecordSurfaceScan(ctx context.Context, assetID int64, trigger st
 		return sum, ErrSurfaceAssetNotAuthorised
 	}
 
-	at := rep.FinishedAt.UTC()
+	// timestamptz keeps microseconds: cut to them first, so the times hashed
+	// into the scan's digest are the times read back at export.
+	at := rep.FinishedAt.UTC().Round(time.Microsecond)
+	startedAt := rep.StartedAt.UTC().Round(time.Microsecond)
 	if err := tx.QueryRow(ctx, `INSERT INTO surface_scans (asset_id, triggered_by, started_at, finished_at)
-		VALUES ($1,$2,$3,$4) RETURNING id`, assetID, trigger, rep.StartedAt.UTC(), at).Scan(&sum.ScanID); err != nil {
+		VALUES ($1,$2,$3,$4) RETURNING id`, assetID, trigger, startedAt, at).Scan(&sum.ScanID); err != nil {
 		return sum, err
+	}
+	var assetKind, assetValue string
+	if err := tx.QueryRow(ctx, `SELECT kind, value FROM surface_assets WHERE id = $1`, assetID).Scan(&assetKind, &assetValue); err != nil {
+		return sum, err
+	}
+	scan := evidence.SurfaceScan{
+		ScanID: sum.ScanID, AssetID: assetID, AssetKind: assetKind, AssetValue: assetValue,
+		TriggeredBy: trigger, StartedAt: startedAt, FinishedAt: at,
+		Observations: []evidence.SurfaceObservation{}, Changes: []evidence.SurfaceChange{},
 	}
 
 	for _, res := range rep.Results {
@@ -259,6 +275,9 @@ func (s *Store) RecordSurfaceScan(ctx context.Context, assetID int64, trigger st
 			VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`, sum.ScanID, assetID, res.Check, res.Assessed, res.Reason, string(raw), at); err != nil {
 			return sum, err
 		}
+		scan.Observations = append(scan.Observations, evidence.SurfaceObservation{
+			Check: res.Check, Assessed: res.Assessed, Reason: res.Reason, Observed: json.RawMessage(raw), ObservedAt: at,
+		})
 		if res.Assessed {
 			sum.ChecksAssessed++
 		} else {
@@ -276,10 +295,11 @@ func (s *Store) RecordSurfaceScan(ctx context.Context, assetID int64, trigger st
 			if controls == nil {
 				controls = []string{}
 			}
-			var prevResolved *time.Time
+			var prevResolved, prevFirstSeen *time.Time
+			var prevSeverity string
 			var existed bool
-			err = tx.QueryRow(ctx, `SELECT true, resolved_at FROM surface_findings
-				WHERE asset_id = $1 AND finding_id = $2 AND subject = $3`, assetID, f.ID, f.Subject).Scan(&existed, &prevResolved)
+			err = tx.QueryRow(ctx, `SELECT true, resolved_at, first_seen, severity FROM surface_findings
+				WHERE asset_id = $1 AND finding_id = $2 AND subject = $3`, assetID, f.ID, f.Subject).Scan(&existed, &prevResolved, &prevFirstSeen, &prevSeverity)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return sum, err
 			}
@@ -288,14 +308,27 @@ func (s *Store) RecordSurfaceScan(ctx context.Context, assetID int64, trigger st
 				sum.New++
 			case prevResolved != nil:
 				sum.Reopened++
+				// The interval that ended is kept before first_seen restarts,
+				// so the days it was closed never count as open.
+				if _, err := tx.Exec(ctx, `INSERT INTO surface_finding_intervals (asset_id, finding_id, subject, severity, opened_at, closed_at)
+					VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, assetID, f.ID, f.Subject, prevSeverity, prevFirstSeen, prevResolved); err != nil {
+					return sum, err
+				}
 			default:
 				sum.StillOpen++
+			}
+			if !existed || prevResolved != nil {
+				scan.Changes = append(scan.Changes, evidence.SurfaceChange{
+					FindingID: f.ID, Subject: f.Subject, Severity: string(f.Severity), Change: evidence.SurfaceOpened,
+				})
 			}
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO surface_findings (asset_id, check_group, finding_id, subject, severity, title, detail, fix,
 					evidence, controls, first_seen, last_seen, first_scan_id, last_scan_id)
 				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$11,$12,$12)
 				ON CONFLICT (asset_id, finding_id, subject) DO UPDATE SET
+					first_seen = CASE WHEN surface_findings.resolved_at IS NOT NULL THEN EXCLUDED.first_seen ELSE surface_findings.first_seen END,
+					first_scan_id = CASE WHEN surface_findings.resolved_at IS NOT NULL THEN EXCLUDED.first_scan_id ELSE surface_findings.first_scan_id END,
 					check_group = EXCLUDED.check_group, severity = EXCLUDED.severity, title = EXCLUDED.title,
 					detail = EXCLUDED.detail, fix = EXCLUDED.fix, evidence = EXCLUDED.evidence,
 					controls = EXCLUDED.controls, last_seen = EXCLUDED.last_seen, last_scan_id = EXCLUDED.last_scan_id,
@@ -306,13 +339,27 @@ func (s *Store) RecordSurfaceScan(ctx context.Context, assetID int64, trigger st
 			}
 		}
 		if res.Assessed {
-			tag, err := tx.Exec(ctx, `UPDATE surface_findings SET resolved_at = $4, last_scan_id = $3
+			rows, err := tx.Query(ctx, `UPDATE surface_findings SET resolved_at = $4, last_scan_id = $3
 				WHERE asset_id = $1 AND check_group = $2 AND resolved_at IS NULL
-				  AND (finding_id || chr(1) || subject) <> ALL($5::text[])`, assetID, res.Check, sum.ScanID, at, keys)
+				  AND (finding_id || chr(1) || subject) <> ALL($5::text[])
+				RETURNING finding_id, subject, severity`, assetID, res.Check, sum.ScanID, at, keys)
 			if err != nil {
 				return sum, err
 			}
-			sum.Resolved += int(tag.RowsAffected())
+			for rows.Next() {
+				var c evidence.SurfaceChange
+				if err := rows.Scan(&c.FindingID, &c.Subject, &c.Severity); err != nil {
+					rows.Close()
+					return sum, err
+				}
+				c.Change = evidence.SurfaceResolved
+				scan.Changes = append(scan.Changes, c)
+				sum.Resolved++
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				return sum, err
+			}
 		}
 	}
 
@@ -325,6 +372,24 @@ func (s *Store) RecordSurfaceScan(ctx context.Context, assetID int64, trigger st
 	}
 	if _, err := tx.Exec(ctx, `UPDATE surface_assets SET last_scan_at = $2 WHERE id = $1`, assetID, at); err != nil {
 		return sum, err
+	}
+
+	// Chain the scan: the digest of what was just stored goes into the audit
+	// log in the same transaction, so there is never a stored scan without its
+	// attestation or an attestation without its scan.
+	changes, err := json.Marshal(scan.Changes)
+	if err != nil {
+		return sum, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE surface_scans SET changes = $2::jsonb WHERE id = $1`, sum.ScanID, string(changes)); err != nil {
+		return sum, err
+	}
+	sum.Digest = evidence.ScanDigest(scan)
+	if err := auditInTx(ctx, tx, "system:surface-scanner", evidence.SurfaceScanAction, "", evidence.SurfaceScanEntry{
+		ScanID: sum.ScanID, AssetID: assetID, Digest: sum.Digest, FinishedAt: at.Format(time.RFC3339Nano),
+		Opened: sum.New + sum.Reopened, Resolved: sum.Resolved,
+	}); err != nil {
+		return sum, fmt.Errorf("chain the scan: %w", err)
 	}
 	return sum, tx.Commit(ctx)
 }
