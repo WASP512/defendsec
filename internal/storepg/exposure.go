@@ -385,7 +385,14 @@ func scanExposureGroup(row pgx.Row) (ExposureGroup, exposureCursor, error) {
 	g.KEVAdded = dateText(kevAdded)
 	g.AwaitingSince = dateText(awaitingSince)
 	g.Hosts = make([]HostRef, 0, len(ids))
+	named := make(map[string]bool, len(ids))
 	for i, id := range ids {
+		// A host with a finding for the same advisory in two packages (two KBs, a
+		// kernel and its modules) is one host.
+		if named[id] {
+			continue
+		}
+		named[id] = true
 		name := ""
 		if i < len(names) {
 			name = names[i]

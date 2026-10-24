@@ -18,7 +18,7 @@ type Site struct {
 	UID  string `json:"uid"`
 	Name string `json:"name"`
 	// Devices is the site's own device count (devicesStatus.numberOfDevices).
-	Devices int
+	Devices int `json:"devices"`
 }
 
 // Device is one device record of a site.

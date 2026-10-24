@@ -292,7 +292,10 @@ func TestMissingKBThatFixesKEVRanksFirstInFixThisWeek(t *testing.T) {
 		t.Errorf("hosts = %+v", sum.Hosts)
 	}
 	// The trend sees them too.
-	tr, err := r.store.ExposureTrend(context.Background(), r.now.AddDate(0, 0, -3), r.now, r.now)
+	// The fixture's clock is fixed, but the database stamps first-seen with its own
+	// clock, so the trend is asked about the real today.
+	real := time.Now().UTC()
+	tr, err := r.store.ExposureTrend(context.Background(), real.AddDate(0, 0, -3), real, real.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
