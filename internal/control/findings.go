@@ -12,7 +12,7 @@ import (
 
 // Findings API (read-only):
 //
-//	GET /v1/findings?deviceId=&kind=finding|informational&resolved=1&limit=
+//	GET /v1/findings?deviceId=&kind=finding|unfixed|informational&resolved=1&limit=
 //	GET /v1/findings/{id}
 //
 // Findings are computed by the matcher when a host reports inventory and when a
@@ -54,8 +54,8 @@ func (s *Server) HandleFindings(w http.ResponseWriter, r *http.Request) {
 		Kind:            q.Get("kind"),
 		IncludeResolved: q.Get("resolved") == "1",
 	}
-	if f.Kind != "" && f.Kind != "finding" && f.Kind != "informational" {
-		http.Error(w, "kind must be finding or informational", http.StatusBadRequest)
+	if f.Kind != "" && f.Kind != "finding" && f.Kind != "unfixed" && f.Kind != "informational" {
+		http.Error(w, "kind must be finding, unfixed or informational", http.StatusBadRequest)
 		return
 	}
 	limit := 500

@@ -199,6 +199,8 @@ func run(log *slog.Logger) error {
 		pg = storepg.New(pool)
 		svc.SetPostgres(pg)
 		log.Info("postgres enabled")
+		// Re-match every host when a new feed snapshot lands.
+		go svc.RunFindingsRefresh(exportCtx, control.FindingsRefreshInterval)
 
 		// Postgres is the primary device store (roadmap 5.5): apid's memory
 		// is seeded from it, and defendsec-agents.json becomes an export
@@ -293,6 +295,8 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/meta", svc.HandleMeta)
 	adminMux.HandleFunc("/v1/advisories", svc.HandleAdvisories)
 	adminMux.HandleFunc("/v1/feeds", svc.HandleFeeds)
+	adminMux.HandleFunc("/v1/findings", svc.HandleFindings)
+	adminMux.HandleFunc("/v1/findings/", svc.HandleFindings)
 	adminMux.HandleFunc("/v1/agent-releases", svc.HandleAgentReleases)
 	adminMux.HandleFunc("/v1/saved-queries", svc.HandleSavedQueries)
 	adminMux.HandleFunc("/v1/alerts", svc.HandleAlerts)

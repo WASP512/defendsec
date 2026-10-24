@@ -118,9 +118,16 @@ func (s *Server) matchDevice(ctx context.Context, dev presence.Device) (*vuln.Re
 	return &res, nil
 }
 
-// urgent reports whether a finding warrants an alert of its own.
+// urgent reports whether a finding warrants an alert of its own: exploited in
+// the wild (KEV), fixed or not, or a critical one with a fix to install.
 func urgent(f vuln.Finding) bool {
-	return f.Kind == vuln.KindFinding && (f.KEV || strings.EqualFold(f.Severity, "critical"))
+	switch f.Kind {
+	case vuln.KindFinding:
+		return f.KEV || strings.EqualFold(f.Severity, "critical")
+	case vuln.KindUnfixed:
+		return f.KEV
+	}
+	return false
 }
 
 func (s *Server) syncVulnAlerts(ctx context.Context, dev presence.Device, res vuln.Result) {

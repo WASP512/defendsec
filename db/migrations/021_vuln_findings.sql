@@ -17,6 +17,8 @@ ALTER TABLE devices ADD COLUMN IF NOT EXISTS distro TEXT NOT NULL DEFAULT '';
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS distro_release TEXT NOT NULL DEFAULT '';
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS package_manager TEXT NOT NULL DEFAULT '';
 
+-- kind: 'finding' has a fix to install, 'unfixed' is affected with no fix
+-- published, 'informational' is will_not_fix or under_investigation.
 -- One row per (host, advisory, package family): a source package that builds
 -- ten binaries is one finding. Rows are never deleted when a finding goes away:
 -- resolved_at is set, so "open on date A, closed on date B" stays answerable.
@@ -35,7 +37,7 @@ CREATE TABLE IF NOT EXISTS vuln_findings (
   snapshot_id    BIGINT REFERENCES feed_snapshots(id),
   feed           TEXT NOT NULL DEFAULT '',
   feed_date      TIMESTAMPTZ,
-  kind           TEXT NOT NULL CHECK (kind IN ('finding', 'informational')),
+  kind           TEXT NOT NULL CHECK (kind IN ('finding', 'unfixed', 'informational')),
   basis          TEXT NOT NULL CHECK (basis IN ('distro', 'upstream')),
   package        TEXT NOT NULL,
   source_package TEXT NOT NULL DEFAULT '',

@@ -31,8 +31,14 @@ const (
 type Kind string
 
 const (
-	// KindFinding: the installed build is vulnerable.
+	// KindFinding: the installed build is vulnerable and the distro has a fix
+	// to install. This is the "fix these" list.
 	KindFinding Kind = "finding"
+	// KindUnfixed: the distro lists the package as affected and has published
+	// no fix. Real exposure, but nothing to install; a fully patched host can
+	// still have these (Debian's tracker lists open CVEs). Counted apart from
+	// findings so "patched" means "no fix left to apply".
+	KindUnfixed Kind = "unfixed"
 	// KindInformational: the distro has decided not to fix it (will_not_fix) or
 	// has not decided yet (under_investigation). Shown, never counted as exposure.
 	KindInformational Kind = "informational"
@@ -68,6 +74,11 @@ type Package struct {
 	SourcePackage string `json:"source_package,omitempty"`
 	SourceVersion string `json:"source_version,omitempty"`
 }
+
+// ecosystemUbuntuPro marks Ubuntu ranges whose fix ships only through Ubuntu
+// Pro (ESM): security updates for universe packages and for releases past
+// standard support.
+const ecosystemUbuntuPro = "Ubuntu:Pro"
 
 // Host is what the matcher needs to know about a machine. Distro and Release
 // are os-release ID and VERSION_ID exactly as reported.
@@ -153,7 +164,8 @@ type Stats struct {
 	NotAffected   int // advisories the distro marks not_affected, suppressed
 	Undecidable   int // upstream comparisons that cannot be made safely
 	Advisories    int // distinct advisories considered
-	Informational int
+	Unfixed       int // findings of kind KindUnfixed
+	Informational int // findings of kind KindInformational
 }
 
 // Result is the outcome for one host.
@@ -165,7 +177,7 @@ type Result struct {
 	Stats    Stats
 }
 
-// Open returns the findings of kind KindFinding.
+// Open returns the findings of kind KindFinding: what has a fix to install.
 func (r Result) Open() []Finding {
 	var out []Finding
 	for _, f := range r.Findings {
@@ -269,6 +281,7 @@ func Match(ctx context.Context, src RangeSource, h Host) (Result, error) {
 	}
 
 	pkgs := make([]*work, 0, len(h.Packages))
+	onPro := usesUbuntuPro(h)
 	nameSet := map[string]struct{}{}
 	for _, p := range h.Packages {
 		if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.Version) == "" {
@@ -350,7 +363,7 @@ func Match(ctx context.Context, src RangeSource, h Host) (Result, error) {
 		res.Stats.DistroMapped++
 		for _, adv := range w.advList {
 			advSeen[adv] = struct{}{}
-			f, st := judge(w, w.byAdv[adv].cands, scheme)
+			f, st := judge(w, w.byAdv[adv].cands, scheme, onPro)
 			switch st {
 			case judgeNotAffected:
 				res.Stats.NotAffected++
@@ -402,14 +415,17 @@ func Match(ctx context.Context, src RangeSource, h Host) (Result, error) {
 	res.Stats.Advisories = len(advSeen)
 	for _, f := range merged {
 		res.Findings = append(res.Findings, f)
-		if f.Kind == KindInformational {
+		switch f.Kind {
+		case KindUnfixed:
+			res.Stats.Unfixed++
+		case KindInformational:
 			res.Stats.Informational++
 		}
 	}
 	sort.Slice(res.Findings, func(i, j int) bool {
 		a, b := res.Findings[i], res.Findings[j]
 		if a.Kind != b.Kind {
-			return a.Kind == KindFinding
+			return kindRank(a.Kind) < kindRank(b.Kind)
 		}
 		if a.KEV != b.KEV {
 			return a.KEV
@@ -420,6 +436,21 @@ func Match(ctx context.Context, src RangeSource, h Host) (Result, error) {
 		return a.Key() < b.Key()
 	})
 	return res, nil
+}
+
+// usesUbuntuPro reports whether the host evidently receives Ubuntu Pro
+// updates: an ESM build of any installed package ("+esm1", "~esm2"). It is a
+// heuristic, because the agent does not yet report `pro status`; a Pro host
+// with no ESM package installed is treated as not on Pro and sees ESM-only
+// fixes as unfixed rather than as findings.
+func usesUbuntuPro(h Host) bool {
+	for _, p := range h.Packages {
+		v := strings.ToLower(p.Version)
+		if strings.Contains(v, "+esm") || strings.Contains(v, "~esm") {
+			return true
+		}
+	}
+	return false
 }
 
 func severityRank(s string) int {
@@ -436,9 +467,19 @@ func severityRank(s string) int {
 	return 0
 }
 
-// addFinding keeps one finding per key. A real finding outranks an
-// informational one, and between two the one with the lower package name wins
-// so a run is deterministic.
+func kindRank(k Kind) int {
+	switch k {
+	case KindFinding:
+		return 0
+	case KindUnfixed:
+		return 1
+	}
+	return 2
+}
+
+// addFinding keeps one finding per key. A fix to install outranks "no fix",
+// which outranks informational, and between two of the same kind the one with
+// the lower package name wins so a run is deterministic.
 func addFinding(m map[string]Finding, f Finding) {
 	k := f.Key()
 	prev, ok := m[k]
@@ -447,7 +488,7 @@ func addFinding(m map[string]Finding, f Finding) {
 		return
 	}
 	if prev.Kind != f.Kind {
-		if f.Kind == KindFinding {
+		if kindRank(f.Kind) < kindRank(prev.Kind) {
 			m[k] = f
 		}
 		return
@@ -498,12 +539,16 @@ const (
 //     distro lists the package as affected with no fix.
 //   - will_not_fix and under_investigation are informational, shown but not
 //     counted.
-func judge(w *work, cands []Candidate, scheme Scheme) (Finding, judgement) {
+//   - A range from Ubuntu Pro (ESM) counts only on a host that evidently uses
+//     Pro. On any other host the fix is not installable, so the package is
+//     "affected, no fix you can install", not a finding to act on this week.
+func judge(w *work, cands []Candidate, scheme Scheme, onPro bool) (Finding, judgement) {
 	var (
 		bestFixed   *Candidate // lowest fixed version above the installed one
 		bestVer     string
 		affected    *Candidate
 		informative *Candidate
+		proOnly     *Candidate // fixed only by Ubuntu Pro, host not on Pro
 		clean       bool
 		notAff      bool
 	)
@@ -512,6 +557,15 @@ func judge(w *work, cands []Candidate, scheme Scheme) (Finding, judgement) {
 		ver := versionFor(c, w.pkg)
 		if c.Introduced != "" && Compare(ver, c.Introduced, scheme) < 0 {
 			continue // installed predates the vulnerable code
+		}
+		if c.Ecosystem == ecosystemUbuntuPro && !onPro && c.State == StateFixed {
+			if Compare(ver, c.Fixed, scheme) < 0 {
+				cc := c
+				proOnly = &cc
+			} else {
+				clean = true
+			}
+			continue
 		}
 		switch c.State {
 		case StateNotAffected:
@@ -548,8 +602,11 @@ func judge(w *work, cands []Candidate, scheme Scheme) (Finding, judgement) {
 	case bestFixed != nil:
 		return newFinding(*bestFixed, w.pkg, bestVer, BasisDistro, KindFinding,
 			"installed version is below the version the distro fixed this in"), judgeFinding
+	case proOnly != nil:
+		return newFinding(*proOnly, w.pkg, versionFor(*proOnly, w.pkg), BasisDistro, KindUnfixed,
+			"the fix ships only through Ubuntu Pro (ESM) and this host does not appear to use it"), judgeFinding
 	case affected != nil:
-		return newFinding(*affected, w.pkg, w.pkg.Version, BasisDistro, KindFinding,
+		return newFinding(*affected, w.pkg, w.pkg.Version, BasisDistro, KindUnfixed,
 			"the distro lists this package as affected and has published no fix"), judgeFinding
 	case informative != nil:
 		reason := "the distro has decided not to fix this"

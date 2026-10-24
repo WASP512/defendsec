@@ -296,7 +296,7 @@ func normSeverity(s string) string {
 // FindingFilter selects stored findings.
 type FindingFilter struct {
 	DeviceID string
-	// Kind is "finding", "informational" or "" for both.
+	// Kind is "finding", "unfixed", "informational" or "" for all three.
 	Kind string
 	// IncludeResolved adds findings that have since been closed.
 	IncludeResolved bool

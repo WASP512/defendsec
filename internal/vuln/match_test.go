@@ -3,6 +3,7 @@ package vuln
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -245,7 +246,7 @@ func TestFixStates(t *testing.T) {
 	}
 	want := map[string]Kind{
 		"CVE-2024-0002": KindInformational, // will_not_fix: shown, not a finding
-		"CVE-2024-0003": KindFinding,       // affected, unfixed
+		"CVE-2024-0003": KindUnfixed,       // affected, no fix published: exposure, nothing to install
 		"CVE-2024-0004": KindInformational,
 	}
 	if len(got) != len(want) {
@@ -256,15 +257,17 @@ func TestFixStates(t *testing.T) {
 			t.Errorf("%s = %q, want %q", k, got[k], v)
 		}
 	}
-	if n := len(res.Open()); n != 1 {
-		t.Errorf("Open() = %d, want 1", n)
+	// A host with nothing to install has no open findings, whatever the
+	// distro has left unfixed.
+	if n := len(res.Open()); n != 0 {
+		t.Errorf("Open() = %d, want 0", n)
 	}
-	if res.Stats.NotAffected != 1 || res.Stats.Informational != 2 {
+	if res.Stats.NotAffected != 1 || res.Stats.Unfixed != 1 || res.Stats.Informational != 2 {
 		t.Errorf("stats = %+v", res.Stats)
 	}
-	// Informational entries sort after findings.
-	if res.Findings[0].Kind != KindFinding {
-		t.Errorf("findings first: %+v", res.Findings)
+	// Unfixed sorts before informational.
+	if res.Findings[0].Kind != KindUnfixed {
+		t.Errorf("unfixed first: %+v", res.Findings)
 	}
 }
 
@@ -302,9 +305,44 @@ func TestSeveralFixedRanges(t *testing.T) {
 	if res := openFindings(t, src, h("1.2-1ubuntu0.2~esm1")); len(res.Findings) != 0 {
 		t.Errorf("at the ESM fix: %+v", res.Findings)
 	}
+	// Not on Pro: the ESM range is not installable, the security fix is.
 	res := openFindings(t, src, h("1.2-1ubuntu0.1"))
+	if len(res.Findings) != 1 || res.Findings[0].Fixed != "1.2-1ubuntu0.2" {
+		t.Errorf("behind both, no Pro: %+v", res.Findings)
+	}
+	// On Pro: the lower of the two fixes is the one to name.
+	onPro := h("1.2-1ubuntu0.1")
+	onPro.Packages = append(onPro.Packages, Package{Name: "libother", Version: "3.1-1+esm1", SourcePackage: "other"})
+	res = openFindings(t, src, onPro)
 	if len(res.Findings) != 1 || res.Findings[0].Fixed != "1.2-1ubuntu0.2~esm1" {
-		t.Errorf("behind both: %+v", res.Findings)
+		t.Errorf("behind both, on Pro: %+v", res.Findings)
+	}
+}
+
+// A fix that ships only through Ubuntu Pro is not something a plain host can
+// install: it must not read as a finding to act on. On a host that evidently
+// uses Pro (an ESM build installed) it is a finding like any other.
+func TestUbuntuProFixesNeedPro(t *testing.T) {
+	src := &fakeSource{ranges: []Candidate{
+		rng(Candidate{CVE: "CVE-2026-0001", Ecosystem: ecosystemUbuntuPro, Distro: "ubuntu", Release: "22.04",
+			Package: "kitty", SourcePackage: "kitty", Fixed: "0.21.2-1ubuntu0.22.04.1+esm1", State: StateFixed, Feed: "ubuntu-jammy"}),
+	}}
+	h := Host{Distro: "ubuntu", Release: "22.04", PackageManager: "dpkg", Packages: []Package{
+		{Name: "kitty", Version: "0.21.2-1ubuntu0.22.04.1", SourcePackage: "kitty"}}}
+	res := openFindings(t, src, h)
+	if len(res.Open()) != 0 || len(res.Findings) != 1 || res.Findings[0].Kind != KindUnfixed ||
+		res.Findings[0].Fixed != "0.21.2-1ubuntu0.22.04.1+esm1" || !strings.Contains(res.Findings[0].Reason, "Ubuntu Pro") {
+		t.Fatalf("no Pro: %+v", res.Findings)
+	}
+	// An ESM package elsewhere on the host shows Pro is in use.
+	h.Packages = append(h.Packages, Package{Name: "libfoo", Version: "1.0-1ubuntu1+esm2", SourcePackage: "foo"})
+	if res := openFindings(t, src, h); len(res.Open()) != 1 {
+		t.Fatalf("on Pro: %+v", res.Findings)
+	}
+	// Having reached the ESM fix is clean either way.
+	h.Packages[0].Version = "0.21.2-1ubuntu0.22.04.1+esm1"
+	if res := openFindings(t, src, h); len(res.Findings) != 0 {
+		t.Fatalf("patched: %+v", res.Findings)
 	}
 }
 
