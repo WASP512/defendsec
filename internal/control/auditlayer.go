@@ -15,7 +15,7 @@ import (
 // The audit layer's HTTP surface (roadmap 1.9).
 //
 // Reading an assessment is open to viewers: the person assembling evidence
-// before an audit is often not the person allowed to isolate a host. Creating
+// before an audit is often not the person allowed to change settings. Creating
 // periods and accepting deficiencies is admin-only and attributed, because an
 // exception is a statement that somebody decided a gap was acceptable, and a
 // statement needs a name on it.

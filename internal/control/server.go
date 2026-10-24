@@ -26,14 +26,12 @@ import (
 
 	"defendsec/internal/anchor"
 	"defendsec/internal/cmdlog"
-	"defendsec/internal/events"
 	"defendsec/internal/forward"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/pki"
 	"defendsec/internal/presence"
 	"defendsec/internal/repohealth"
 	"defendsec/internal/sca"
-	"defendsec/internal/sigma"
 	"defendsec/internal/sign"
 	"defendsec/internal/sso"
 	"defendsec/internal/storepg"
@@ -71,21 +69,8 @@ type Server struct {
 	allowedMu   sync.RWMutex
 	allowedCmds map[string]struct{}
 
-	// Behavioural detection (roadmap 3.2-3.5). trees holds per-device process
-	// lineage so an alert can carry the ancestry that led to it; gaps records
-	// what each agent has dropped, so the console can say where detection is
-	// incomplete rather than showing a clean result.
-	detection     *sigma.Engine
-	treeMu        sync.Mutex
-	trees         map[string]*events.Tree
-	gaps          map[string]*eventGap
-	observedKinds map[events.Kind]bool
-	// recent holds a short per-device window for pre-alert context. DefendSec
-	// keeps this and nothing more; history belongs in the operator's own log
-	// platform (roadmap 3.6).
-	recent map[string]*events.Recent
-	// forwarder ships events and alerts onward. Lossy and asynchronous, so a
-	// stalled collector cannot affect detection.
+	// forwarder ships alerts onward (forwarding.go). Lossy and asynchronous,
+	// so a stalled collector cannot affect inventory processing.
 	forwarder *forward.Forwarder
 
 	// setupOpenUntil is when first-run setup closes. Zero means it is not
@@ -510,8 +495,6 @@ func (s *Server) Connect(stream defendsecv1.AgentControl_ConnectServer) error {
 					errCh <- err
 					return
 				}
-			case *defendsecv1.AgentToServer_Events:
-				s.receiveEvents(id, body.Events)
 			case *defendsecv1.AgentToServer_Ack:
 				s.log.Info("ack", "device", id, "command", body.Ack.GetCommandId(), "ok", body.Ack.GetAccepted(), "msg", body.Ack.GetMessage())
 				s.noteAck(id, body.Ack.GetAccepted(), body.Ack.GetCommandId(), body.Ack.GetMessage(), body.Ack)

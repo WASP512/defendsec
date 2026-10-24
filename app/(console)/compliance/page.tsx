@@ -17,7 +17,7 @@ export default async function CompliancePage({
   searchParams: Promise<{ framework?: string; periodId?: string }>;
 }) {
   // Viewers are allowed here: the person assembling evidence before an audit
-  // is often not the person allowed to isolate a host.
+  // is often not the person allowed to change settings.
   if (!(await isAdminSession()) && !(await isReadOnlySession())) {
     redirect("/login");
   }

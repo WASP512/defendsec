@@ -33,7 +33,6 @@ import (
 	"defendsec/internal/pki"
 	"defendsec/internal/presence"
 	"defendsec/internal/secret"
-	"defendsec/internal/sigma"
 	"defendsec/internal/sign"
 	"defendsec/internal/sso"
 	"defendsec/internal/storepg"
@@ -376,8 +375,7 @@ func run(log *slog.Logger) error {
 	// Compliance (roadmap 1.7).
 	adminMux.HandleFunc("/v1/controls", svc.HandleControls)
 	adminMux.HandleFunc("/v1/controls/check-coverage", svc.HandleCheckCoverage)
-	adminMux.HandleFunc("/v1/detection/coverage", svc.HandleDetectionCoverage)
-	adminMux.HandleFunc("/v1/detection/forwarding", svc.HandleForwarding)
+	adminMux.HandleFunc("/v1/forwarding", svc.HandleForwarding)
 
 	// The audit layer (roadmap 1.9).
 	adminMux.HandleFunc("/v1/audit/periods", svc.HandleAuditPeriods)
@@ -397,35 +395,10 @@ func run(log *slog.Logger) error {
 	} else {
 		log.Warn("host commands enabled", "types", allowed)
 	}
-	for _, name := range []string{"DEFENDSEC_POLICY_FILE", "DEFENDSEC_PLAYBOOK_DIR", "DEFENDSEC_MCP_ADDR", "DEFENDSEC_MCP_ORIGINS"} {
+	for _, name := range []string{"DEFENDSEC_POLICY_FILE", "DEFENDSEC_PLAYBOOK_DIR", "DEFENDSEC_SIGMA_DIR", "DEFENDSEC_MCP_ADDR", "DEFENDSEC_MCP_ORIGINS"} {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
 			log.Warn("setting ignored: the feature it configured was removed in slice 6", "name", name)
 		}
-	}
-
-	// Behavioural detection rules (roadmap 3.3). Unlike policy and packs, a
-	// rule directory is routinely a synced copy of a community repository, so
-	// rules that will not compile are counted and surfaced rather than
-	// failing the start.
-	sigmaDir := strings.TrimSpace(os.Getenv("DEFENDSEC_SIGMA_DIR"))
-	if sigmaDir == "" {
-		sigmaDir = firstExistingDir("packs/sigma", "/opt/defendsec/packs/sigma")
-	}
-	if sigmaDir != "" {
-		set, err := sigma.LoadDir(sigmaDir)
-		if err != nil {
-			return fmt.Errorf("sigma rules: %w", err)
-		}
-		svc.SetDetection(sigma.NewEngine(set))
-		log.Info("detection rules loaded", "rules", set.Len(), "skipped", len(set.Skipped()), "dir", sigmaDir)
-		for _, skipped := range set.Skipped() {
-			// Named individually: an operator needs to know which detection
-			// is not running, not just how many.
-			log.Warn("detection rule not loaded", "rule", skipped.Source, "reason", skipped.Reason)
-		}
-	} else {
-		log.Warn("no detection rules found; behavioural detection is not running",
-			"fix", "set DEFENDSEC_SIGMA_DIR to a directory of Sigma rules")
 	}
 
 	// Forwarding to the operator's own log platform (roadmap 3.6). DefendSec
@@ -715,15 +688,4 @@ func runCheckpointLoop(
 		}
 		cancel()
 	}
-}
-
-// firstExistingDir returns the first path that is a directory, so a packaged
-// install and a source checkout both find their rules without configuration.
-func firstExistingDir(paths ...string) string {
-	for _, p := range paths {
-		if info, err := os.Stat(p); err == nil && info.IsDir() {
-			return p
-		}
-	}
-	return ""
 }

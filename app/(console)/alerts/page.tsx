@@ -13,7 +13,7 @@ import { BellRing, Filter } from "lucide-react";
 export const dynamic = "force-dynamic";
 
 const STATUSES: AlertStatus[] = ["open", "acknowledged", "resolved", "suppressed"];
-const KINDS = ["", "fim", "sca", "vuln", "response", "system"];
+const KINDS = ["", "fim", "sca", "vuln"];
 
 export default async function AlertsPage({
   searchParams,
@@ -57,7 +57,7 @@ export default async function AlertsPage({
     <div className="mx-auto max-w-5xl space-y-6">
       <PageHeader
         title="Alerts"
-        description="FIM changes, SCA failures, and other detections from enrolled hosts."
+        description="File-integrity drift, configuration-check failures and vulnerability findings from enrolled hosts."
       />
 
       {!configured ? (
@@ -133,7 +133,7 @@ export default async function AlertsPage({
       {configured && !error && !storageSetupRequired && alerts.length === 0 ? (
         <EmptyState
           title="No matching alerts"
-          description="No detections match the current status, kind, and device filters."
+          description="No alerts match the current status, kind, and device filters."
           icon={BellRing}
           compact
         />
