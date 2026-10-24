@@ -43,8 +43,10 @@ func bucketKinds(bucket string) ([]string, error) {
 	switch bucket {
 	case "", BucketFix:
 		// Upgrading end-of-life software is work for this week as much as
-		// installing a patch is: both have something to do.
-		return []string{"finding", "eol"}, nil
+		// installing a patch is: both have something to do. So is installing
+		// a repository's current signing key: until then its updates have
+		// stopped.
+		return []string{"finding", "eol", "repo_health"}, nil
 	case BucketWatch:
 		return []string{"unfixed", "awaiting_vendor"}, nil
 	}
@@ -128,6 +130,8 @@ type ExposureGroup struct {
 	AwaitingSince *string `json:"awaitingSince"`
 	// EOL is set on an end-of-life group (advisory id "EOL:<product>:<cycle>").
 	EOL *ExposureEOL `json:"eol"`
+	// Repo is set on a repository-health group (advisory id "REPO:<12 hex>").
+	Repo *ExposureRepo `json:"repo"`
 
 	// Source is SourceVulnerability or SourceSurface. A surface row is one
 	// external-surface finding (slice 7b): AdvisoryID is its list key
@@ -161,6 +165,15 @@ type SurfaceRow struct {
 	// Unconfirmed is true when the latest run of the finding's check could not
 	// reach a conclusion: the finding is shown from its last confirmation.
 	Unconfirmed bool `json:"unconfirmed"`
+}
+
+// ExposureRepo describes the repository a repository-health group is about.
+type ExposureRepo struct {
+	Label   string `json:"label"`
+	Manager string `json:"manager"`
+	// Code is the most serious problem found (key_expired, key_missing,
+	// no_index, index_stale, ...); the drawer lists every one per host.
+	Code string `json:"code"`
 }
 
 // ExposureEOL describes the release an end-of-life group is about.
@@ -247,11 +260,12 @@ func isNumericText(s string) bool {
 // findings, each with six sort keys, all ascending, so a keyset cursor is a row
 // comparison. It is the SQL form of internal/exposure.Compare:
 //
-//	k1  band: 0 a KEV vulnerability, 1 a critical or high surface finding or software past end of security support, 2 everything else
+//	k1  band: 0 a KEV vulnerability, 1 a critical or high surface finding, software past end of security support or a repository with a key problem, 2 everything else
 //	k2  minus the KEV date as days since 1970 (0 when none, or not a KEV vulnerability): newest first, undated last
 //	k3  minus EPSS (1 when none, which every surface finding is): highest first, unscored last
 //	k4  minus CVSS (1 when none), or for a surface finding minus its severity's CVSS-equivalent, or for an
-//	    end-of-life finding minus 8.0 (security support ended) or 2.0 (active support ended)
+//	    end-of-life finding minus 8.0 (security support ended) or 2.0 (active support ended), or for a
+//	    repository-health finding minus its severity's CVSS-equivalent (high 8.0, medium 5.0)
 //	k5  severity label rank
 //	k6  the row id: the advisory id, or "surface:<12 digits>" (compared bytewise, as Go does)
 //
@@ -260,14 +274,18 @@ const exposureRankedSQL = `
 	SELECT advisory_id, cve, summary, severity, kev, kev_added, epss, cvss, kinds, host_count, finding_count,
 	       host_ids, host_names, packages, fixed, first_seen, resolved_at, awaiting_since,
 	       eol_product, eol_cycle, eol_stage, eol_date, eol_label, eol_upgrade, eol_origins,
+	       repo_label, repo_manager, repo_code,
 	       source, s_id, s_asset_id, s_asset_kind, s_asset, s_check, s_finding, s_subject, s_detail, s_fix, s_last_seen, s_unconfirmed,
 	       CASE WHEN source = 'surface' THEN (CASE WHEN severity IN ('critical', 'high') THEN 1 ELSE 2 END)
+	            WHEN 'repo_health' = ANY(kinds) THEN (CASE WHEN severity IN ('critical', 'high') THEN 1 ELSE 2 END)
 	            WHEN eol_stage = 'eol' THEN 1
 	            WHEN eol_stage = 'eoas' THEN 2
 	            WHEN kev THEN 0 ELSE 2 END AS k1,
 	       (CASE WHEN source = 'vulnerability' AND kev THEN -COALESCE(kev_added - DATE '1970-01-01', 0) ELSE 0 END)::text AS k2,
 	       (-COALESCE(epss, -1))::text AS k3,
 	       (CASE WHEN source = 'surface'
+	             THEN -(CASE severity WHEN 'critical' THEN 9.5 WHEN 'high' THEN 8.0 WHEN 'medium' THEN 5.0 ELSE 2.0 END)
+	             WHEN 'repo_health' = ANY(kinds)
 	             THEN -(CASE severity WHEN 'critical' THEN 9.5 WHEN 'high' THEN 8.0 WHEN 'medium' THEN 5.0 ELSE 2.0 END)
 	             WHEN eol_stage = 'eol' THEN -8.0
 	             WHEN eol_stage = 'eoas' THEN -2.0
@@ -296,6 +314,9 @@ const exposureRankedSQL = `
 	         COALESCE(max(f.eol_detail->>'productLabel'), '') AS eol_label,
 	         COALESCE(max(f.eol_detail->>'upgradeTo'), '') AS eol_upgrade,
 	         COALESCE((array_agg(DISTINCT f.origin) FILTER (WHERE f.origin <> ''))[1:3], ARRAY[]::text[]) AS eol_origins,
+	         COALESCE(max(f.repo_detail->>'label'), '') AS repo_label,
+	         COALESCE(max(f.repo_detail->>'manager'), '') AS repo_manager,
+	         COALESCE(max(f.fix_state) FILTER (WHERE f.kind = 'repo_health'), '') AS repo_code,
 	         'vulnerability'::text AS source,
 	         NULL::bigint AS s_id, NULL::bigint AS s_asset_id, NULL::text AS s_asset_kind, NULL::text AS s_asset,
 	         NULL::text AS s_check, NULL::text AS s_finding, NULL::text AS s_subject, NULL::text AS s_detail,
@@ -313,6 +334,7 @@ const exposureRankedSQL = `
 	         ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[],
 	         sf.first_seen, sf.resolved_at, NULL::date,
 	         ''::text, ''::text, ''::text, NULL::date, ''::text, ''::text, ARRAY[]::text[],
+	         ''::text, ''::text, ''::text,
 	         'surface'::text, sf.id, sa.id, sa.kind, sa.value,
 	         sf.check_group, sf.finding_id, sf.subject, sf.detail,
 	         sf.fix, sf.last_seen,
@@ -384,10 +406,12 @@ func scanExposureGroup(row pgx.Row) (ExposureGroup, exposureCursor, error) {
 	var sID, sAssetID *int64
 	var sKind, sAsset, sCheck, sFinding, sSubject, sDetail, sFix *string
 	var eolProduct, eolCycle, eolStage, eolLabel, eolUpgrade string
+	var repoLabel, repoManager, repoCode string
 	var sUnconfirmed bool
 	if err := row.Scan(&g.AdvisoryID, &g.CVE, &g.Summary, &g.Severity, &g.KEV, &kevAdded, &g.EPSS, &g.CVSS,
 		&g.Kinds, &g.HostCount, &g.FindingCount, &ids, &names, &g.Packages, &g.Fixed, &g.FirstSeen, &g.ResolvedAt, &awaitingSince,
 		&eolProduct, &eolCycle, &eolStage, &eolDate, &eolLabel, &eolUpgrade, &eolOrigins,
+		&repoLabel, &repoManager, &repoCode,
 		&g.Source, &sID, &sAssetID, &sKind, &sAsset, &sCheck, &sFinding, &sSubject, &sDetail, &sFix, &sLastSeen, &sUnconfirmed,
 		&c.K1, &c.K2, &c.K3, &c.K4, &c.K5, &c.K6); err != nil {
 		return g, c, err
@@ -420,6 +444,9 @@ func scanExposureGroup(row pgx.Row) (ExposureGroup, exposureCursor, error) {
 		}
 		g.EOL = &ExposureEOL{Product: eolProduct, ProductLabel: eolLabel, Cycle: eolCycle, Stage: eolStage,
 			Date: d, UpgradeTo: eolUpgrade, Origins: eolOrigins}
+	}
+	if repoLabel != "" {
+		g.Repo = &ExposureRepo{Label: repoLabel, Manager: repoManager, Code: repoCode}
 	}
 	g.FirstSeen = g.FirstSeen.UTC()
 	if g.ResolvedAt != nil {
@@ -567,6 +594,10 @@ type ExposureSummary struct {
 		// ones quiet the longest.
 		Silent     int          `json:"silent"`
 		SilentList []SilentHost `json:"silentList"`
+		// PatchUnreliable are the hosts whose pending-updates list cannot be
+		// believed because a repository failed a check (slice 11): an empty
+		// Fix this week list says nothing about them.
+		PatchUnreliable int `json:"patchUnreliable"`
 	} `json:"hosts"`
 	Fixable struct {
 		// Findings, Advisories and Hosts count both kinds of fixable work:
@@ -577,6 +608,11 @@ type ExposureSummary struct {
 		KEV        ExposureCount `json:"kev"`
 		// EOL is the part of the above that is end-of-life software.
 		EOL ExposureCount `json:"eol"`
+		// RepoHealth is the part of the above that is a package repository
+		// with an expired or missing key or a stale index: its updates have
+		// stopped. Findings counts host-repository pairs, Advisories the
+		// distinct repositories.
+		RepoHealth ExposureCount `json:"repoHealth"`
 		// Surface is the open external-surface findings that rank (critical,
 		// high, medium, low): work for this week beside the vulnerabilities.
 		// Total is Advisories plus Surface: the length of the Fix this week list.
@@ -620,9 +656,10 @@ func (s *Store) ExposureSummary(ctx context.Context, now time.Time) (ExposureSum
 		         SELECT 1 FROM devices m JOIN host_patch_state p2 ON p2.device_id = m.id
 		         WHERE m.merged_into = d.id AND NOT m.revoked AND p2.coverage = 'covered'
 		           AND p2.evidence_at >= $1::timestamptz - make_interval(days => COALESCE((SELECT stale_after_days FROM rmm_settings WHERE id = 1), 7)))),
-		       count(*) FILTER (WHERE d.last_seen < $2)
+		       count(*) FILTER (WHERE d.last_seen < $2),
+		       count(*) FILTER (WHERE d.repo_health->'assessment'->>'reliability' = 'unreliable')
 		FROM devices d LEFT JOIN host_vuln_state s ON s.device_id = d.id LEFT JOIN host_patch_state p ON p.device_id = d.id
-		WHERE NOT d.revoked AND d.merged_into IS NULL`, now, cutoff).Scan(&out.Hosts.Total, &out.Hosts.Assessed, &out.Hosts.Silent); err != nil {
+		WHERE NOT d.revoked AND d.merged_into IS NULL`, now, cutoff).Scan(&out.Hosts.Total, &out.Hosts.Assessed, &out.Hosts.Silent, &out.Hosts.PatchUnreliable); err != nil {
 		return out, err
 	}
 	out.Hosts.NotAssessed = out.Hosts.Total - out.Hosts.Assessed
@@ -649,9 +686,9 @@ func (s *Store) ExposureSummary(ctx context.Context, now time.Time) (ExposureSum
 
 	if err := s.pool.QueryRow(ctx, `
 		SELECT
-		  count(*) FILTER (WHERE f.kind IN ('finding', 'eol')),
-		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind IN ('finding', 'eol')),
-		  count(DISTINCT f.device_id) FILTER (WHERE f.kind IN ('finding', 'eol')),
+		  count(*) FILTER (WHERE f.kind IN ('finding', 'eol', 'repo_health')),
+		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind IN ('finding', 'eol', 'repo_health')),
+		  count(DISTINCT f.device_id) FILTER (WHERE f.kind IN ('finding', 'eol', 'repo_health')),
 		  count(*) FILTER (WHERE f.kind = 'finding' AND f.kev),
 		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind = 'finding' AND f.kev),
 		  count(*) FILTER (WHERE f.kind = 'unfixed'),
@@ -661,7 +698,9 @@ func (s *Store) ExposureSummary(ctx context.Context, now time.Time) (ExposureSum
 		  count(*) FILTER (WHERE f.kind IN ('unfixed', 'awaiting_vendor') AND f.kev),
 		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind IN ('unfixed', 'awaiting_vendor') AND f.kev),
 		  count(*) FILTER (WHERE f.kind = 'eol'),
-		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind = 'eol')
+		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind = 'eol'),
+		  count(*) FILTER (WHERE f.kind = 'repo_health'),
+		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind = 'repo_health')
 		FROM vuln_findings f JOIN devices d ON d.id = f.device_id AND NOT d.revoked
 		WHERE f.resolved_at IS NULL`).Scan(
 		&out.Fixable.Findings, &out.Fixable.Advisories, &out.Fixable.Hosts,
@@ -669,7 +708,8 @@ func (s *Store) ExposureSummary(ctx context.Context, now time.Time) (ExposureSum
 		&out.Watch.Unfixed.Findings, &out.Watch.Unfixed.Advisories,
 		&out.Watch.AwaitingVendor.Findings, &out.Watch.AwaitingVendor.Advisories,
 		&out.Watch.KEV.Findings, &out.Watch.KEV.Advisories,
-		&out.Fixable.EOL.Findings, &out.Fixable.EOL.Advisories); err != nil {
+		&out.Fixable.EOL.Findings, &out.Fixable.EOL.Advisories,
+		&out.Fixable.RepoHealth.Findings, &out.Fixable.RepoHealth.Advisories); err != nil {
 		return out, err
 	}
 
@@ -786,16 +826,16 @@ func (s *Store) ExposureTrend(ctx context.Context, from, to, now time.Time) (Exp
 		), spans AS (
 		  SELECT f.kind, f.kev, f.first_seen AS opened, f.resolved_at AS closed
 		  FROM vuln_findings f JOIN devices d ON d.id = f.device_id AND NOT d.revoked
-		  WHERE f.kind IN ('finding', 'eol', 'unfixed', 'awaiting_vendor')
+		  WHERE f.kind IN ('finding', 'eol', 'repo_health', 'unfixed', 'awaiting_vendor')
 		  UNION ALL
 		  SELECT i.kind, i.kev, i.opened_at, i.closed_at
 		  FROM vuln_finding_intervals i JOIN devices d ON d.id = i.device_id AND NOT d.revoked
-		  WHERE i.kind IN ('finding', 'eol', 'unfixed', 'awaiting_vendor')
+		  WHERE i.kind IN ('finding', 'eol', 'repo_health', 'unfixed', 'awaiting_vendor')
 		)
 		SELECT days.day,
-		       count(spans.kind) FILTER (WHERE spans.kind IN ('finding', 'eol')),
+		       count(spans.kind) FILTER (WHERE spans.kind IN ('finding', 'eol', 'repo_health')),
 		       count(spans.kind) FILTER (WHERE spans.kind = 'finding' AND spans.kev),
-		       count(spans.kind) FILTER (WHERE spans.kind NOT IN ('finding', 'eol'))
+		       count(spans.kind) FILTER (WHERE spans.kind NOT IN ('finding', 'eol', 'repo_health'))
 		FROM days
 		LEFT JOIN spans ON spans.opened <= days.asof AND (spans.closed IS NULL OR spans.closed > days.asof)
 		GROUP BY days.day ORDER BY days.day`, start, end, now.UTC())

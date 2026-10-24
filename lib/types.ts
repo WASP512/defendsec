@@ -1,3 +1,5 @@
+import type { RepoHealthReport } from "./patch-reliability.ts";
+
 export type Platform = "windows" | "linux" | "unknown";
 
 export type SoftwareItem = {
@@ -63,6 +65,8 @@ export type Device = {
   software: SoftwareItem[];
   pendingUpdates: PendingUpdate[];
   patchInventory: PatchInventory | null;
+  /** What the agent read about the host's package repositories, with apid's verdict on pending updates. */
+  repoHealth?: RepoHealthReport | null;
   fim: FimFile[];
   fimBaseline: FimFile[];
   sample: boolean;

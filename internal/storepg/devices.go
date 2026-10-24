@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"defendsec/internal/presence"
+	"defendsec/internal/repohealth"
 )
 
 // OnlineWindow matches the console's ONLINE_WINDOW_MS: a device is online if
@@ -57,6 +58,13 @@ type DeviceSummary struct {
 	Online         bool      `json:"online"`
 	SoftwareCount  int       `json:"softwareCount"`
 	PendingUpdates int       `json:"pendingUpdates"`
+	// PatchReliability says whether PendingUpdates can be believed: "reliable",
+	// "unreliable" (a repository failed a check, so zero may mean "none apt
+	// can see"), "unassessed" (the agent reports no repository evidence) or ""
+	// (not a host the question applies to). PatchReason is the first reason
+	// when unreliable.
+	PatchReliability string `json:"patchReliability"`
+	PatchReason      string `json:"patchReason"`
 	// Source is where the row came from: "agent" or "rmm" (read from Datto RMM).
 	Source string `json:"source"`
 }
@@ -179,7 +187,10 @@ func (s *Store) ListDevices(ctx context.Context, q DeviceQuery) (DevicePage, err
 		       username, ip_addresses, disk_encryption, firewall, isolated, last_seen,
 		       last_seen >= `+cutoffArg+`, CASE WHEN jsonb_typeof(software) = 'array' THEN jsonb_array_length(software) ELSE 0 END,
 		       CASE WHEN jsonb_typeof(pending_updates) = 'array' THEN jsonb_array_length(pending_updates) ELSE 0 END,
-		       source
+		       source,
+		       CASE WHEN repo_health IS NULL THEN CASE WHEN platform = 'linux' THEN 'unassessed' ELSE '' END
+		            ELSE COALESCE(repo_health->'assessment'->>'reliability', 'unassessed') END,
+		       COALESCE(repo_health->'assessment'->'reasons'->>0, '')
 		FROM devices WHERE `+pageWhere+`
 		ORDER BY lower(hostname), id
 		LIMIT `+limitArg, args...)
@@ -192,7 +203,7 @@ func (s *Store) ListDevices(ctx context.Context, q DeviceQuery) (DevicePage, err
 		var ips []byte
 		if err := rows.Scan(&d.ID, &d.Hostname, &d.Platform, &d.OSName, &d.OSVersion, &d.Arch, &d.AgentVersion,
 			&d.Serial, &d.HardwareModel, &d.Username, &ips, &d.DiskEncryption, &d.Firewall, &d.Isolated,
-			&d.LastSeen, &d.Online, &d.SoftwareCount, &d.PendingUpdates, &d.Source); err != nil {
+			&d.LastSeen, &d.Online, &d.SoftwareCount, &d.PendingUpdates, &d.Source, &d.PatchReliability, &d.PatchReason); err != nil {
 			return DevicePage{}, err
 		}
 		_ = json.Unmarshal(ips, &d.IPAddresses)
@@ -296,7 +307,7 @@ func (s *Store) LoadDevices(ctx context.Context) ([]presence.Device, error) {
 		       disk_encryption, firewall, ip_addresses, username, uptime_seconds, software, pending_updates,
 		       COALESCE(patch_inventory,''), fim, fim_baseline, last_seen, connected, isolated,
 		       cert_fingerprint, transport, agent_version, agent_public_key_pem,
-		       distro, distro_release, package_manager, os_edition
+		       distro, distro_release, package_manager, os_edition, repo_health
 		FROM devices WHERE NOT revoked AND NOT sample AND source = 'agent'`)
 	if err != nil {
 		return nil, err
@@ -305,14 +316,20 @@ func (s *Store) LoadDevices(ctx context.Context) ([]presence.Device, error) {
 	var out []presence.Device
 	for rows.Next() {
 		var d presence.Device
-		var ips, sw, pend, fim, base []byte
+		var ips, sw, pend, fim, base, repoHealth []byte
 		var lastSeen time.Time
 		if err := rows.Scan(&d.ID, &d.Hostname, &d.Platform, &d.OSName, &d.OSVersion, &d.Arch, &d.Serial,
 			&d.HardwareModel, &d.CPU, &d.MemoryMb, &d.DiskEncryption, &d.Firewall, &ips, &d.Username,
 			&d.UptimeSeconds, &sw, &pend, &d.PatchInventory, &fim, &base, &lastSeen, &d.Connected,
 			&d.Isolated, &d.CertFingerprint, &d.Transport, &d.AgentVersion, &d.AgentPublicKeyPEM,
-			&d.Distro, &d.DistroRelease, &d.PackageManager, &d.OSEdition); err != nil {
+			&d.Distro, &d.DistroRelease, &d.PackageManager, &d.OSEdition, &repoHealth); err != nil {
 			return nil, err
+		}
+		if len(repoHealth) > 0 {
+			var rh repohealth.Report
+			if err := json.Unmarshal(repoHealth, &rh); err == nil && !rh.Empty() {
+				d.RepoHealth = &rh
+			}
 		}
 		for _, pair := range []struct {
 			raw []byte

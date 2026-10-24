@@ -3,6 +3,7 @@ import type { Device, FindingTriage, PolicyResult, PolicyStatus } from "./types"
 import { ONLINE_WINDOW_MS } from "./types";
 import { SAMPLE_KEEP_ONLINE } from "./demo";
 import { coverageNotice, seriousOpen, type DeviceFindingsSummary } from "./findings-model.ts";
+import { patchReliabilityOf, unreliablePatchPolicy } from "./patch-reliability.ts";
 
 /**
  * What the control plane says about a host's findings. `available: false` means
@@ -98,6 +99,17 @@ function patchStatus(device: Device): PolicyResult {
       description: POLICY_DEFS[5].description,
       status: "unknown",
       detail,
+    };
+  }
+  // "None pending" from a host whose repository check failed is missing evidence, not a pass:
+  // the package manager may be working from an index that has stopped refreshing.
+  const unreliable = unreliablePatchPolicy(device.pendingUpdates.length, patchReliabilityOf(device));
+  if (unreliable) {
+    return {
+      id: "patches",
+      name: "No pending patches",
+      description: POLICY_DEFS[5].description,
+      ...unreliable,
     };
   }
   return {

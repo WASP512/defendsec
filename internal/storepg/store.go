@@ -15,6 +15,7 @@ import (
 	"defendsec/internal/controls"
 	"defendsec/internal/evidence"
 	"defendsec/internal/presence"
+	"defendsec/internal/repohealth"
 )
 
 type Store struct {
@@ -40,12 +41,12 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 			id, hostname, platform, os_name, os_version, arch, serial, hardware_model, cpu, memory_mb,
 			disk_encryption, firewall, ip_addresses, username, uptime_seconds, software, pending_updates,
 			patch_inventory, fim, fim_baseline, last_seen, connected, isolated, cert_fingerprint, transport, agent_public_key_pem, updated_at,
-			distro, distro_release, package_manager, os_edition
+			distro, distro_release, package_manager, os_edition, repo_health
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
 			$11,$12,$13::jsonb,$14,$15,$16::jsonb,$17::jsonb,
 			$18,$19::jsonb,$20::jsonb,$21::timestamptz,$22,$23,$24,$25,$26,now(),
-			$27,$28,$29,$30
+			$27,$28,$29,$30,$31::jsonb
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			hostname=EXCLUDED.hostname,
@@ -77,12 +78,29 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 			distro=CASE WHEN EXCLUDED.distro <> '' THEN EXCLUDED.distro ELSE devices.distro END,
 			distro_release=CASE WHEN EXCLUDED.distro <> '' THEN EXCLUDED.distro_release ELSE devices.distro_release END,
 			package_manager=CASE WHEN EXCLUDED.distro <> '' THEN EXCLUDED.package_manager ELSE devices.package_manager END,
+			repo_health=EXCLUDED.repo_health,
 			updated_at=now()
 	`, d.ID, d.Hostname, d.Platform, d.OSName, d.OSVersion, d.Arch, d.Serial, d.HardwareModel, d.CPU, d.MemoryMb,
 		d.DiskEncryption, d.Firewall, string(ips), d.Username, d.UptimeSeconds, string(sw), string(pend),
 		d.PatchInventory, string(fim), string(base), lastSeen, d.Connected, d.Isolated, d.CertFingerprint, d.Transport,
-		d.AgentPublicKeyPEM, d.Distro, d.DistroRelease, d.PackageManager, d.OSEdition)
+		d.AgentPublicKeyPEM, d.Distro, d.DistroRelease, d.PackageManager, d.OSEdition, repoHealthJSON(d))
 	return err
+}
+
+// repoHealthJSON is the repo_health column for d: the agent's report with the
+// server's verdict, or NULL when the agent reported none. A heartbeat that
+// carries no inventory never reaches the upsert, so NULL means "this host's
+// latest inventory had no repository evidence", which is what the console must
+// say rather than keep showing an old verdict.
+func repoHealthJSON(d presence.Device) any {
+	if d.RepoHealth == nil || d.RepoHealth.Empty() {
+		return nil
+	}
+	raw, err := json.Marshal(d.RepoHealth)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 func (s *Store) AppendFimEvent(ctx context.Context, ev presence.FimEvent) error {
@@ -584,7 +602,7 @@ func (s *Store) ExportAgentsJSON(ctx context.Context) ([]byte, error) {
 		SELECT id, hostname, platform, os_name, os_version, os_edition, arch, uptime_seconds, last_seen, connected,
 		       cert_fingerprint, transport, isolated, serial, hardware_model, cpu, memory_mb,
 		       disk_encryption, firewall, ip_addresses, username, software, pending_updates,
-		       patch_inventory, fim, fim_baseline
+		       patch_inventory, fim, fim_baseline, repo_health
 		FROM devices WHERE transport = 'mtls-grpc' OR cert_fingerprint <> ''
 		ORDER BY hostname
 	`)
@@ -600,14 +618,20 @@ func (s *Store) ExportAgentsJSON(ctx context.Context) ([]byte, error) {
 	doc := snap{UpdatedAt: time.Now().UTC().Format(time.RFC3339), Devices: []presence.Device{}}
 	for rows.Next() {
 		var d presence.Device
-		var ips, sw, pend, fim, base []byte
+		var ips, sw, pend, fim, base, repoHealth []byte
 		var lastSeen time.Time
 		if err := rows.Scan(
 			&d.ID, &d.Hostname, &d.Platform, &d.OSName, &d.OSVersion, &d.OSEdition, &d.Arch, &d.UptimeSeconds, &lastSeen, &d.Connected,
 			&d.CertFingerprint, &d.Transport, &d.Isolated, &d.Serial, &d.HardwareModel, &d.CPU, &d.MemoryMb,
-			&d.DiskEncryption, &d.Firewall, &ips, &d.Username, &sw, &pend, &d.PatchInventory, &fim, &base,
+			&d.DiskEncryption, &d.Firewall, &ips, &d.Username, &sw, &pend, &d.PatchInventory, &fim, &base, &repoHealth,
 		); err != nil {
 			return nil, err
+		}
+		if len(repoHealth) > 0 {
+			var rh repohealth.Report
+			if err := json.Unmarshal(repoHealth, &rh); err == nil && !rh.Empty() {
+				d.RepoHealth = &rh
+			}
 		}
 		d.LastSeen = lastSeen.UTC().Format(time.RFC3339)
 		_ = json.Unmarshal(ips, &d.IPAddresses)

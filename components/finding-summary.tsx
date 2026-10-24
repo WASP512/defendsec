@@ -3,6 +3,7 @@ import { AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { SeverityBadge } from "@/components/status-badge";
 import { cn } from "@/lib/utils";
+import { RepoEvidence } from "@/components/repo-evidence";
 import {
   eolStageLabel,
   feedLabel,
@@ -28,7 +29,7 @@ export function FindingSummary({
     <div className="space-y-1" data-finding-kind={finding.kind}>
       <div className="flex flex-wrap items-center gap-2">
         <Link href={`/findings/${finding.id}`} className="font-medium underline-offset-2 hover:underline">
-          {finding.cve || (finding.eol ? `${finding.eol.productLabel} ${finding.eol.cycle}` : finding.advisoryId)}
+          {finding.cve || (finding.eol ? `${finding.eol.productLabel} ${finding.eol.cycle}` : finding.repo ? finding.repo.label : finding.advisoryId)}
         </Link>
         <SeverityBadge severity={finding.severity} />
         {finding.kev ? <Badge variant="destructive">KEV</Badge> : null}
@@ -43,12 +44,13 @@ export function FindingSummary({
           </Badge>
         ) : null}
         {finding.kind === "eol" && finding.eol ? <Badge variant="outline">{eolStageLabel(finding.eol)}</Badge> : null}
+        {finding.kind === "repo_health" ? <Badge variant="outline">package repository</Badge> : null}
         {finding.kind === "unfixed" ? <Badge variant="outline">no fix published</Badge> : null}
         {finding.kind === "informational" ? <Badge variant="outline">informational</Badge> : null}
         {status === "acknowledged" ? <Badge variant="outline">acknowledged</Badge> : null}
       </div>
       <p className="text-sm">
-        {finding.package} {finding.installed}
+        {finding.kind === "repo_health" ? "" : `${finding.package} ${finding.installed}`}
         {showHost && finding.hostname ? (
           <>
             {" "}
@@ -72,6 +74,7 @@ export function FindingSummary({
           {finding.eol.packages.length > 0 ? ` · ${finding.eol.packages.join(", ")}` : ""}
         </p>
       ) : null}
+      {finding.kind === "repo_health" && finding.repo ? <RepoEvidence repo={finding.repo} controls={finding.controls} /> : null}
       {finding.summary ? <p className="text-sm text-muted-foreground">{finding.summary}</p> : null}
       <p className="text-xs text-muted-foreground">
         {feedLabel(finding)} · advisory {finding.advisoryId}
