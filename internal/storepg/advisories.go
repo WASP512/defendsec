@@ -73,6 +73,9 @@ type AdvisoryRange struct {
 	Fixed         string
 	FixState      FixState
 	SnapshotID    *int64
+	// Feed names the feed that loaded the range ("ubuntu-jammy"); empty for
+	// ranges loaded before the column existed.
+	Feed string
 }
 
 // Advisory is one vulnerability record with its ranges. Dates are calendar
@@ -195,12 +198,12 @@ const (
 	insertRangeSQL = `
 		INSERT INTO advisory_ranges (
 			advisory_id, ecosystem, distro, release, package, source_package,
-			introduced, fixed, fix_state, snapshot_id
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
+			introduced, fixed, fix_state, snapshot_id, feed
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`
 
 	rangeColumns = `r.id, r.advisory_id, r.ecosystem, COALESCE(r.distro,''), COALESCE(r.release,''),
 		r.package, COALESCE(r.source_package,''), COALESCE(r.introduced,''), COALESCE(r.fixed,''),
-		r.fix_state, r.snapshot_id`
+		r.fix_state, r.snapshot_id, r.feed`
 
 	// A range matches when its binary or source package is the one asked for
 	// and it applies to the distro/release: the same distro with the same (or
@@ -300,7 +303,7 @@ func (s *Store) UpsertAdvisoryWithRanges(ctx context.Context, a Advisory) error 
 		}
 		batch.Queue(insertRangeSQL, a.ID, r.Ecosystem, nullable(r.Distro), nullable(r.Release),
 			r.Package, nullable(r.SourcePackage), nullable(r.Introduced), nullable(r.Fixed),
-			string(r.FixState), snap)
+			string(r.FixState), snap, sourceOrLocal(a.Source))
 	}
 	if batch.Len() > 0 {
 		br := tx.SendBatch(ctx, batch)
@@ -358,7 +361,7 @@ func scanRanges(rows pgx.Rows) ([]AdvisoryRange, error) {
 		var r AdvisoryRange
 		var state string
 		if err := rows.Scan(&r.ID, &r.AdvisoryID, &r.Ecosystem, &r.Distro, &r.Release,
-			&r.Package, &r.SourcePackage, &r.Introduced, &r.Fixed, &state, &r.SnapshotID); err != nil {
+			&r.Package, &r.SourcePackage, &r.Introduced, &r.Fixed, &state, &r.SnapshotID, &r.Feed); err != nil {
 			return nil, err
 		}
 		r.FixState = FixState(state)

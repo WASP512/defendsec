@@ -290,7 +290,8 @@ func (s *Store) LoadDevices(ctx context.Context) ([]presence.Device, error) {
 		SELECT id, hostname, platform, os_name, os_version, arch, serial, hardware_model, cpu, memory_mb,
 		       disk_encryption, firewall, ip_addresses, username, uptime_seconds, software, pending_updates,
 		       COALESCE(patch_inventory,''), fim, fim_baseline, last_seen, connected, isolated,
-		       cert_fingerprint, transport, agent_version, agent_public_key_pem
+		       cert_fingerprint, transport, agent_version, agent_public_key_pem,
+		       distro, distro_release, package_manager
 		FROM devices WHERE NOT revoked AND NOT sample`)
 	if err != nil {
 		return nil, err
@@ -304,7 +305,8 @@ func (s *Store) LoadDevices(ctx context.Context) ([]presence.Device, error) {
 		if err := rows.Scan(&d.ID, &d.Hostname, &d.Platform, &d.OSName, &d.OSVersion, &d.Arch, &d.Serial,
 			&d.HardwareModel, &d.CPU, &d.MemoryMb, &d.DiskEncryption, &d.Firewall, &ips, &d.Username,
 			&d.UptimeSeconds, &sw, &pend, &d.PatchInventory, &fim, &base, &lastSeen, &d.Connected,
-			&d.Isolated, &d.CertFingerprint, &d.Transport, &d.AgentVersion, &d.AgentPublicKeyPEM); err != nil {
+			&d.Isolated, &d.CertFingerprint, &d.Transport, &d.AgentVersion, &d.AgentPublicKeyPEM,
+			&d.Distro, &d.DistroRelease, &d.PackageManager); err != nil {
 			return nil, err
 		}
 		for _, pair := range []struct {

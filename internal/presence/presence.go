@@ -32,6 +32,10 @@ func FimPathSeverity(path string) string {
 type Software struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
+	// SourcePackage and SourceVersion are what the package was built from (dpkg
+	// Source:, rpm SOURCERPM). Empty from agents that do not report them.
+	SourcePackage string `json:"sourcePackage,omitempty"`
+	SourceVersion string `json:"sourceVersion,omitempty"`
 }
 
 type Update struct {
@@ -97,13 +101,18 @@ type Alert struct {
 }
 
 type Device struct {
-	ID              string `json:"id"`
-	Hostname        string `json:"hostname"`
-	AgentVersion    string `json:"agentVersion,omitempty"`
-	Platform        string `json:"platform"`
-	OSName          string `json:"osName"`
-	OSVersion       string `json:"osVersion"`
-	Arch            string `json:"arch"`
+	ID           string `json:"id"`
+	Hostname     string `json:"hostname"`
+	AgentVersion string `json:"agentVersion,omitempty"`
+	Platform     string `json:"platform"`
+	OSName       string `json:"osName"`
+	OSVersion    string `json:"osVersion"`
+	Arch         string `json:"arch"`
+	// Distro and DistroRelease are os-release ID and VERSION_ID; PackageManager
+	// is "dpkg" or "rpm". They pick the advisory feed and version ordering.
+	Distro          string `json:"distro,omitempty"`
+	DistroRelease   string `json:"distroRelease,omitempty"`
+	PackageManager  string `json:"packageManager,omitempty"`
 	UptimeSeconds   int64  `json:"uptimeSeconds"`
 	LastSeen        string `json:"lastSeen"`
 	Connected       bool   `json:"connected"`
@@ -270,6 +279,7 @@ func (f *File) ApplyInventory(dev Device) ([]FimEvent, error) {
 	merged.IPAddresses = dev.IPAddresses
 	merged.Username = dev.Username
 	merged.Software = dev.Software
+	merged.Distro, merged.DistroRelease, merged.PackageManager = dev.Distro, dev.DistroRelease, dev.PackageManager
 	merged.PendingUpdates = dev.PendingUpdates
 	merged.PatchInventory = dev.PatchInventory
 	if len(dev.ScaResults) > 0 {

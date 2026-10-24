@@ -130,9 +130,9 @@ const (
 
 	insertRangesFromTmpSQL = `
 		INSERT INTO advisory_ranges (advisory_id, ecosystem, distro, release, package, source_package,
-		                             introduced, fixed, fix_state, snapshot_id)
+		                             introduced, fixed, fix_state, snapshot_id, feed)
 		SELECT advisory_id, ecosystem, NULLIF(distro, ''), NULLIF(release, ''), package,
-		       NULLIF(source_package, ''), NULLIF(introduced, ''), NULLIF(fixed, ''), fix_state, $1
+		       NULLIF(source_package, ''), NULLIF(introduced, ''), NULLIF(fixed, ''), fix_state, $1, $2
 		FROM feed_rng_tmp
 		ON CONFLICT DO NOTHING`
 )
@@ -282,7 +282,7 @@ func (l *FeedLoad) Commit(ctx context.Context) (FeedLoadResult, error) {
 			return fail(fmt.Errorf("clear scope: %w", err))
 		}
 	}
-	if _, err := l.tx.Exec(ctx, insertRangesFromTmpSQL, l.snapshot); err != nil {
+	if _, err := l.tx.Exec(ctx, insertRangesFromTmpSQL, l.snapshot, l.source); err != nil {
 		return fail(fmt.Errorf("insert ranges: %w", err))
 	}
 	if err := l.tx.Commit(ctx); err != nil {

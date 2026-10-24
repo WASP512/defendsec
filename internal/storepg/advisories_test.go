@@ -108,7 +108,7 @@ func TestAdvisorySQLPlaceholderCounts(t *testing.T) {
 		args int
 	}{
 		{"upsertAdvisory", upsertAdvisorySQL, 13},
-		{"insertRange", insertRangeSQL, 10},
+		{"insertRange", insertRangeSQL, 11},
 		{"listRanges", listRangesSQL, 4},
 		{"deleteRanges", deleteRangesSQL, 1},
 		{"getAdvisory", getAdvisorySQL, 1},
