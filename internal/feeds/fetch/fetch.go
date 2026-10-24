@@ -1,9 +1,10 @@
 // Package fetch downloads feed files into an on-disk cache with conditional
 // requests (ETag / Last-Modified) and records each file's SHA-256.
 //
-// Bulk downloads only: it fetches whole published files by fixed URL. It never
-// sends anything about the fleet — no package names, no hostnames — because the
-// URLs are fixed per feed and carry no query.
+// Bulk downloads only: it fetches whole published files by fixed URL, or walks
+// a paged API (FetchPaged) whose requests carry nothing but a page number and a
+// fixed release filter. It never sends anything about the fleet: no package
+// names, no hostnames.
 package fetch
 
 import (

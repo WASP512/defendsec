@@ -38,6 +38,10 @@ type Range struct {
 	Introduced    string
 	Fixed         string
 	State         FixState
+	// Issued is the calendar date (YYYY-MM-DD) the vendor published the
+	// erratum that carries this fix, when the feed says so. Empty otherwise.
+	// "Fixed upstream by Red Hat on <date>" is read from here.
+	Issued string
 }
 
 // Advisory is one vulnerability (keyed by CVE where a CVE exists) with the

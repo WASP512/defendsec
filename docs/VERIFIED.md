@@ -313,12 +313,93 @@ Skipped and counted, not guessed: Ubuntu jammy 114 definitions without a CVE + 1
 
 ## Slice 4 — distro-aware matcher (migration 021)
 
-Branch `scout/4-matcher`, stacked on `scout/3-feeds`. **The exit measurement (zero findings on a
-fully patched Ubuntu 22.04 and a fully patched Rocky 9 host) is PENDING.** There are no such hosts on
-this box. The CEO was asked (via `bot-dm`, delivery reported "ambiguous") to have grumpy provide two VMs
-on titan, or to run `defendsec-agentd -print-inventory` on existing ones and drop the JSON in
-`workspace/measure/{ubuntu-2204,rocky-9}.json`. Until those files exist this slice is not closed. What was
-run instead is below, and each item says what it does and does not show.
+Branch `scout/4-matcher` (merged, PR #84); measurement and fixes on `scout/4b-matcher-fixes`.
+**Exit measurement, 2026-10-23, two real freshly patched hosts: Ubuntu 22.04 = 0 findings after one matcher
+fix (it was 2 before); Rocky 9 = 8 findings, all one cause that is not a comparator bug: Red Hat's feed is
+ahead of Rocky's repositories. The "zero findings on Rocky 9" criterion is therefore NOT met.** Details in
+"Exit measurement" below. The first sections record what was verified before the hosts existed.
+
+### Exit measurement (real hosts)
+
+Hosts: VM 120 Ubuntu 22.04 (`jammy` cloud image, kernel 5.15.0-198, 597 dpkg packages,
+`apt list --upgradable` empty and `apt-get --dry-run full-upgrade` 0 upgraded after the last reboot, Ubuntu
+Pro not attached) and VM 121 Rocky 9.8 (cloud image, kernel 5.14.0-687.59.1.el9_8, 427 rpm, `dnf
+check-update --refresh` exit 0 after reboot), built by grumpy (t_b28b0b55) and inventoried with
+`defendsec-agentd -print-inventory` (binary sha256 matched on both). Feeds: the nine-feed snapshot 1 loaded
+2026-10-23 20:55 -06:00 (RHEL 9 OVAL last-modified 2026-10-23 21:44 GMT, i.e. current to the hour). Command:
+`defendsec-feeds match <inventory.json>` (exit 0 = no findings).
+
+| Host | Matcher | Result |
+| --- | --- | --- |
+| Ubuntu 22.04 | as merged (7471d23) | exit 2: **2 findings**, `libbpf0` CVE-2022-3534, CVE-2022-3606 |
+| Ubuntu 22.04 | + epoch fix | exit 0: **0 findings, 0 unfixed, 0 informational** (237 packages distro-mapped, 1,058 advisories examined) |
+| Rocky 9.8 | as merged, and with the epoch fix | exit 2: **8 findings**, all `kernel` 5.14.0-687.59.1.el9_8 → 0:5.14.0-687.60.1.el9_8 (3 high, 5 medium); 194 packages mapped, 4,330 advisories examined |
+
+**Triage.**
+
+1. *Ubuntu `libbpf0`: matcher bug, fixed.* dpkg's `Source:` field and an rpm's `SOURCERPM` name never carry the
+   epoch, yet the feed's fixed version does (`1:0.5.0-1ubuntu22.04.1`). The matcher compared the bare source
+   version `0.5.0-1ubuntu22.04.1` (epoch 0) to the fixed `1:…` and read it as older. Synthetic inventories and
+   unit tests could not show this because they never paired a source version with an epoched binary. Fix:
+   `inheritEpoch` in `internal/vuln/match.go` gives the source version the binary's epoch. The same bug
+   would have hit every rpm with an epoch (e.g. NetworkManager at epoch 1 on the Rocky host), which the
+   Rocky inventory confirms exist. Regression tests
+   `TestSourceVersionInheritsBinaryEpoch` (dpkg and rpm, patched and one-behind) and `TestInheritEpoch`;
+   reverting the one-line change fails the first with exactly the libbpf finding.
+2. *Rocky kernel: not a comparator bug; the feed source is wrong for Rocky.* The 8 CVEs come from a RHEL 9
+   advisory issued 2026-10-22 (kernel 687.60.1). Rocky's BaseOS mirror
+   (`dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/k/`) listed 687.59.1 as its newest kernel at
+   2026-10-24 03:33 UTC, and the VM's `dnf check-update` found nothing newer. So the host **is** fully patched
+   as far as Rocky can patch it, and the finding names a build the operator cannot install. Rocky and Alma
+   follow RHEL by days, so this will recur after every RHEL kernel advisory. Right fix: load Rocky's and
+   Alma's own errata (Rocky: Apollo `/api/v3/advisories/` RLSA entries or the repo `updateinfo`) and match
+   `rocky`/`almalinux` hosts against those. Not done in this branch; it is a new feed, not a matcher fix.
+   Nothing else on Rocky was flagged out of 194 mapped packages.
+
+**Negative control** (so "0" is not a matcher that flags nothing): the same two inventories with four packages
+downgraded (`libssl3`, `openssh-server`, `openssl-libs`, `sudo`) give 110 findings (Ubuntu) and 93 (Rocky).
+
+**Also shown by these hosts:** rpm collection on a real rpm host works (epoch rendered as `1:`, `SOURCERPM`
+parsed, 427 rpm packages including the kernel), which was previously unverified.
+
+**Still not shown:** zero findings on Rocky 9; the Ubuntu Pro heuristic (no Pro host); a host older than its
+latest point release; browser rendering; CI on the 4b branch.
+
+### Exit measurement, re-run on freshly synced feeds (2026-10-23 21:43 -06:00 / 2026-10-24 03:43 UTC)
+
+Same two inventories (`ubuntu-2204.json` sha256 `6668f98b…1b4c`, `rocky-9.json` sha256 `a4d4da67…6a`),
+matcher at `scout/4b-matcher-fixes` (epoch fix included), a new scratch database (`exit4`) and an empty feed
+cache, so every feed was downloaded again (`not_modified=false` on all nine). Snapshot **1** of that database;
+RHEL 9 OVAL `Last-Modified` 2026-10-23 21:44:21 GMT, fetched 03:43:37 UTC. Commands:
+`defendsec-feeds sync` then `defendsec-feeds match --all [--json] <inventory.json>` (`--all` also lists
+no-fix entries).
+
+| Host | Packages | Distro-mapped | Fixable (fix to install) | No fix published | Informational | KEV | Exit |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Ubuntu 22.04 (VM 120, Pro not attached) | 597 dpkg | 237 | **0** | 0 | 0 | 0 | 0 |
+| Rocky 9.8 (VM 121, matched as `rhel 9`) | 422 reported (see below) | 194 | **8** | 0 | 0 | **0** | 2 |
+
+Ubuntu: nothing open, and `--all` shows no no-fix or informational entries either, so there is no ESM-only
+row to classify. Rocky: the same 8 `kernel`
+findings as before (CVE-2025-22063, -38147, CVE-2026-64481, -68202, -68299, -68448, -80530, -80536;
+advisory ids = CVE ids, range ids 625098 … 625602, feed `rhel-9`, all `fixed`, EPSS 0.001–0.005, none in
+KEV), installed `5.14.0-687.59.1.el9_8`, fixed `0:5.14.0-687.60.1.el9_8`.
+
+Classification of the 8: **genuine distro lag, not a matcher bug.** At about 03:50 UTC the Rocky BaseOS mirror's
+newest kernel is still `kernel-5.14.0-687.59.1.el9_8` (listing of
+`dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/k/`: …687.56.1, .57.1, .58.1, .59.1; no .60.1), so
+the operator cannot install the build the finding names. The feed is correct for RHEL; the host is a Rocky host.
+These are Rocky-lag findings on a host that is fully patched, so they are false positives for a Rocky fleet
+until Rocky's own errata (Apollo RLSA / `updateinfo`) is loaded. Not fixed here: a new feed, not a matcher
+change. **The zero-findings criterion is met for Ubuntu 22.04 and NOT met for Rocky 9.**
+
+Package count: the card quoted 427 (`rpm -qa`) against 422 in the export. `ParseRPMQuery` drops
+`gpg-pubkey` pseudo-packages (`internal/hostinv/packages.go:135`, test `packages_test.go`), which would account for
+5 keys; the VM is powered off, so `rpm -qa | grep -c gpg-pubkey` was **not** run and the 5 is unconfirmed on
+the host itself.
+
+Not verified in this re-run: the Ubuntu Pro heuristic, other Rocky/Alma point releases, and the repeat of the
+negative control (done earlier, unchanged inputs).
 
 ### Toolchain
 
@@ -384,7 +465,7 @@ was used**.
 
 ### Not verified
 
-- **The exit measurement** (see top). No real Ubuntu 22.04 or Rocky 9 host has been matched.
+- **Zero findings on Rocky 9** (see the exit measurement above): 8 kernel findings from the RHEL-ahead-of-Rocky gap. Resolved in slice 4c below: 0 fixable, the 8 are `awaiting_vendor`.
 - **`rpm` collection never ran on an rpm host** (no `rpm` here). `ParseRPMQuery` / `ParseSourceRPM` are tested
   on hand-written text in the shape of `rpm -qa --queryformat` output; whether rpm renders
   `%|EPOCH?{%{EPOCH}:}|` as expected on Rocky 9 is unchecked. If it does not, openssl-libs & co. would be
@@ -405,9 +486,122 @@ was used**.
 
 | Feature | Platform | Unit | CI | Real host |
 | --- | --- | --- | --- | --- |
-| Distro-aware matcher (`internal/vuln`) | any | 24 tests incl. backport regressions, mutation-checked | not checked | Debian 13 only (real feeds); **Ubuntu 22.04 and Rocky 9: PENDING** |
+| Distro-aware matcher (`internal/vuln`) | any | 24 tests incl. backport regressions, mutation-checked | not checked | Debian 13, Ubuntu 22.04 (0 findings, real host), Rocky 9.8 (8 findings: RHEL feed ahead of Rocky repos) |
 | Agent: distro, release, package manager, source packages | linux dpkg | parser tests, green | not checked | run on hermesagent (615 packages) |
 | Agent: same, rpm | linux rpm | parser tests on hand-written output | not checked | **not run** |
 | Findings storage + `/v1/findings` API | linux, Postgres 16.15 | storepg + control integration tests, green | not checked | real apid + real agent |
 | Console findings (advisories, host, detail, policy) | any | model logic unit-tested | not checked | rendered by a built console via curl; not in a browser |
-| Zero findings on a fully patched host | Ubuntu 22.04, Rocky 9 | synthetic only (by construction) | not checked | **PENDING** |
+| Zero findings on a fully patched host | Ubuntu 22.04, Rocky 9 | synthetic (by construction) | not checked | Ubuntu 22.04: **0 (met)**; Rocky 9: **8 (not met)**, see triage |
+
+## Slice 4c — Rocky/Alma errata feeds and `awaiting_vendor` (migration 022)
+
+Branch `scout/4b-matcher-fixes`, on top of `4d61536`. Problem measured in 4b: a fully patched Rocky 9.8 host had
+8 *fixable* kernel findings, all Red Hat fixes (`5.14.0-687.60.1.el9_8`) that Rocky had not yet released (newest
+Rocky 9 kernel `687.59.1`, the installed one). Not a matcher bug; rebuild lag. This slice loads Rocky's and
+AlmaLinux's own errata and gives such a finding a state that is never "fixable".
+
+### What changed
+
+- Feeds `rocky-8`, `rocky-9` (Apollo `/v2/advisories`, walked page by page, `internal/feeds/rocky`,
+  `internal/feeds/fetch/paged.go`) and `almalinux-8`, `almalinux-9` (`errata.full.json`, `internal/feeds/alma`),
+  on by default; bulk only, snapshot digests, signed-bundle export/import like every other feed.
+- Matcher: Rocky and Alma are matched against their own feed **and** RHEL's (`internal/vuln/match.go`). New kind
+  `awaiting_vendor`: fixed by Red Hat, not released by the rebuild. Not fixable, sorted after fixable, KEV ones
+  still alert. CentOS Stream / RHEL / Oracle are untouched.
+- Migration `022_awaiting_vendor.sql` (idempotent): `advisory_ranges.issued DATE`, `vuln_findings.kind` allows
+  `awaiting_vendor`, and a once-only (meta-flagged) reset of the RHEL feeds' loaded digest so ranges loaded before
+  this migration get their issue dates on the next sync.
+- API: `/v1/findings?kind=awaiting_vendor`; summary gains `awaitingVendor`, `kevAwaitingVendor` (`open` stays the
+  fixable count). `defendsec-feeds match` prints fixable / awaiting_vendor / no_fix / informational, and the same
+  tally for KEV; `--json` has `counts`. Console: badge, reason line, red notice for exploited CVEs awaiting the vendor.
+
+### Findings about the sources (checked live, 2026-10-24)
+
+- Apollo `/api/v3/advisories/` ignores **every** filter (`cve`, `product`, `kind`, `after_raw`, with or without the
+  `filters.` prefix: all returned `total` 10,198) and is 2.7 MB per page of 100. `/v2/advisories` honours
+  `filters.product`, `filters.type`, `filters.cve`; release 9 security = 1,558 advisories, 16 pages.
+- Apollo's `total` counts 10 advisories twice (1,558 reported, 1,548 distinct names; identical content), and the order of
+  CVEs/packages inside an advisory changes between requests. First implementation tripped both: the walk was refused as
+  "short" (1,548 of 1,558), and the digest changed on every walk. Fixed (received-vs-total, and a normalised stored form
+  with sorted lists); a second walk now reports `unchanged` (digest `56a86fc255db` twice).
+- A page takes about 5 s. A walk: Rocky 9 56–75 s, Rocky 8 190–230 s. The full default sync is about 5–6 minutes.
+
+### Exit measurement (real hosts, 2026-10-24 04:31 UTC)
+
+Scratch database `exit4` (the slice-4 database, **upgraded in place**: migration 022 on existing data), feed cache
+from the 4b run, then `defendsec-feeds sync` (all 13 enabled feeds fetched; the log is `sync-4c-full.txt`, the final
+repeat `sync-4c-final.txt`), then `defendsec-feeds match <inventory.json>`. Same inventories as 4b
+(`ubuntu-2204.json`, `rocky-9.json`; VMs 120 and 121, powered off). Latest snapshot 7.
+
+| Host | Packages | Distro-mapped | Fixable | awaiting_vendor | no_fix | Informational | KEV | Exit |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Ubuntu 22.04 (VM 120) | 597 | 237 | **0** | 0 | 0 | 0 | 0 | 0 |
+| Rocky 9.8 (VM 121, now matched as `rocky 9`) | 422 | 197 | **0** | **8** | 0 | 0 | 0 | 0 |
+
+The 8 are exactly the CVEs of the card (CVE-2025-22063, -38147, CVE-2026-64481, -68202, -68299, -68448, -80530,
+-80536); each reads `fixed upstream by Red Hat in 0:5.14.0-687.60.1.el9_8 on 2026-10-22; not yet released by Rocky
+Linux`; installed `5.14.0-687.59.1.el9_8`, feed `rhel-9`. Before (4b, same inventory): `8 findings (fix available)`,
+exit 2.
+
+**Rocky has not published 687.60.1**, so the 8 did not flip. Mirror listing, taken 04:28 UTC
+(`dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/Packages/k/`, `measure/mirror-rocky9-kernel.final.txt`):
+`kernel-core-5.14.0-687.54.1 (2026-Oct-02), .56.1 (Oct-08), .57.1 (Oct-13), .58.1 (Oct-15), .59.1 (Oct-21)`; zero entries
+matching `687.60`. Rocky's Apollo feed and Alma's `errata.full.json` also top out at `687.59.1`. None of the 8 CVEs is
+in Alma 9's errata (0 of 1,992 errata mention any), `filters.cve` is empty on Rocky for CVE-2025-22063, and the matcher
+found no Rocky range covering the other seven (a covering range would have made them fixable or clean, not awaiting). When Rocky ships
+`687.60.1` the 8 become fixable on the next sync; that transition is tested (below) but **has not been observed
+on real data**.
+
+The date in the reason comes from Red Hat's OVAL `<issued>`: it was empty until the migration's forced reload re-read
+the RHEL feeds (rhel ranges with an issue date: 0 of 407,436 before, 407,436 of 407,436 after).
+
+### Commands and results
+
+| Command | Result |
+| --- | --- |
+| `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./...`, `gofmt -l` | green |
+| CI `postgres-integration` command on the titan test PG (CT 119): `go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/...` | `ok` ×4; storepg 100 pass, db/migrations 5, control 152, feeds/runner 23; 0 fail, 0 skip |
+| `go test -p 1 -count=1 -v ./...` with `TEST_DATABASE_URL` (titan) | 1,000 pass, 1 fail, 5 skip. The fail is the known `TestQuarantinePathMovesFile` EXDEV (same as slice 0). The 5 skips are the eBPF/root, netns script and `pwsh` tests, none in this slice |
+| `go test -v ./internal/vuln/... ./internal/feeds/... ./cmd/...` | 185 pass, 0 fail, 0 skip (vuln 44, feeds/fetch 19, alma 3, rocky 6, nevra 3, runner 23) |
+| `npm test` / `npm run lint` / `npx tsc --noEmit` / `npm run build` | 83 pass / 0 problems / clean / built |
+
+New tests that pin the behaviour: matcher (`internal/vuln/rebuild_test.go`: awaiting not fixable, flips to fixable
+when the rebuild ships, rebuild version wins, RHEL/CentOS unchanged, KEV kept, no own feed ⇒ `no_feed`, Rocky ≠ Alma,
+ordering); parsers on fixtures (`alma`, `rocky`, `nevra`); the paged walker (assembly, dedupe, retry, short-walk
+refusal, server-side repeats, normalisation, page cap); `runner/rebuild_test.go` (sync of RHEL+Rocky+Alma with a paged
+fake Apollo, the query contains only the release filter and the page number, ranges carry issue dates, second sync
+`unchanged`, export → signed bundle → import into a second database gives the same rows, an empty walk keeps loaded
+data); Postgres (`storepg/rebuild_test.go`: end-to-end awaiting finding persisted, ordered after fixable in SQL,
+filtered, counted in the summary, flipped in place; migration allows the kind and rejects others; the one-time RHEL
+reload); apid (`control`: Rocky host through `processVulnAlerts` has 0 fixable and 2 awaiting, the KEV one raises an
+alert, summary JSON has the new keys, flips to fixable on a new snapshot). On their first run the tests caught the
+issue date being dropped between parser and store (runner test) and the new insert placeholder
+(`TestAdvisorySQLPlaceholderCounts`); the real sync caught the two Apollo problems above. The Postgres test also pins
+the list order: sorting `kind` alphabetically would put `awaiting_vendor` before `finding`.
+
+### Not verified
+
+- **No real AlmaLinux host.** `synthetic-alma-9.json` is the Rocky inventory relabelled `almalinux`: 0 fixable, 8
+  awaiting_vendor. That proves the Alma path runs on real feed data, not that an Alma host's package list matches.
+- **The flip to fixable on real data** (Rocky ships 687.60.1) has not happened; only fixtures and the Postgres
+  integration tests show it.
+- **No real Rocky 8 or Alma 8 host.** Their feeds load (Rocky 8: 112,751 ranges, 4,701 advisories; Alma 8: 82,763; Alma 9:
+  125,671; Rocky 9: 123,007) and the parsers are the same code, nothing more.
+- **Not rendered in a browser.** The console compiles and its model logic is unit-tested; the red notice and the badge
+  were not looked at. The apid alert for a KEV awaiting finding is covered by an integration test, not by a running apid.
+- **A real KEV awaiting_vendor finding does not exist** in these inventories (KEV 0); KEV handling is tested on fixtures.
+- Rocky errata that carry no CVE, or an Apollo that lags Rocky's mirror, could show a shipped fix as awaiting for a while.
+  The reverse (fixable when Rocky has not shipped) cannot happen: fixable now requires the rebuild's own errata.
+- Apollo availability: the walker retries 5xx and network errors three times per page; a longer outage fails the feed
+  and keeps the loaded data. Not exercised against a real outage.
+- Rocky/Alma 10: no feed (Red Hat has no v2 OVAL for 10).
+- Not opened as a PR; CI has not run on the branch (`gh` has no token).
+
+## Feature × platform × evidence matrix — additions from slice 4c
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Rocky/Alma errata feeds (`rocky-N`, `almalinux-N`) | any | parser fixtures, paged-walker tests, runner sync/export/import (titan PG) | not checked | real feeds loaded into Postgres 16.15 (Rocky 9 5.9 MiB / Alma 9 29.3 MiB stored) |
+| `awaiting_vendor` matching | rpm, Rocky/Alma | 9 matcher tests, storepg + apid integration (titan PG) | not checked | Rocky 9.8 VM 121: **0 fixable, 8 awaiting_vendor** (met); Alma: synthetic relabel only |
+| Flip awaiting → fixable | rpm, Rocky/Alma | fixtures + Postgres + apid | not checked | **not observed** (Rocky has not shipped 687.60.1) |
+| Console: awaiting badge, KEV red notice | any | model logic unit-tested | not checked | **not rendered** |

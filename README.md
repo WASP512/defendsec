@@ -182,12 +182,13 @@ response settings that are being removed. Where they disagree with this README, 
 
 ### Honest status
 
-- **Feeds are synced; findings do not use them yet.** `defendsec-feeds` loads KEV, EPSS and the
-  distro advisories, but today's matcher still uses a catalog that is hard-coded in the console. It
-  has no distro-aware fixed versions, so **do not rely on the vulnerability view to say a host is
-  clean**, or to say a package is vulnerable when the distro has backported the fix. Moving the
-  matcher onto the synced data is slice 4 and it is pending. The acceptance test for it is zero
-  findings on a fully patched Ubuntu 22.04 and a fully patched Rocky 9.
+- **Findings come from the synced distro feeds, with one known false-positive class.** The matcher
+  compares each package against the distro's own fixed versions (Ubuntu, Debian, RHEL family, SUSE),
+  so backported fixes are not flagged. Measured on a fully patched Ubuntu 22.04: 0 findings. On a
+  fully patched **Rocky 9** it reports the kernel CVEs Red Hat fixed in a build Rocky has not shipped
+  yet, because Rocky and Alma hosts are matched against Red Hat's feed. Until Rocky's own errata feed
+  is added, a Rocky/Alma "fix available" row may name a version your repositories do not have yet.
+  See `docs/VERIFIED.md`.
 - **The Windows agent has never been run on a real Windows machine.** It has been verified by
   cross-compilation, parser tests and PowerShell parse checks only. That covers the service,
   inventory and posture checks. Treat any Windows deployment as an experiment. Windows service and

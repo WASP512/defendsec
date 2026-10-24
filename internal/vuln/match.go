@@ -42,6 +42,12 @@ const (
 	// KindInformational: the distro has decided not to fix it (will_not_fix) or
 	// has not decided yet (under_investigation). Shown, never counted as exposure.
 	KindInformational Kind = "informational"
+	// KindAwaitingVendor: the upstream vendor (Red Hat) has fixed it, but the
+	// distribution that rebuilds the vendor's packages (Rocky, AlmaLinux) has
+	// not released the rebuild yet, so the host cannot install a fix. It is
+	// exposure to watch, not work to schedule: it counts with the no-fix
+	// bucket, never as fixable. A KEV entry here is still urgent.
+	KindAwaitingVendor Kind = "awaiting_vendor"
 )
 
 // Basis says which kind of range produced a finding.
@@ -111,6 +117,9 @@ type Candidate struct {
 	SnapshotID    *int64
 	Feed          string
 	FeedDate      *time.Time
+	// Issued is the date (YYYY-MM-DD) the vendor published the erratum behind
+	// the range, when the feed says so.
+	Issued string
 }
 
 // RangeSource is the matcher's view of the advisory store.
@@ -166,6 +175,9 @@ type Stats struct {
 	Advisories    int // distinct advisories considered
 	Unfixed       int // findings of kind KindUnfixed
 	Informational int // findings of kind KindInformational
+	// AwaitingVendor counts findings of kind KindAwaitingVendor: fixed by Red
+	// Hat, not yet released by the rebuild distribution the host runs.
+	AwaitingVendor int
 }
 
 // Result is the outcome for one host.
@@ -195,11 +207,36 @@ func familyOf(name, source string) string {
 	return name
 }
 
+// rebuildBase names the distribution a rebuild takes its packages from. Rocky
+// and AlmaLinux rebuild RHEL: a fix reaches them only after Red Hat has shipped
+// it and the rebuild has followed, so a host on one is judged against its own
+// errata first and against Red Hat's feed second (see judge). CentOS Stream and
+// Oracle Linux are matched against RHEL's feed directly.
+func rebuildBase(distro string) string {
+	switch distro {
+	case "rocky", "almalinux":
+		return "rhel"
+	}
+	return ""
+}
+
+// vendorName is how a finding names a rebuild distribution.
+func vendorName(distro string) string {
+	switch distro {
+	case "rocky":
+		return "Rocky Linux"
+	case "almalinux":
+		return "AlmaLinux"
+	}
+	return distro
+}
+
 // NormalizeDistro maps os-release ID and VERSION_ID onto the (distro, release)
-// vocabulary advisory feeds use, and chooses the version ordering. RHEL
-// rebuilds (Rocky, AlmaLinux, CentOS Stream, Oracle) share RHEL's package
-// versions and are matched against RHEL's feed by major release. Rolling
-// releases have no release string.
+// vocabulary advisory feeds use, and chooses the version ordering. Rocky and
+// AlmaLinux keep their own name: they publish their own errata, and the matcher
+// pairs those with Red Hat's by major release. RHEL, CentOS Stream and Oracle
+// Linux are matched against RHEL's feed by major release. Rolling releases have
+// no release string.
 func NormalizeDistro(id, versionID string, manager string) (distro, release string, scheme Scheme) {
 	id = strings.ToLower(strings.TrimSpace(id))
 	versionID = strings.TrimSpace(versionID)
@@ -213,7 +250,13 @@ func NormalizeDistro(id, versionID string, manager string) (distro, release stri
 	switch id {
 	case "":
 		return "", "", scheme
-	case "rhel", "rocky", "almalinux", "centos", "ol":
+	case "rocky", "almalinux":
+		major, _, _ := strings.Cut(versionID, ".")
+		if scheme == SchemeAuto {
+			scheme = SchemeRPM
+		}
+		return id, major, scheme
+	case "rhel", "centos", "ol":
 		major, _, _ := strings.Cut(versionID, ".")
 		if scheme == SchemeAuto {
 			scheme = SchemeRPM
@@ -269,6 +312,9 @@ func Match(ctx context.Context, src RangeSource, h Host) (Result, error) {
 	case distro == "":
 		res.Coverage = CoverageNoDistro
 	default:
+		// A rebuild host is covered by its own errata feed: Red Hat's feed alone
+		// cannot say whether the rebuild has shipped a fix, and a list built
+		// from it alone is the false "fix this" list this split exists to avoid.
 		ok, err := src.DistroCovered(ctx, distro, release)
 		if err != nil {
 			return res, err
@@ -279,6 +325,7 @@ func Match(ctx context.Context, src RangeSource, h Host) (Result, error) {
 			res.Coverage = CoverageNoFeed
 		}
 	}
+	base := rebuildBase(distro)
 
 	pkgs := make([]*work, 0, len(h.Packages))
 	onPro := usesUbuntuPro(h)
@@ -305,6 +352,15 @@ func Match(ctx context.Context, src RangeSource, h Host) (Result, error) {
 		cands, err := src.DistroRanges(ctx, distro, release, names)
 		if err != nil {
 			return res, err
+		}
+		if base != "" {
+			// Red Hat's ranges, to tell "fixed upstream, not yet released by
+			// the rebuild" from "no fix at all".
+			up, err := src.DistroRanges(ctx, base, release, names)
+			if err != nil {
+				return res, err
+			}
+			cands = append(cands, up...)
 		}
 		bySource := map[string][]int{}
 		byName := map[string][]int{}
@@ -363,7 +419,7 @@ func Match(ctx context.Context, src RangeSource, h Host) (Result, error) {
 		res.Stats.DistroMapped++
 		for _, adv := range w.advList {
 			advSeen[adv] = struct{}{}
-			f, st := judge(w, w.byAdv[adv].cands, scheme, onPro)
+			f, st := judge(w, w.byAdv[adv].cands, scheme, onPro, distro, base)
 			switch st {
 			case judgeNotAffected:
 				res.Stats.NotAffected++
@@ -420,6 +476,8 @@ func Match(ctx context.Context, src RangeSource, h Host) (Result, error) {
 			res.Stats.Unfixed++
 		case KindInformational:
 			res.Stats.Informational++
+		case KindAwaitingVendor:
+			res.Stats.AwaitingVendor++
 		}
 	}
 	sort.Slice(res.Findings, func(i, j int) bool {
@@ -471,15 +529,18 @@ func kindRank(k Kind) int {
 	switch k {
 	case KindFinding:
 		return 0
-	case KindUnfixed:
+	case KindAwaitingVendor:
 		return 1
+	case KindUnfixed:
+		return 2
 	}
-	return 2
+	return 3
 }
 
-// addFinding keeps one finding per key. A fix to install outranks "no fix",
-// which outranks informational, and between two of the same kind the one with
-// the lower package name wins so a run is deterministic.
+// addFinding keeps one finding per key. A fix to install outranks "fixed
+// upstream, not yet released", which outranks "no fix", which outranks
+// informational, and between two of the same kind the one with the lower
+// package name wins so a run is deterministic.
 func addFinding(m map[string]Finding, f Finding) {
 	k := f.Key()
 	prev, ok := m[k]
@@ -515,9 +576,39 @@ func rangeAppliesTo(c Candidate, p Package) bool {
 // reported one, otherwise the binary version.
 func versionFor(c Candidate, p Package) string {
 	if c.SourcePackage != "" && p.SourcePackage != "" && p.SourceVersion != "" && c.SourcePackage == p.SourcePackage {
-		return p.SourceVersion
+		return inheritEpoch(p.SourceVersion, p.Version)
 	}
 	return p.Version
+}
+
+// inheritEpoch gives a source version the epoch of the binary built from it.
+// dpkg's Source: field and an rpm's SOURCERPM file name never carry the epoch,
+// yet the epoch belongs to the source version, so every binary of that source
+// has the same one. Comparing the bare source version against a feed's
+// "1:0.5.0-1ubuntu22.04.1" would read as older and flag a patched host (seen on
+// a patched Ubuntu 22.04: libbpf0).
+func inheritEpoch(srcVer, binVer string) string {
+	if hasEpoch(srcVer) {
+		return srcVer
+	}
+	if i := strings.Index(binVer, ":"); i > 0 && hasEpoch(binVer[:i+1]) {
+		return binVer[:i+1] + srcVer
+	}
+	return srcVer
+}
+
+// hasEpoch reports whether v starts with "<digits>:".
+func hasEpoch(v string) bool {
+	i := strings.Index(v, ":")
+	if i <= 0 {
+		return false
+	}
+	for _, r := range v[:i] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 type judgement int
@@ -542,10 +633,18 @@ const (
 //   - A range from Ubuntu Pro (ESM) counts only on a host that evidently uses
 //     Pro. On any other host the fix is not installable, so the package is
 //     "affected, no fix you can install", not a finding to act on this week.
-func judge(w *work, cands []Candidate, scheme Scheme, onPro bool) (Finding, judgement) {
+//   - On a rebuild host (Rocky, AlmaLinux; base is "rhel") the ranges come from
+//     two feeds: the rebuild's own errata and Red Hat's. Reaching either fixed
+//     version means patched. A fix above the installed version is a finding to
+//     install only if the rebuild has released it. If only Red Hat has, the
+//     operator has nothing to install: the finding is awaiting_vendor, and says
+//     when Red Hat shipped it.
+func judge(w *work, cands []Candidate, scheme Scheme, onPro bool, distro, base string) (Finding, judgement) {
 	var (
 		bestFixed   *Candidate // lowest fixed version above the installed one
 		bestVer     string
+		bestUp      *Candidate // same, from the upstream vendor's feed (rebuild hosts only)
+		bestUpVer   string
 		affected    *Candidate
 		informative *Candidate
 		proOnly     *Candidate // fixed only by Ubuntu Pro, host not on Pro
@@ -578,6 +677,13 @@ func judge(w *work, cands []Candidate, scheme Scheme, onPro bool) (Finding, judg
 				clean = true
 				continue
 			}
+			if base != "" && c.Distro == base {
+				if bestUp == nil || Compare(c.Fixed, bestUp.Fixed, scheme) < 0 {
+					cc := c
+					bestUp, bestUpVer = &cc, ver
+				}
+				continue
+			}
 			if bestFixed == nil || Compare(c.Fixed, bestFixed.Fixed, scheme) < 0 {
 				cc := c
 				bestFixed, bestVer = &cc, ver
@@ -602,6 +708,9 @@ func judge(w *work, cands []Candidate, scheme Scheme, onPro bool) (Finding, judg
 	case bestFixed != nil:
 		return newFinding(*bestFixed, w.pkg, bestVer, BasisDistro, KindFinding,
 			"installed version is below the version the distro fixed this in"), judgeFinding
+	case bestUp != nil:
+		f := newFinding(*bestUp, w.pkg, bestUpVer, BasisDistro, KindAwaitingVendor, awaitingReason(*bestUp, distro))
+		return f, judgeFinding
 	case proOnly != nil:
 		return newFinding(*proOnly, w.pkg, versionFor(*proOnly, w.pkg), BasisDistro, KindUnfixed,
 			"the fix ships only through Ubuntu Pro (ESM) and this host does not appear to use it"), judgeFinding
@@ -616,6 +725,16 @@ func judge(w *work, cands []Candidate, scheme Scheme, onPro bool) (Finding, judg
 		return newFinding(*informative, w.pkg, w.pkg.Version, BasisDistro, KindInformational, reason), judgeFinding
 	}
 	return Finding{}, judgeClean
+}
+
+// awaitingReason words an awaiting_vendor finding: what Red Hat shipped, when,
+// and that the host's own distribution has not.
+func awaitingReason(up Candidate, distro string) string {
+	r := "fixed upstream by Red Hat in " + up.Fixed
+	if up.Issued != "" {
+		r += " on " + up.Issued
+	}
+	return r + "; not yet released by " + vendorName(distro)
 }
 
 func newFinding(c Candidate, p Package, installed string, basis Basis, kind Kind, reason string) Finding {

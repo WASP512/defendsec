@@ -86,16 +86,23 @@ type upstream struct {
 	status map[string]int
 	hits   map[string]int
 	notMod map[string]int
+	// custom answers a path itself (a paged API), under the same lock.
+	custom map[string]http.HandlerFunc
 }
 
 func newUpstream(t *testing.T) *upstream {
-	u := &upstream{bodies: map[string][]byte{}, status: map[string]int{}, hits: map[string]int{}, notMod: map[string]int{}}
+	u := &upstream{bodies: map[string][]byte{}, status: map[string]int{}, hits: map[string]int{}, notMod: map[string]int{},
+		custom: map[string]http.HandlerFunc{}}
 	u.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u.mu.Lock()
 		defer u.mu.Unlock()
 		u.hits[r.URL.Path]++
 		if st := u.status[r.URL.Path]; st != 0 {
 			http.Error(w, "upstream says no", st)
+			return
+		}
+		if h, ok := u.custom[r.URL.Path]; ok {
+			h(w, r)
 			return
 		}
 		body, ok := u.bodies[r.URL.Path]

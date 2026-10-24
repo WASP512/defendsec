@@ -50,6 +50,7 @@ type Definition struct {
 	Title    string
 	Severity string
 	RefCVEs  []string // <reference source="CVE">, for definitions without <advisory><cve>
+	Issued   string   // <advisory><issued date="YYYY-MM-DD"/> (Red Hat); empty if absent
 	CVEs     []CVE
 	Criteria []Criterion
 }
@@ -130,7 +131,10 @@ type xDefinition struct {
 		} `xml:"reference"`
 		Advisory struct {
 			Severity string `xml:"severity"`
-			CVEs     []struct {
+			Issued   struct {
+				Date string `xml:"date,attr"`
+			} `xml:"issued"`
+			CVEs []struct {
 				Text       string `xml:",chardata"`
 				Priority   string `xml:"priority,attr"`
 				Impact     string `xml:"impact,attr"`
@@ -332,7 +336,8 @@ func Read(open Opener, classes ...string) (*Doc, error) {
 }
 
 func convertDefinition(xd xDefinition) Definition {
-	d := Definition{ID: xd.ID, Class: xd.Class, Title: strings.TrimSpace(xd.Meta.Title), Severity: strings.TrimSpace(xd.Meta.Advisory.Severity)}
+	d := Definition{ID: xd.ID, Class: xd.Class, Title: strings.TrimSpace(xd.Meta.Title), Severity: strings.TrimSpace(xd.Meta.Advisory.Severity),
+		Issued: strings.TrimSpace(xd.Meta.Advisory.Issued.Date)}
 	for _, r := range xd.Meta.Refs {
 		if strings.EqualFold(r.Source, "CVE") {
 			d.RefCVEs = append(d.RefCVEs, strings.TrimSpace(r.RefID))

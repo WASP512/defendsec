@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"defendsec/internal/feeds"
+	"defendsec/internal/feeds/alma"
 	"defendsec/internal/feeds/bundle"
 	"defendsec/internal/feeds/debian"
 	"defendsec/internal/feeds/epss"
@@ -25,6 +26,7 @@ import (
 	"defendsec/internal/feeds/kev"
 	"defendsec/internal/feeds/osv"
 	"defendsec/internal/feeds/rhel"
+	"defendsec/internal/feeds/rocky"
 	"defendsec/internal/feeds/suse"
 	"defendsec/internal/feeds/ubuntu"
 	"defendsec/internal/sign"
@@ -111,7 +113,7 @@ func (r *Runner) Sync(ctx context.Context) ([]Result, error) {
 			r.Log.Warn("could not stash the cached copy", "feed", spec.Name, "err", err)
 		}
 		fctx, cancel := context.WithTimeout(ctx, r.Cfg.FetchTimeout)
-		got, err := r.Fetcher.Fetch(fctx, spec.Name, spec.URL)
+		got, err := r.fetchSpec(fctx, spec)
 		cancel()
 		res.Duration = time.Since(start)
 		if err != nil {
@@ -123,6 +125,15 @@ func (r *Runner) Sync(ctx context.Context) ([]Result, error) {
 		items = append(items, &item{idx: i, spec: spec, meta: got.Meta, path: got.Path})
 	}
 	return r.process(ctx, items, results)
+}
+
+// fetchSpec downloads one feed. Rocky's errata service is paged, so it is
+// walked and stored as one file; every other feed is a single file.
+func (r *Runner) fetchSpec(ctx context.Context, spec Spec) (fetch.Result, error) {
+	if spec.Kind == KindRocky {
+		return r.Fetcher.FetchPaged(ctx, spec.Name, spec.URL, rocky.Pager(spec.URL, spec.Release))
+	}
+	return r.Fetcher.Fetch(ctx, spec.Name, spec.URL)
 }
 
 // settle decides, once a run is over, whether each downloaded file stays in the
@@ -389,7 +400,7 @@ func toStore(a feeds.Advisory) storepg.Advisory {
 		out.Ranges = append(out.Ranges, storepg.AdvisoryRange{
 			Ecosystem: r.Ecosystem, Distro: r.Distro, Release: r.Release, Package: r.Package,
 			SourcePackage: r.SourcePackage, Introduced: r.Introduced, Fixed: r.Fixed,
-			FixState: storepg.FixState(r.State),
+			FixState: storepg.FixState(r.State), Issued: r.Issued,
 		})
 	}
 	return out
@@ -455,6 +466,17 @@ func (r *Runner) loadRanges(ctx context.Context, it *item, res *Result, prev sto
 		st, err = ubuntu.Parse(ovalOpen, it.spec.Release, emit)
 	case KindRHEL:
 		st, err = rhel.Parse(ovalOpen, it.spec.Release, emit)
+	case KindRocky:
+		var raw []byte
+		if raw, err = os.ReadFile(it.path); err == nil {
+			st, err = rocky.Parse(raw, it.spec.Release, emit)
+		}
+	case KindAlma:
+		var f io.ReadCloser
+		if f, err = openDecompressed(it.path); err == nil {
+			st, err = alma.Parse(f, it.spec.Release, emit)
+			f.Close()
+		}
 	case KindSUSE:
 		st, err = suse.Parse(ovalOpen, it.spec.Distro, it.spec.Release, emit)
 	case KindDebian:

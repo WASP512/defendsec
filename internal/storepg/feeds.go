@@ -90,7 +90,7 @@ const (
 		) ON COMMIT DROP;
 		CREATE TEMP TABLE feed_rng_tmp (
 			advisory_id TEXT, ecosystem TEXT, distro TEXT, release TEXT, package TEXT,
-			source_package TEXT, introduced TEXT, fixed TEXT, fix_state TEXT
+			source_package TEXT, introduced TEXT, fixed TEXT, fix_state TEXT, issued TEXT
 		) ON COMMIT DROP;`
 
 	// Merge rules when several feeds describe one CVE: the highest severity and
@@ -130,9 +130,10 @@ const (
 
 	insertRangesFromTmpSQL = `
 		INSERT INTO advisory_ranges (advisory_id, ecosystem, distro, release, package, source_package,
-		                             introduced, fixed, fix_state, snapshot_id, feed)
+		                             introduced, fixed, fix_state, snapshot_id, feed, issued)
 		SELECT advisory_id, ecosystem, NULLIF(distro, ''), NULLIF(release, ''), package,
-		       NULLIF(source_package, ''), NULLIF(introduced, ''), NULLIF(fixed, ''), fix_state, $1, $2
+		       NULLIF(source_package, ''), NULLIF(introduced, ''), NULLIF(fixed, ''), fix_state, $1, $2,
+		       NULLIF(issued, '')::date
 		FROM feed_rng_tmp
 		ON CONFLICT DO NOTHING`
 )
@@ -225,7 +226,7 @@ func (l *FeedLoad) Add(ctx context.Context, a Advisory) error {
 		}
 		l.seenRng[k] = struct{}{}
 		l.rngRows = append(l.rngRows, []any{a.ID, r.Ecosystem, r.Distro, r.Release, r.Package,
-			r.SourcePackage, r.Introduced, r.Fixed, string(r.FixState)})
+			r.SourcePackage, r.Introduced, r.Fixed, string(r.FixState), r.Issued})
 		l.nRng++
 	}
 	if len(l.advRows) >= feedFlushRows || len(l.rngRows) >= feedFlushRows {
@@ -245,7 +246,7 @@ func (l *FeedLoad) flush(ctx context.Context) error {
 	}
 	if len(l.rngRows) > 0 {
 		if _, err := l.tx.CopyFrom(ctx, pgx.Identifier{"feed_rng_tmp"},
-			[]string{"advisory_id", "ecosystem", "distro", "release", "package", "source_package", "introduced", "fixed", "fix_state"},
+			[]string{"advisory_id", "ecosystem", "distro", "release", "package", "source_package", "introduced", "fixed", "fix_state", "issued"},
 			pgx.CopyFromRows(l.rngRows)); err != nil {
 			return fmt.Errorf("stage ranges: %w", err)
 		}

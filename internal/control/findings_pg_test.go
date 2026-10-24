@@ -12,6 +12,7 @@ import (
 
 	"defendsec/internal/presence"
 	"defendsec/internal/storepg"
+	"defendsec/internal/vuln"
 )
 
 func getJSON(t *testing.T, s *Server, path string, out any) *httptest.ResponseRecorder {
@@ -247,5 +248,123 @@ func TestRefreshFindingsRematchesOnNewSnapshot(t *testing.T) {
 	rows, err := pg.ListFindings(ctx, storepg.FindingFilter{DeviceID: dev.ID})
 	if err != nil || len(rows) != 1 || rows[0].Fixed != "1.5-1" || rows[0].SnapshotID == nil || *rows[0].SnapshotID != second.ID {
 		t.Fatalf("findings after refresh = %+v, %v", rows, err)
+	}
+}
+
+// A Rocky host through apid: Red Hat fixed the kernel, Rocky has not released
+// it. Nothing to install, so the host has no fixable finding; both CVEs are
+// awaiting_vendor, the KEV one still raises an alert (it is exploited now), the
+// merely high one does not. When Rocky ships, the finding becomes fixable.
+func TestRebuildHostAwaitingVendorThroughApid(t *testing.T) {
+	s, pg := pgServer(t)
+	s.store = presence.New(filepath.Join(t.TempDir(), "state.json"))
+	ctx := context.Background()
+	suffix := strings.ReplaceAll(strings.ToLower(time.Now().Format("150405.000000")), ".", "")
+	pkg := "kernel-" + suffix
+	kevAdv, plainAdv, shippedAdv := "TEST-RKEV-"+suffix, "TEST-RPLAIN-"+suffix, "TEST-RSHIPPED-"+suffix
+	snap, err := pg.RecordFeedSnapshot(ctx, []storepg.FeedRef{
+		{Name: "rhel-9", URL: "https://example.invalid/rhel", FetchedAt: time.Now(), SHA256: strings.Repeat("ab", 32), RecordCount: 2},
+		{Name: "rocky-9", URL: "https://example.invalid/rocky", FetchedAt: time.Now(), SHA256: strings.Repeat("cd", 32), RecordCount: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rhel := func() storepg.AdvisoryRange {
+		return storepg.AdvisoryRange{Ecosystem: "Red Hat", Distro: "rhel", Release: "9", Package: pkg,
+			Fixed: "0:5.14.0-687.60.1.el9_8", FixState: storepg.FixStateFixed, Issued: "2026-10-20"}
+	}
+	for _, a := range []storepg.Advisory{
+		{ID: kevAdv, CVE: "CVE-2026-91001", Severity: "medium", KEV: true, SnapshotID: &snap.ID, Ranges: []storepg.AdvisoryRange{rhel()}},
+		{ID: plainAdv, CVE: "CVE-2026-91002", Severity: "high", SnapshotID: &snap.ID, Ranges: []storepg.AdvisoryRange{rhel()}},
+		// Rocky has an erratum of its own, so its feed is loaded for release 9.
+		{ID: shippedAdv, CVE: "CVE-2026-91003", Severity: "low", SnapshotID: &snap.ID, Ranges: []storepg.AdvisoryRange{
+			{Ecosystem: "Rocky Linux", Distro: "rocky", Release: "9", Package: pkg, Fixed: "0:5.14.0-687.59.1.el9_8", FixState: storepg.FixStateFixed}}},
+	} {
+		if err := pg.UpsertAdvisoryWithRanges(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dev := presence.Device{
+		ID: "rebuild-" + suffix, Hostname: "rebuild", Platform: "linux",
+		Distro: "rocky", DistroRelease: "9.8", PackageManager: "rpm",
+		Software: []presence.Software{{Name: pkg, Version: "0:5.14.0-687.59.1.el9_8", SourcePackage: pkg}},
+	}
+	if err := pg.UpsertDevice(ctx, dev); err != nil {
+		t.Fatal(err)
+	}
+	s.processVulnAlerts(dev)
+
+	var fixable, awaiting findingsResponse
+	getJSON(t, s, "/v1/findings?deviceId="+dev.ID+"&kind=finding", &fixable)
+	getJSON(t, s, "/v1/findings?deviceId="+dev.ID+"&kind=awaiting_vendor", &awaiting)
+	if fixable.Total != 0 {
+		t.Fatalf("a Rocky host with every released fix has fixable findings: %+v", fixable.Findings)
+	}
+	if awaiting.Total != 2 || awaiting.Findings[0].AdvisoryID != kevAdv || !awaiting.Findings[0].KEV ||
+		!strings.Contains(awaiting.Findings[0].Reason, "not yet released by Rocky Linux") {
+		t.Fatalf("awaiting_vendor = %+v", awaiting.Findings)
+	}
+	var sum findingsSummaryResponse
+	getJSON(t, s, "/v1/findings/summary?deviceId="+dev.ID, &sum)
+	if len(sum.Devices) != 1 || sum.Devices[0].Open != 0 || sum.Devices[0].AwaitingVendor != 2 || sum.Devices[0].KEVAwaitingVendor != 1 {
+		t.Fatalf("summary = %+v", sum.Devices)
+	}
+	var raw struct{ Devices []map[string]any }
+	getJSON(t, s, "/v1/findings/summary?deviceId="+dev.ID, &raw)
+	for _, k := range []string{"awaitingVendor", "kevAwaitingVendor"} {
+		if _, ok := raw.Devices[0][k]; !ok {
+			t.Errorf("summary JSON has no %q: %v", k, raw.Devices[0])
+		}
+	}
+	alerts, err := pg.ListAlerts(ctx, storepg.AlertFilters{DeviceID: dev.ID, Kind: "vuln", Status: "open"})
+	if err != nil || len(alerts) != 1 || alerts[0].SourceID != kevAdv || alerts[0].Severity != "high" ||
+		!strings.Contains(alerts[0].Summary, "not yet released by Rocky Linux") {
+		t.Fatalf("open vuln alerts = %+v, %v; want exactly the KEV one, saying why there is nothing to install", alerts, err)
+	}
+
+	// Rocky ships the kernel for both CVEs: both become fixable, in place.
+	for _, id := range []string{kevAdv, plainAdv} {
+		a, err := pg.GetAdvisory(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.SnapshotID = &snap.ID
+		a.Ranges = append(a.Ranges, storepg.AdvisoryRange{Ecosystem: "Rocky Linux", Distro: "rocky", Release: "9", Package: pkg,
+			Fixed: "0:5.14.0-687.60.1.el9_8", FixState: storepg.FixStateFixed, Issued: "2026-10-24"})
+		if err := pg.UpsertAdvisoryWithRanges(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A new snapshot is what makes apid re-match a host whose packages did not change.
+	if _, err := pg.RecordFeedSnapshot(ctx, []storepg.FeedRef{{Name: "rocky-9", URL: "https://example.invalid/rocky",
+		FetchedAt: time.Now(), SHA256: strings.Repeat("ef", 32), RecordCount: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	s.processVulnAlerts(dev)
+	getJSON(t, s, "/v1/findings?deviceId="+dev.ID+"&kind=finding", &fixable)
+	getJSON(t, s, "/v1/findings?deviceId="+dev.ID+"&kind=awaiting_vendor", &awaiting)
+	if fixable.Total != 2 || awaiting.Total != 0 {
+		t.Fatalf("after Rocky shipped: fixable %d awaiting %d", fixable.Total, awaiting.Total)
+	}
+}
+
+func TestUrgentCoversKEVAwaitingVendorOnly(t *testing.T) {
+	for _, tc := range []struct {
+		kind vuln.Kind
+		kev  bool
+		sev  string
+		want bool
+	}{
+		{vuln.KindFinding, true, "low", true},
+		{vuln.KindFinding, false, "critical", true},
+		{vuln.KindFinding, false, "high", false},
+		{vuln.KindAwaitingVendor, true, "low", true},
+		{vuln.KindAwaitingVendor, false, "critical", false}, // nothing to do yet, and not exploited
+		{vuln.KindUnfixed, true, "low", true},
+		{vuln.KindInformational, true, "critical", false},
+	} {
+		if got := urgent(vuln.Finding{Kind: tc.kind, KEV: tc.kev, Severity: tc.sev}); got != tc.want {
+			t.Errorf("urgent(%s kev=%v %s) = %v, want %v", tc.kind, tc.kev, tc.sev, got, tc.want)
+		}
 	}
 }
