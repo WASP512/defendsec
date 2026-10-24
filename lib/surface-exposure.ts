@@ -138,6 +138,24 @@ export function fixDescription(summary: Pick<ExposureSummary, "fixable">, shown:
   return `${parts.join(" and ")}. The top ${shown}, most urgent first:`;
 }
 
+function identityProviderList(identity: { provider: string; providers?: string[] }): string[] {
+  return identity.providers && identity.providers.length > 0 ? identity.providers : [identity.provider];
+}
+
+/** "Microsoft 365", "Google Workspace", or both. */
+function identityProviders(identity: { provider: string; providers?: string[] }): string {
+  return identityProviderList(identity)
+    .map((p) => (p === "google" ? "Google Workspace" : "Microsoft 365"))
+    .join(" and ");
+}
+
+/** "Microsoft 365 tenant", "Google Workspace domain", or both. */
+function identityPlaces(identity: { provider: string; providers?: string[] }): string {
+  return identityProviderList(identity)
+    .map((p) => (p === "google" ? "Google Workspace domain" : "Microsoft 365 tenant"))
+    .join(" and ");
+}
+
 /** What an empty Fix this week list may say: good news only where something was actually checked. */
 export function fixEmptyText(summary: Pick<ExposureSummary, "hosts" | "surface"> & Partial<Pick<ExposureSummary, "identity">>): string {
   const { hosts, surface, identity } = summary;
@@ -155,9 +173,9 @@ export function fixEmptyText(summary: Pick<ExposureSummary, "hosts" | "surface">
   else outside = " No external surface finding is open.";
   let accounts = "";
   if (identity === undefined) accounts = "";
-  else if (!identity.configured) accounts = " No Microsoft 365 tenant is connected, so that says nothing about the accounts.";
-  else if (!identity.lastStatus) accounts = " The Microsoft 365 tenant has not been read yet, so that says nothing about the accounts either.";
-  else if (identity.lastStatus === "not_assessed") accounts = " The last Microsoft 365 read could not assess anything, so that says nothing about the accounts.";
+  else if (!identity.configured) accounts = " No Microsoft 365 tenant or Google Workspace domain is connected, so that says nothing about the accounts.";
+  else if (!identity.lastStatus) accounts = ` The ${identityPlaces(identity)} has not been read yet, so that says nothing about the accounts either.`;
+  else if (identity.lastStatus === "not_assessed") accounts = ` The last ${identityProviders(identity)} read could not assess anything, so that says nothing about the accounts.`;
   else accounts = " No identity finding is open.";
   return hostPart + notAssessed + outside + accounts;
 }

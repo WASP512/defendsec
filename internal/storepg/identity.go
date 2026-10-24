@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"defendsec/internal/exposure"
+	"defendsec/internal/gws"
 	"defendsec/internal/m365"
 	"defendsec/internal/m365/graph"
 )
@@ -233,7 +234,7 @@ func (s *Store) RecordIdentityRun(ctx context.Context, provider, tenant, trigger
 		if obs == nil {
 			obs = map[string]any{}
 		}
-		checks = append(checks, IdentityCheck{Check: c.Check, Label: m365.CheckLabels[c.Check], Assessed: c.Assessed, Reason: c.Reason, Observed: obs, UnassessedPrefixes: c.UnassessedPrefixes})
+		checks = append(checks, IdentityCheck{Check: c.Check, Label: rep.Label(c.Check), Assessed: c.Assessed, Reason: c.Reason, Observed: obs, UnassessedPrefixes: c.UnassessedPrefixes})
 	}
 	checksJSON, err := json.Marshal(checks)
 	if err != nil {
@@ -606,34 +607,84 @@ func (s *Store) GetIdentityDetail(ctx context.Context, key string) (IdentityDeta
 // ---- summary and trend ---------------------------------------------------------------
 
 // IdentityExposureSummary is the identity card on the Fleet page and the head of
-// the Identity page.
+// the Identity page. It covers every identity provider (Microsoft 365, Google
+// Workspace): the findings are all the open ones, and the last read is the most
+// recent of the providers' latest reads, as bad as the worst of them.
 type IdentityExposureSummary struct {
-	// Configured: a tenant is set up for reading.
-	Configured bool   `json:"configured"`
-	Provider   string `json:"provider"`
+	// Configured: a tenant or domain is set up for reading.
+	Configured bool `json:"configured"`
+	// Provider is the configured provider, or the providers joined by a comma;
+	// "m365" when none is configured.
+	Provider string `json:"provider"`
+	// Providers are the configured providers ("m365", "google").
+	Providers []string `json:"providers"`
 	// Findings are the open ones (critical, high, medium, low).
 	Findings   int            `json:"findings"`
 	BySeverity map[string]int `json:"bySeverity"`
 	// LastRunAt is when the latest run finished; LastStatus is ok, partial or
-	// not_assessed; "" when there has been none.
+	// not_assessed (the worst across providers); "" when there has been none.
 	LastRunAt  *time.Time `json:"lastRunAt"`
 	LastStatus string     `json:"lastStatus"`
 	LastReason string     `json:"lastReason"`
-	// ChecksNotAssessed counts the check groups the latest run could not assess;
-	// ChecksTotal how many it lists.
+	// ChecksNotAssessed counts the check groups the latest runs could not assess;
+	// ChecksTotal how many they list.
 	ChecksNotAssessed int `json:"checksNotAssessed"`
 	ChecksTotal       int `json:"checksTotal"`
 }
 
-// IdentityExposureSummary computes the counts behind the identity card.
-func (s *Store) IdentityExposureSummary(ctx context.Context) (IdentityExposureSummary, error) {
-	out := IdentityExposureSummary{Provider: m365.Provider, BySeverity: map[string]int{}}
-	set, err := s.GetM365Settings(ctx)
-	if err != nil {
-		return out, err
+var identityProviderNames = map[string]string{m365.Provider: "Microsoft 365", gws.Provider: "Google Workspace"}
+
+func statusRank(s string) int {
+	switch s {
+	case "not_assessed":
+		return 2
+	case "partial":
+		return 1
 	}
-	out.Configured = set.Configured
-	rows, err := s.pool.Query(ctx, `SELECT severity, count(*) FROM identity_findings WHERE resolved_at IS NULL GROUP BY severity`)
+	return 0
+}
+
+// IdentityExposureSummary computes the counts behind the identity card, over every
+// provider.
+func (s *Store) IdentityExposureSummary(ctx context.Context) (IdentityExposureSummary, error) {
+	return s.identitySummary(ctx, []string{m365.Provider, gws.Provider})
+}
+
+// IdentityProviderSummary is the same for one provider: the head of that provider's
+// page.
+func (s *Store) IdentityProviderSummary(ctx context.Context, provider string) (IdentityExposureSummary, error) {
+	return s.identitySummary(ctx, []string{provider})
+}
+
+func (s *Store) providerConfigured(ctx context.Context, provider string) (bool, error) {
+	switch provider {
+	case m365.Provider:
+		set, err := s.GetM365Settings(ctx)
+		return set.Configured, err
+	case gws.Provider:
+		set, err := s.GetGWSSettings(ctx)
+		return set.Configured, err
+	}
+	return false, nil
+}
+
+func (s *Store) identitySummary(ctx context.Context, providers []string) (IdentityExposureSummary, error) {
+	out := IdentityExposureSummary{BySeverity: map[string]int{}, Providers: []string{}}
+	for _, p := range providers {
+		on, err := s.providerConfigured(ctx, p)
+		if err != nil {
+			return out, err
+		}
+		if on {
+			out.Providers = append(out.Providers, p)
+		}
+	}
+	out.Configured = len(out.Providers) > 0
+	out.Provider = strings.Join(out.Providers, ",")
+	if out.Provider == "" {
+		out.Provider = providers[0]
+	}
+	rows, err := s.pool.Query(ctx, `SELECT severity, count(*) FROM identity_findings WHERE resolved_at IS NULL AND provider = ANY($1) GROUP BY severity`, providers)
 	if err != nil {
 		return out, err
 	}
@@ -651,17 +702,39 @@ func (s *Store) IdentityExposureSummary(ctx context.Context) (IdentityExposureSu
 	if err := rows.Err(); err != nil {
 		return out, err
 	}
-	run, err := s.LatestIdentityRun(ctx, m365.Provider)
-	if err != nil || run == nil {
-		return out, err
-	}
-	t := run.FinishedAt
-	out.LastRunAt, out.LastStatus, out.LastReason = &t, run.Status, run.Reason
-	out.ChecksTotal = len(run.Checks)
-	for _, c := range run.Checks {
-		if !c.Assessed {
-			out.ChecksNotAssessed++
+	var reasons []string
+	var runs int
+	for _, p := range providers {
+		run, err := s.LatestIdentityRun(ctx, p)
+		if err != nil {
+			return out, err
 		}
+		if run == nil {
+			continue
+		}
+		runs++
+		if out.LastRunAt == nil || run.FinishedAt.After(*out.LastRunAt) {
+			t := run.FinishedAt
+			out.LastRunAt = &t
+		}
+		if out.LastStatus == "" || statusRank(run.Status) > statusRank(out.LastStatus) {
+			out.LastStatus = run.Status
+		}
+		if run.Reason != "" {
+			reasons = append(reasons, identityProviderNames[p]+": "+run.Reason)
+		}
+		out.ChecksTotal += len(run.Checks)
+		for _, c := range run.Checks {
+			if !c.Assessed {
+				out.ChecksNotAssessed++
+			}
+		}
+	}
+	if runs == 1 && len(reasons) == 1 {
+		// One provider read: its reason as it said it, with no prefix.
+		out.LastReason = reasons[0][strings.Index(reasons[0], ": ")+2:]
+	} else {
+		out.LastReason = strings.Join(reasons, "; ")
 	}
 	return out, nil
 }

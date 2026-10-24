@@ -220,6 +220,13 @@ func run(log *slog.Logger) error {
 		if strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_M365_SCHEDULE"))) != "off" {
 			go svc.RunM365Schedule(exportCtx, control.M365ScheduleCheck)
 		}
+		// Reads of the Google Workspace domain the operator set (every 6 hours):
+		// 2-Step Verification, super administrators, Gmail forwarding and filters.
+		// With no administrator, or no key file, it does nothing;
+		// DEFENDSEC_GWS_SCHEDULE=off disables it.
+		if strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_GWS_SCHEDULE"))) != "off" {
+			go svc.RunGWSSchedule(exportCtx, control.GWSScheduleCheck)
+		}
 		// Reconciles the Fix-this-week tickets in Autotask (every 6 hours) for an
 		// instance whose settings are in live mode, which needs a dry run behind it.
 		// A dry-run instance is never touched; DEFENDSEC_AUTOTASK_SCHEDULE=off disables it.

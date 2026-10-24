@@ -125,6 +125,19 @@ const (
 	// SignalM365MailRules — the definitions of users' inbox rules: external
 	// forwarding and rules that hide mail.
 	SignalM365MailRules Signal = "m365.mailrules"
+
+	// The Google Workspace identity posture collector (slice 13): what a domain's
+	// own configuration was read to say, through the Admin SDK Directory API and the
+	// Gmail settings API, with GET requests only.
+
+	// SignalGWS2SV — which users are enrolled in 2-Step Verification, and whether
+	// it is enforced (Directory API users.list).
+	SignalGWS2SV Signal = "gws.2sv"
+	// SignalGWSAdmins — how many accounts are super administrators.
+	SignalGWSAdmins Signal = "gws.admins"
+	// SignalGWSMailFilters — the definitions of users' Gmail filters and their
+	// auto-forwarding setting: external forwarding and filters that hide mail.
+	SignalGWSMailFilters Signal = "gws.mailfilters"
 )
 
 // SignalTitle is the human sentence for a signal, used wherever a control's
@@ -165,6 +178,9 @@ var signalTitles = map[Signal]string{
 	SignalM365Roles:         "Microsoft 365 administrator role check",
 	SignalM365LegacyAuth:    "Microsoft 365 legacy authentication check",
 	SignalM365MailRules:     "Microsoft 365 inbox rule check",
+	SignalGWS2SV:            "Google Workspace 2-Step Verification check",
+	SignalGWSAdmins:         "Google Workspace super administrator check",
+	SignalGWSMailFilters:    "Google Workspace Gmail forwarding and filter check",
 }
 
 // SignalTitle returns the human name, falling back to the raw signal so an

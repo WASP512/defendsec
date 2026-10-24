@@ -4,17 +4,19 @@ import { test } from "node:test";
 import {
   CHECK_ORDER,
   certDaysLeft,
+  CHECK_ORDER_GOOGLE,
   checkLabel,
   identityUnconfirmedNote,
   identityWhere,
   isIdentityResponse,
+  looksLikeEmail,
   looksLikeGuid,
   looksLikeTenant,
   parseList,
   providerLabel,
   runResultLabel,
 } from "./identity-model.ts";
-import { identityCard, identityTotal, identityTrendSummary } from "./identity-exposure.ts";
+import { identityCard, identityTotal, identityTrendSummary, providerNames } from "./identity-exposure.ts";
 import { fixDescription, fixEmptyText, fixTotal } from "./surface-exposure.ts";
 import {
   compareRank,
@@ -61,7 +63,7 @@ test("a tenant that was never connected or read is not a clean result", () => {
   const none = identityCard(summary({ configured: false, findings: 0, lastStatus: "" }), NOW);
   assert.equal(none.state, "not-configured");
   assert.equal(none.tone, "neutral");
-  assert.match(none.headline, /no Microsoft 365 tenant connected/);
+  assert.match(none.headline, /no Microsoft 365 tenant or Google Workspace domain connected/);
   const unread = identityCard(summary({ findings: 0, lastStatus: "", lastRunAt: null }), NOW);
   assert.equal(unread.state, "unread");
   assert.match(unread.lines[0], /not a clean result/);
@@ -181,7 +183,7 @@ test("an empty list is good news only about what was actually read", () => {
   const hosts = { total: 4, assessed: 4, notAssessed: 0, silent: 0, silentList: [] };
   const surface = { assets: 1, unauthorised: 0, scanned: 1, findings: 0, bySeverity: {}, info: 0, assetsAffected: 0, lastScanAt: null, checksNotAssessed: 0 };
   assert.match(fixEmptyText({ hosts, surface, identity: summary({ findings: 0 }) }), /No identity finding is open\.$/);
-  assert.match(fixEmptyText({ hosts, surface, identity: summary({ configured: false, lastStatus: "" }) }), /No Microsoft 365 tenant is connected, so that says nothing about the accounts/);
+  assert.match(fixEmptyText({ hosts, surface, identity: summary({ configured: false, lastStatus: "" }) }), /No Microsoft 365 tenant or Google Workspace domain is connected, so that says nothing about the accounts/);
   assert.match(fixEmptyText({ hosts, surface, identity: summary({ lastStatus: "" }) }), /has not been read yet/);
   assert.match(fixEmptyText({ hosts, surface, identity: summary({ lastStatus: "not_assessed", findings: 0 }) }), /could not assess anything/);
   assert.doesNotMatch(fixEmptyText({ hosts, surface }), /identity|Microsoft 365/);
@@ -265,4 +267,69 @@ test("certificate days left", () => {
   assert.equal(certDaysLeft("2026-10-23T12:00:00Z", NOW), -1);
   assert.equal(certDaysLeft(undefined, NOW), null);
   assert.equal(certDaysLeft("not a date", NOW), null);
+});
+
+// ---- Google Workspace (slice 13) --------------------------------------------------------------
+
+test("a check group is named in the words of its provider", () => {
+  assert.equal(checkLabel("mfa"), "MFA registration");
+  assert.equal(checkLabel("mfa", "m365"), "MFA registration");
+  assert.equal(checkLabel("mfa", "google"), "2-Step Verification");
+  assert.equal(checkLabel("admin-roles", "google"), "Super administrators");
+  assert.equal(checkLabel("inbox-rules", "google"), "Gmail forwarding and filters");
+  // A group Google does not have falls back to the shared name, and an unknown one to itself.
+  assert.equal(checkLabel("legacy-auth", "google"), "Legacy authentication");
+  assert.equal(checkLabel("nope", "google"), "nope");
+  assert.deepEqual([...CHECK_ORDER_GOOGLE], ["mfa", "admin-roles", "inbox-rules"]);
+});
+
+test("a Google row says where it is in Google's words", () => {
+  const g = {
+    identity: {
+      findingId: 7,
+      provider: "google",
+      subject: "casey@example.com · filter on mail from “noreply@intuit.com”",
+      check: "inbox-rules",
+      id: "gmail.filter_hides_mail",
+      fix: "x",
+      unconfirmed: false,
+      lastSeen: "2026-10-24T10:00:00Z",
+    },
+  } as unknown as ExposureGroup;
+  assert.equal(identityWhere(g), "Google Workspace · Gmail forwarding and filters · casey@example.com · filter on mail from “noreply@intuit.com”");
+  const u = { identity: { ...g.identity!, unconfirmed: true } } as unknown as ExposureGroup;
+  assert.match(identityUnconfirmedNote(u), /The latest Gmail forwarding and filters check could not cover this: shown from the last confirmation on 2026-10-24/);
+  assert.equal(providerLabel("google"), "Google Workspace");
+});
+
+test("the card names the providers it covers", () => {
+  assert.equal(providerNames(summary()), "Microsoft 365");
+  assert.equal(providerNames(summary({ provider: "google", providers: ["google"] })), "Google Workspace");
+  assert.equal(providerNames(summary({ provider: "m365,google", providers: ["m365", "google"] })), "Microsoft 365 and Google Workspace");
+  const c = identityCard(summary({ provider: "google", providers: ["google"] }), NOW);
+  assert.equal(c.headline, "Identity (Google Workspace): 6 findings (2 critical, 1 high), last read 2 hours ago");
+  const both = identityCard(summary({ provider: "m365,google", providers: ["m365", "google"], checksNotAssessed: 1, checksTotal: 7 }), NOW);
+  assert.match(both.headline, /^Identity \(Microsoft 365 and Google Workspace\): 6 findings/);
+  assert.match(both.lines[0], /1 of 7 checks could not run/);
+});
+
+test("an empty Fix this week list names the provider whose read it is talking about", () => {
+  const hosts = { assessed: 3, notAssessed: 0, total: 3 } as Parameters<typeof fixEmptyText>[0]["hosts"];
+  const surface = { assets: 1, unauthorised: 0, scanned: 1, findings: 0, bySeverity: {}, info: 0, assetsAffected: 0, lastScanAt: null, checksNotAssessed: 0 };
+  const g = (over: Partial<IdentitySummary>) => fixEmptyText({ hosts, surface, identity: summary({ provider: "google", providers: ["google"], ...over }) });
+  assert.match(g({ lastStatus: "" }), /The Google Workspace domain has not been read yet/);
+  assert.match(g({ lastStatus: "not_assessed" }), /The last Google Workspace read could not assess anything/);
+  assert.match(g({ lastStatus: "ok", findings: 0 }), /No identity finding is open/);
+  assert.match(
+    fixEmptyText({ hosts, surface, identity: summary({ provider: "m365,google", providers: ["m365", "google"], lastStatus: "not_assessed" }) }),
+    /The last Microsoft 365 and Google Workspace read could not assess anything/,
+  );
+  assert.match(fixEmptyText({ hosts, surface, identity: summary({ lastStatus: "" }) }), /The Microsoft 365 tenant has not been read yet/);
+});
+
+test("an administrator address is checked before the page asks", () => {
+  for (const ok of ["alex@example.com", " a.b+c@sub.example.co ", "admin@client-domain.example"]) assert.ok(looksLikeEmail(ok), ok);
+  for (const bad of ["", "alex", "alex@example", "@example.com", "a@@example.com", "a b@example.com", "a@example..com", "a@.example.com", "a@example.com.", "a@x.com,b@y.com"]) {
+    assert.ok(!looksLikeEmail(bad), `${JSON.stringify(bad)} was accepted`);
+  }
 });

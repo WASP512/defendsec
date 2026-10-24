@@ -1,6 +1,6 @@
 import { APID_ADMIN_URL } from "@/lib/commands";
 import { getAdminToken } from "@/lib/auth";
-import type { IdentityFinding, IdentityRun, IdentityStatus } from "@/lib/identity-model";
+import type { GoogleStatus, IdentityFinding, IdentityRun, IdentityStatus } from "@/lib/identity-model";
 
 /**
  * The identity posture collector lives in apid; the console reads it there. A read
@@ -27,12 +27,21 @@ export function getIdentityStatus(): Promise<IdentityStatus | null> {
   return get<IdentityStatus>("/v1/identity/status");
 }
 
-export async function getIdentityFindings(resolved = false): Promise<IdentityFinding[] | null> {
-  const r = await get<{ findings: IdentityFinding[] }>(`/v1/identity/findings${resolved ? "?resolved=1" : ""}`);
+export function getGoogleStatus(): Promise<GoogleStatus | null> {
+  return get<GoogleStatus>("/v1/identity/google/status");
+}
+
+/** Findings of one provider ("m365" or "google"), or of every provider when none is named. */
+export async function getIdentityFindings(resolved = false, provider?: "m365" | "google"): Promise<IdentityFinding[] | null> {
+  const q = new URLSearchParams();
+  if (resolved) q.set("resolved", "1");
+  if (provider) q.set("provider", provider);
+  const r = await get<{ findings: IdentityFinding[] }>(`/v1/identity/findings${q.toString() ? `?${q}` : ""}`);
   return r ? r.findings : null;
 }
 
-export async function getIdentityRuns(limit = 10): Promise<IdentityRun[] | null> {
-  const r = await get<{ runs: IdentityRun[] }>(`/v1/identity/runs?limit=${limit}`);
+/** The reads of one provider; Microsoft 365's when none is named. */
+export async function getIdentityRuns(limit = 10, provider: "m365" | "google" = "m365"): Promise<IdentityRun[] | null> {
+  const r = await get<{ runs: IdentityRun[] }>(`/v1/identity/runs?limit=${limit}&provider=${provider}`);
   return r ? r.runs : null;
 }

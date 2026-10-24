@@ -4,6 +4,7 @@
 
 import type { ExposureSummary, IdentitySummary, TrendPoint } from "./exposure-model.ts";
 import { agoLabel, urgentLabel } from "./surface-exposure.ts";
+import { providerLabel } from "./identity-model.ts";
 
 function plural(n: number, one: string, many: string = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
@@ -14,7 +15,7 @@ export type IdentityCardState = "unavailable" | "not-configured" | "unread" | "r
 export type IdentityCard = {
   state: IdentityCardState;
   tone: "neutral" | "good" | "warning" | "critical";
-  /** "Identity (Microsoft 365): 5 findings (1 critical, 2 high), last read 2 hours ago" */
+  /** "Identity (Microsoft 365): 5 findings (1 critical, 2 high), last read 2 hours ago"; "Microsoft 365 and Google Workspace" when both are connected. */
   headline: string;
   /** Anything the headline must not be read without. */
   lines: string[];
@@ -39,8 +40,10 @@ export function identityCard(s: IdentitySummary | undefined, now: number = Date.
     return {
       state: "not-configured",
       tone: "neutral",
-      headline: "Identity: no Microsoft 365 tenant connected",
-      lines: ["Nothing is checked about MFA, administrator roles or inbox rules. Connect a read-only app registration on the Identity page."],
+      headline: "Identity: no Microsoft 365 tenant or Google Workspace domain connected",
+      lines: [
+        "Nothing is checked about MFA, administrator roles or mail rules. Connect a read-only app registration (Microsoft 365) or service account (Google Workspace) on the Identity page.",
+      ],
     };
   }
   if (!s.lastStatus) {
@@ -57,15 +60,21 @@ export function identityCard(s: IdentitySummary | undefined, now: number = Date.
   } else if (s.checksNotAssessed > 0) {
     lines.push(`${s.checksNotAssessed} of ${plural(s.checksTotal, "check")} could not run on the latest read: missing evidence, not counted as passing.`);
   } else if (s.lastStatus === "partial") {
-    lines.push("Some mailboxes could not be read on the latest read: their rules are not confirmed either way.");
+    lines.push("Some mailboxes could not be read on the latest read: their rules and filters are not confirmed either way.");
   }
   const urgent = (s.bySeverity.critical ?? 0) + (s.bySeverity.high ?? 0);
   return {
     state: "read",
     tone: urgent > 0 ? "critical" : s.findings > 0 ? "warning" : s.lastStatus !== "ok" ? "neutral" : "good",
-    headline: `Identity (Microsoft 365): ${plural(s.findings, "finding")} ${urgentLabel(s.bySeverity)}, last read ${agoLabel(s.lastRunAt, now)}`,
+    headline: `Identity (${providerNames(s)}): ${plural(s.findings, "finding")} ${urgentLabel(s.bySeverity)}, last read ${agoLabel(s.lastRunAt, now)}`,
     lines,
   };
+}
+
+/** "Microsoft 365", "Google Workspace" or both, for the providers the summary covers. */
+export function providerNames(s: Pick<IdentitySummary, "provider" | "providers">): string {
+  const list = s.providers && s.providers.length > 0 ? s.providers : [s.provider];
+  return list.map(providerLabel).join(" and ");
 }
 
 /** How many identity findings the Fix this week list has. */
