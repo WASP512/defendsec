@@ -72,7 +72,16 @@ jobs:
         env:
           REQUIRE_MSI: "1"
           COMMIT: ${{ github.sha }}
-        run: ./scripts/build-release.sh
+        # The last lines of a failure are also written as an annotation: the
+        # bots that run this have no GitHub token, and job logs need one.
+        run: |
+          set +e
+          ./scripts/build-release.sh 2>&1 | tee build-release.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=build-release.sh exited ${rc}::$(tail -n 18 build-release.log | cut -c1-300 | sed ':a;N;$!ba;s/\n/%0A/g')"
+          fi
+          exit "$rc"
 
       # Checked here as well as in CI, because this is the build whose hashes
       # operators are told they can reproduce. A release that is not
