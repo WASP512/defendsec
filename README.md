@@ -62,7 +62,7 @@ is what is **not built yet**.
 | Question | Today | Not built yet |
 | --- | --- | --- |
 | **What is exploitable right now?** | The control plane matches each host's packages against its own distribution's advisories (fixed versions are the distro's, so a backported fix is not a finding; Rocky/Alma hosts are matched against their own errata) and ranks the result **KEV → EPSS → CVSS** on the Exposure page, with the reason each row is where it is, the hosts, installed against fixed version and the feed snapshot it came from. The Fleet page leads with a **Fix this week** card. Findings with no fix, or fixed upstream and awaiting Rocky/Alma, are a separate watch list; an exploited one there gets a red callout. `defendsec-feeds` syncs CISA KEV, EPSS and the distro advisories and both pages show how old they are ([docs/EXPOSURE.md](docs/EXPOSURE.md), [docs/MATCHING.md](docs/MATCHING.md), [docs/FEEDS.md](docs/FEEDS.md)) | Repository health: expired keys and stale indexes (slice 11). See [VERIFIED.md](docs/VERIFIED.md) for what has been run on a real host |
-| **What is end-of-life or unpatched?** | Hardware, OS, software and pending patches per host on Linux (apt, dnf/yum, zypper) and Windows (Windows Update), with package change history. A **Supported OS** policy flags hosts on releases their vendor no longer patches. **Application end-of-life** (endoflife.date): software installed from a third-party repository (Sury PHP, PGDG, NodeSource, a PPA) whose upstream has stopped patching it is a finding in Fix this week, with the origin, the end-of-life date and the release to upgrade to; the distribution's own packages are never judged, they follow its lifecycle ([docs/EOL.md](docs/EOL.md)) | Pending patches ranked by age; software installed outside the package manager on Linux |
+| **What is end-of-life or unpatched?** | Hardware, OS, software and pending patches per host on Linux (apt, dnf/yum, zypper) and Windows (Windows Update). A **Supported OS** policy flags hosts on releases their vendor no longer patches. **Application end-of-life** (endoflife.date): software installed from a third-party repository (Sury PHP, PGDG, NodeSource, a PPA) whose upstream has stopped patching it is a finding in Fix this week, with the origin, the end-of-life date and the release to upgrade to; the distribution's own packages are never judged, they follow its lifecycle ([docs/EOL.md](docs/EOL.md)) | Pending patches ranked by age; software installed outside the package manager on Linux |
 | **What is misconfigured?** | 42 SCA checks in control-tagged packs. On Linux the CIS-aligned checks know each distro: its package names, SELinux on Fedora, RHEL and openSUSE, AppArmor on Ubuntu and Debian. On Windows: BitLocker, Defender, firewall, SMBv1, UAC and RDP. Firewall state is read from ufw, firewalld or plain nftables. A check the host cannot answer is reported as missing evidence | |
 | **What is exposed from the outside?** | An external surface scanner: declared domains, hostnames and IPs (each confirmed as authorised to test) are checked daily and on demand for SPF, DKIM, DMARC, MTA-STS, TLS-RPT, DNSSEC, CAA, dangling CNAMEs, certificate expiry and chain, legacy TLS and exposed ports, on the Assets and Surface pages ([docs/SURFACE.md](docs/SURFACE.md)). A check that could not run is shown as not assessed, never as a pass | Surface findings rank in the weekly list next to vulnerabilities (critical and high above every non-KEV vulnerability: a judgement, see [docs/EXPOSURE.md](docs/EXPOSURE.md)), have a trend series and a Fleet card, and ride in the signed evidence export (slice 7b). One vantage point; scanning is not a pass for what it could not check |
 | **Is it getting better?** | A trendline of open findings per day (with the KEV share and the nothing-to-install count) for 30/90/180 days or any audit period, computed from when each finding was first seen and resolved; how each finding closed (fixed, package removed, advisory changed) is recorded. Control mapping for NIST 800-53, 800-171, CIS v8, CMMC and CJIS; audit periods, documented exceptions, a hash-chained audit ledger and offline-verifiable evidence exports | The trendline starts at the first feed snapshot; earlier history was never recorded. The surface series starts with the first surface scan; surface scans stored before slice 7b are unattested in the evidence export |
@@ -78,9 +78,9 @@ Alongside that:
 ### What it is not
 
 - **Not an EDR.** It does not detect intrusions or respond to them: no sensors, no Sigma rules,
-  no host isolation, no playbooks, no autonomous response, no AI-agent interface. That code is
-  still in the repository today and is being removed ([docs/DIRECTION.md](docs/DIRECTION.md)); it
-  is not maintained, not documented here and not supported.
+  no host isolation, no playbooks, no autonomous response, no AI-agent interface. That code was
+  removed in slice 6; the commit it was last built at is kept on the branch
+  `archive/action-governance` ([docs/DIRECTION.md](docs/DIRECTION.md)).
 - **Not MDM.** No remote wipe, lock or configuration profiles.
 - **Not a SIEM.** It does not ingest or search logs.
 - **Not a patch deployer.** It reports missing patches; it does not install them.
@@ -163,8 +163,8 @@ Most people run the server as a Proxmox LXC: one command, then a browser.
 | `DEFENDSEC_SUPPORTED_OS` | `console.env` | Raise the Supported OS minimums |
 
 Everything else is in [docs/OPERATIONS.md](docs/OPERATIONS.md). That document and
-[docs/INSTALL.md](docs/INSTALL.md) were written before the direction change and still describe detection and
-response settings that are being removed. Where they disagree with this README, this README and
+[docs/INSTALL.md](docs/INSTALL.md) were written before the direction change and have been edited to
+drop the detection and response settings; where they disagree with this README, this README and
 [docs/DIRECTION.md](docs/DIRECTION.md) win.
 
 ## Documentation
@@ -177,7 +177,7 @@ response settings that are being removed. Where they disagree with this README, 
 | Operations: backup, HTTPS, SSO, metrics, scale | [docs/OPERATIONS.md](docs/OPERATIONS.md) |
 | Windows specifics, and what is verified there | [docs/WINDOWS.md](docs/WINDOWS.md) |
 | The history of the earlier detection-and-response phase (superseded) | [docs/ROADMAP.md](docs/ROADMAP.md) |
-| Architecture and security model (written before the direction change) | [Technical white paper (PDF)](docs/DefendSec-Technical-White-Paper.pdf) |
+| Architecture and security model (written before the direction change; it still describes the detection and response features removed in slice 6) | [Technical white paper (PDF)](docs/DefendSec-Technical-White-Paper.pdf) |
 | Fedora developer lab | [docs/FEDORA.md](docs/FEDORA.md) |
 
 ### Honest status
@@ -191,8 +191,9 @@ response settings that are being removed. Where they disagree with this README, 
   See `docs/VERIFIED.md`.
 - **The Windows agent has never been run on a real Windows machine.** It has been verified by
   cross-compilation, parser tests and PowerShell parse checks only. That covers the service,
-  inventory and posture checks. Treat any Windows deployment as an experiment. Windows service and
-  MSI packaging is on the removal list in [docs/DIRECTION.md](docs/DIRECTION.md).
+  inventory and posture checks. Treat any Windows deployment as an experiment. The Windows agent is
+  inventory and posture only; its service and MSI stay until the Datto RMM collector covers Windows
+  hosts ([docs/WINDOWS.md](docs/WINDOWS.md)).
 - **The Postgres-backed tests were not run in the baseline.** The Go tests that need a database
   (105 of them) skip on the host the baseline ran on. CI is configured to run them; CI results
   were not checked. See [docs/VERIFIED.md](docs/VERIFIED.md).

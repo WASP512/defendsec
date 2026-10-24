@@ -531,8 +531,6 @@ func inventoryValue(dev presence.Device, field string) (any, bool) {
 			return nil, true
 		}
 		return *dev.DiskEncryption, true
-	case "isolated":
-		return dev.Isolated, true
 	case "platform":
 		return dev.Platform, true
 	case "hostname":

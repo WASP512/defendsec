@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/ed25519"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -61,38 +60,6 @@ func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir 
 		return ack, false
 	}
 	switch cmd.GetType() {
-	case agentcmd.TypeIsolate:
-		st, err := agentcmd.Isolate(stateDir)
-		if err != nil {
-			ack.Message = err.Error()
-			return ack, false
-		}
-		ack.Accepted = true
-		ack.Message = st.Message
-		if st.Isolated {
-			ack.Message = "isolated: " + st.Message
-		}
-	case agentcmd.TypeRelease:
-		st, err := agentcmd.Release(stateDir)
-		if err != nil {
-			ack.Message = err.Error()
-			return ack, false
-		}
-		ack.Accepted = true
-		ack.Message = st.Message
-	case agentcmd.TypeKillProcess:
-		p, err := agentcmd.ParseKillPayload(cmd.GetPayload())
-		if err != nil {
-			ack.Message = err.Error()
-			return ack, false
-		}
-		n, err := agentcmd.KillByName(p.Name)
-		if err != nil {
-			ack.Message = err.Error()
-			return ack, false
-		}
-		ack.Accepted = true
-		ack.Message = fmt.Sprintf("signaled %d process(es) named %s", n, p.Name)
 	case agentcmd.TypeLiveQuery:
 		p, err := agentcmd.ParseLiveQueryPayload(cmd.GetPayload())
 		if err != nil {
@@ -120,32 +87,6 @@ func executeCommand(log *slog.Logger, pub ed25519.PublicKey, deviceID, stateDir 
 		ack.Accepted = true
 		ack.Message = msg
 		return ack, restart
-	case agentcmd.TypeRunScript:
-		p, err := agentcmd.ParseRunScriptPayload(cmd.GetPayload())
-		if err != nil {
-			ack.Message = err.Error()
-			return ack, false
-		}
-		out, err := agentcmd.RunScript(p.ScriptID)
-		if err != nil {
-			ack.Message = err.Error()
-			return ack, false
-		}
-		ack.Accepted = true
-		ack.Message = out
-	case agentcmd.TypeQuarantinePath:
-		p, err := agentcmd.ParseQuarantinePayload(cmd.GetPayload())
-		if err != nil {
-			ack.Message = err.Error()
-			return ack, false
-		}
-		dest, err := agentcmd.QuarantinePath(stateDir, p.Path)
-		if err != nil {
-			ack.Message = err.Error()
-			return ack, false
-		}
-		ack.Accepted = true
-		ack.Message = "quarantined to " + dest
 	default:
 		ack.Message = "unknown command type"
 	}

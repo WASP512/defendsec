@@ -23,7 +23,7 @@ import {
   relativeTime,
 } from "@/lib/format";
 import { AcceptBaseline } from "@/components/accept-baseline";
-import { ResponsePanel } from "@/components/response-panel";
+import { HostCommandsPanel } from "@/components/host-commands-panel";
 import { loadCommands } from "@/lib/commands";
 import { isReadOnlySession } from "@/lib/auth";
 import { UninstallPanel } from "@/components/uninstall-panel";
@@ -112,7 +112,6 @@ export default async function DeviceDetailPage({
           {device.hardwareModel === "mTLS gRPC agent" || device.mtlsDeviceId ? (
             <Badge variant="outline">mTLS</Badge>
           ) : null}
-          {device.isolated ? <Badge variant="destructive">isolated</Badge> : null}
           </>
         }
       />
@@ -153,10 +152,9 @@ export default async function DeviceDetailPage({
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Signed response</h2>
-        <ResponsePanel
+        <h2 className="text-lg font-semibold">Host commands</h2>
+        <HostCommandsPanel
           mtlsDeviceId={mtlsId}
-          isolated={Boolean(device.isolated)}
           commands={commandLog}
           readOnly={readOnly}
         />

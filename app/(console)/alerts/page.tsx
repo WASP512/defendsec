@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ActivityItem, ActivityList, EmptyState, PageHeader } from "@/components/console-ui";
 import { AlertActions } from "@/components/alert-actions";
-import { AlertSuggestActions } from "@/components/alert-suggest-actions";
 import { isReadOnlySession } from "@/lib/auth";
 import { SeverityBadge } from "@/components/status-badge";
 import { databaseURL, isMissingRelationError } from "@/lib/pg";
@@ -14,7 +13,7 @@ import { BellRing, Filter } from "lucide-react";
 export const dynamic = "force-dynamic";
 
 const STATUSES: AlertStatus[] = ["open", "acknowledged", "resolved", "suppressed"];
-const KINDS = ["", "fim", "sca", "vuln", "response", "system"];
+const KINDS = ["", "fim", "sca", "vuln"];
 
 export default async function AlertsPage({
   searchParams,
@@ -58,7 +57,7 @@ export default async function AlertsPage({
     <div className="mx-auto max-w-5xl space-y-6">
       <PageHeader
         title="Alerts"
-        description="FIM changes, SCA failures, and other detections from enrolled hosts."
+        description="File-integrity drift, configuration-check failures and vulnerability findings from enrolled hosts."
       />
 
       {!configured ? (
@@ -134,7 +133,7 @@ export default async function AlertsPage({
       {configured && !error && !storageSetupRequired && alerts.length === 0 ? (
         <EmptyState
           title="No matching alerts"
-          description="No detections match the current status, kind, and device filters."
+          description="No alerts match the current status, kind, and device filters."
           icon={BellRing}
           compact
         />
@@ -168,7 +167,6 @@ export default async function AlertsPage({
               </p>
             }
             actions={<div className="flex flex-col items-end gap-2">
-              <AlertSuggestActions alert={alert} readOnly={readOnly} />
               <AlertActions alertId={alert.id} status={alert.status} readOnly={readOnly} />
             </div>}
           />

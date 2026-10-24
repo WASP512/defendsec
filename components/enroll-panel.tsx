@@ -172,7 +172,7 @@ export function EnrollPanel({
               kind: "py" as const,
               command: pyCommand,
               description:
-                "Inventory check-in only. Signed response actions require the Go agent.",
+                "Inventory check-in only. Host commands require the Go agent.",
             },
           ].map((snippet) => (
             <TabsContent

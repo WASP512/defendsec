@@ -19,7 +19,6 @@ type MtlsFile = {
     lastSeen: string;
     connected?: boolean;
     certFingerprint?: string;
-    isolated?: boolean;
     serial?: string;
     hardwareModel?: string;
     cpu?: string;
@@ -130,7 +129,6 @@ function mapMtlsDevices(parsed: MtlsFile): Device[] {
     enrolledAt: item.lastSeen,
     lastSeen: item.lastSeen,
     nodeKey: "",
-    isolated: Boolean(item.isolated),
     mtlsDeviceId: item.id,
   }));
 }
@@ -148,13 +146,12 @@ export function mergeDevices(fromStore: Device[], mtls: Device[]) {
     const live = mtls.find(
       (item) => item.id === device.id || item.hostname.toLowerCase() === device.hostname.toLowerCase(),
     );
-    if (!live) return { ...device, isolated: device.isolated ?? false, mtlsDeviceId: device.mtlsDeviceId ?? "" };
+    if (!live) return { ...device, mtlsDeviceId: device.mtlsDeviceId ?? "" };
     const useInv = live.software.length > 0 || live.fim.length > 0 || live.patchInventory != null;
     return {
       ...device,
       agentVersion: live.agentVersion || device.agentVersion,
       lastSeen: live.lastSeen,
-      isolated: live.isolated,
       mtlsDeviceId: live.id,
       osName: useInv ? live.osName || device.osName : device.osName,
       osVersion: useInv ? live.osVersion || device.osVersion : device.osVersion,

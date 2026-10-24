@@ -25,7 +25,7 @@ func seedFleet(t *testing.T, s *Store, prefix string, n int) {
 		d := presence.Device{
 			ID: fmt.Sprintf("%s-%04d", prefix, i), Hostname: fmt.Sprintf("%s-Host-%04d", prefix, i),
 			Platform: platforms[i%3], OSName: "Test OS", LastSeen: seen.Format(time.RFC3339),
-			Isolated: i%10 == 0, Firewall: &f, IPAddresses: []string{fmt.Sprintf("10.9.%d.%d", i/250, i%250)},
+			Firewall: &f, IPAddresses: []string{fmt.Sprintf("10.9.%d.%d", i/250, i%250)},
 			Software: []presence.Software{{Name: "a", Version: "1"}, {Name: "b", Version: "2"}},
 		}
 		if err := s.UpsertDevice(ctx, d); err != nil {
@@ -92,9 +92,6 @@ func TestListDevicesFiltersInTheDatabase(t *testing.T) {
 	}
 	if n := count(DeviceQuery{Q: prefix, Status: "online"}); n != 45 {
 		t.Errorf("online = %d, want 45", n)
-	}
-	if n := count(DeviceQuery{Q: prefix, Status: "isolated"}); n != 6 {
-		t.Errorf("isolated = %d, want 6", n)
 	}
 	// Case-insensitive hostname match, and a search by IP address.
 	if n := count(DeviceQuery{Q: prefix + "-HOST-0007"}); n != 1 {

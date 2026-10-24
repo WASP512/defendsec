@@ -107,10 +107,6 @@ func FilterDevices(devs []presence.Device, q storepg.DeviceQuery) (storepg.Devic
 			if online {
 				continue
 			}
-		case "isolated":
-			if !d.Isolated {
-				continue
-			}
 		}
 		if needle != "" && !deviceMatches(d, needle) {
 			continue
@@ -123,7 +119,7 @@ func FilterDevices(devs []presence.Device, q storepg.DeviceQuery) (storepg.Devic
 			ID: d.ID, Hostname: d.Hostname, Platform: d.Platform, OSName: d.OSName, OSVersion: d.OSVersion,
 			Arch: d.Arch, AgentVersion: d.AgentVersion, Serial: d.Serial, HardwareModel: d.HardwareModel,
 			Username: d.Username, IPAddresses: ips, DiskEncryption: d.DiskEncryption, Firewall: d.Firewall,
-			Isolated: d.Isolated, LastSeen: seen, Online: online,
+			LastSeen: seen, Online: online,
 			SoftwareCount: len(d.Software), PendingUpdates: len(d.PendingUpdates),
 			PatchReliability: patchReliability(d), PatchReason: patchReason(d),
 		})
@@ -180,9 +176,6 @@ func CountDevices(devs []presence.Device, now time.Time) storepg.FleetCounts {
 		c.Total++
 		if seen, err := time.Parse(time.RFC3339, d.LastSeen); err == nil && !seen.Before(cutoff) {
 			c.Online++
-		}
-		if d.Isolated {
-			c.Isolated++
 		}
 		if d.DiskEncryption != nil && !*d.DiskEncryption {
 			c.Unencrypted++

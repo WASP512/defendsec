@@ -1653,3 +1653,183 @@ and 6 external surface findings." The tile row is Hosts online, Pending patches,
 | Export snapshot (REPEATABLE READ) | Postgres 16 | concurrent record-and-export test, killed by the mutation | see the card | — |
 | Rank tie-break rule (Go = SQL = TS) | linux, Postgres 16 | Go, TS, Postgres; 15 SQL mutants | see the card | seeded console |
 | One Fix-this-week number on Fleet | Next.js 16 build | — | see the card | browser, seeded database |
+
+## Slice 6 — remove the EDR half (no migration)
+
+- Date: 2026-10-24, MDT. Branch `scout/6-remove-edr`, from `origin/main` at `390ecaf` (the merge of slice 7c).
+- **Archive first.** `archive/action-governance` was pushed from `390ecafa0f53a4ea101625a891a2e70635d72cbb`, unchanged,
+  before the first deletion (`git ls-remote origin refs/heads/archive/action-governance` returns that hash). The hash
+  is recorded in `docs/DIRECTION.md`.
+- Commits, one area each: (1) DIRECTION records the archive hash; (2) the response path: command types, policy engine,
+  approvals, playbooks, triage, MCP, AI agents, the `isolated` state; (3) the detection pipeline: sensors, events,
+  Sigma, ETW, BPF, process list; (4) FIM per-event alerts; (5) forwarding text; (6) isolation script and CI job;
+  (7) docs. Checked by checking out each of the seven in a scratch worktree: `go build ./...`, `go vet ./...` and
+  `GOOS=windows go vet ./...` pass at every one of them. The last one is the one the numbers below describe.
+- Host: `hermesagent`, 2 vCPU. Postgres: titan CT 119 (PG 16) for the CI integration command, pg-local 16.15 for the
+  real run. Go 1.26.10, Node 22.
+
+### Lines of code, before and after (slice 0's method)
+
+Script: `workspace/baseline/loc.py` (slice 0's), which counts every line (blanks and comments included) of every
+`git ls-files` entry; `internal/gen` is generated protobuf and is in the totals. Before = `390ecaf`, after = this branch.
+
+| | before | after | change |
+| --- | ---: | ---: | ---: |
+| Go source | 69,426 | 56,928 | -12,498 |
+| Go tests | 41,878 | 33,718 | -8,160 |
+| **Go total** | **111,304** | **90,646** | **-20,658 (-18.6%)** |
+| Go files | 430 | 341 | -89 |
+| TS/TSX source | 21,896 | 20,147 | -1,749 |
+| TS/TSX tests | 2,827 | 2,669 | -158 |
+| **TS/TSX total** | **24,723** | **22,816** | **-1,907 (-7.7%)** |
+| TS/TSX files | 208 | 194 | -14 |
+| Sigma and check-pack YAML | 646 | 483 | -163 (`packs/sigma`, five rules) |
+| Python, SQL | 518, 2,008 | 518, 2,008 | 0 (no migration added) |
+
+Go packages removed whole (lines before):
+
+| package | src | test | total | files |
+| --- | ---: | ---: | ---: | ---: |
+| `internal/etw` | 420 | 86 | 506 | 3 |
+| `internal/events` | 731 | 443 | 1174 | 6 |
+| `internal/mcp` | 797 | 648 | 1445 | 5 |
+| `internal/playbook` | 390 | 470 | 860 | 4 |
+| `internal/policy` | 785 | 1910 | 2695 | 8 |
+| `internal/proclist` | 115 | 0 | 115 | 3 |
+| `internal/sensor` | 1183 | 641 | 1824 | 9 |
+| `internal/sigma` | 1333 | 846 | 2179 | 6 |
+| `internal/triage` | 672 | 411 | 1083 | 5 |
+| **removed whole** | **6426** | **5455** | **11881** | **49** |
+
+Packages that shrank (net lines, src + test):
+
+| package | before | after | change |
+| --- | ---: | ---: | ---: |
+| `internal/control` | 17434 | 12751 | -4683 |
+| `internal/agentcmd` | 2618 | 802 | -1816 |
+| `internal/storepg` | 17297 | 15864 | -1433 |
+| `components` | 9823 | 8786 | -1037 |
+| `lib` | 9909 | 9333 | -576 |
+| `cmd/defendsec-agentd` | 1392 | 1051 | -341 |
+| `internal/gen (generated)` | 2278 | 1972 | -306 |
+| `app/(console)` | 3181 | 2941 | -240 |
+| `cmd/defendsec-apid` | 984 | 825 | -159 |
+| `app/api` | 1555 | 1501 | -54 |
+| `internal/presence` | 937 | 918 | -19 |
+| `internal/controls` | 1668 | 1657 | -11 |
+| `internal/forward` | 1716 | 1709 | -7 |
+| `internal/sca` | 2698 | 2696 | -2 |
+
+(The new code of the slice is inside those net numbers: `commands_gate_test.go`, `forwarding_test.go`,
+`fim_alerts_test.go`, the allow-list in `commands.go`, and a `processes` test in `agentcmd`.)
+
+### Binary sizes, before and after
+
+Built with the release flags (`-trimpath -buildvcs=false -ldflags "-s -w -X main.buildCommit=…"`, `CGO_ENABLED=0`)
+by `workspace/s6/sizes.sh`, once at `390ecaf` and once at this branch's head. Bytes.
+
+| binary | before | after | change |
+| --- | ---: | ---: | ---: |
+| `defendsec-apid-linux-amd64` | 22,999,202 | 22,302,882 | -3.0% |
+| `defendsec-agentd-linux-amd64` | 15,151,266 | 13,430,946 | -11.4% |
+| `defendsec-agentd-windows-amd64.exe` | 14,061,568 | 13,895,680 | -1.2% |
+| `defendsec-web-linux-amd64` | 7,684,258 | 7,684,258 | +0.0% |
+| `defendsec-feeds-linux-amd64` | 19,734,690 | 19,288,226 | -2.3% |
+| `defendsec-verify-linux-amd64` | 3,842,210 | 3,842,210 | +0.0% |
+| `defendsec-loadtest-linux-amd64` | 12,337,314 | 12,320,930 | -0.1% |
+
+### Commands run
+
+| Command | Result |
+| --- | --- |
+| `go build ./...` | exit 0 |
+| `go vet ./...`, `GOOS=windows go vet ./...`, `GOOS=darwin go vet ./cmd/defendsec-verify` | exit 0, no output |
+| `gofmt -l cmd internal db` | no output |
+| `go test -count=1 -json ./...` with no database (and no `TMPDIR=/tmp`: the quarantine test that needed it is gone) | exit 0: **989 pass, 0 fail, 194 skip** (before: 1,264 pass, 237 skip, run the same way at `390ecaf` with `TMPDIR=/tmp`); the 275 passes and 43 skips that left are the tests of the removed code |
+| CI integration command with `TEST_DATABASE_URL` (titan): `go test -p 1 -count=1 -json ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/...` | exit 0: **301 pass, 0 fail, 0 skip** (before: 358 pass, 0 fail, 0 skip) |
+| `./scripts/check-reproducible.sh` | exit 0: "All targets build reproducibly from a different path with no .git" (apid, agentd linux and windows, verify linux and darwin, web, feeds) |
+| `govulncheck ./...` | exit 0: "Your code is affected by 0 vulnerabilities." One vulnerability in a required module that the code does not call: GO-2026-5932 in `golang.org/x/crypto@v0.57.0`, "Fixed in: N/A" |
+| `npm ci`, `npm run lint`, `npx tsc --noEmit` | clean |
+| `npm test` | 215/215 (before, at `390ecaf`: 227/227; the 12 that left tested the Proposals and Detection models) |
+| `npm run build` | green. First attempt failed on stale generated types in an old local `.next/dev` (it still listed the deleted pages); `.next` is gitignored build output, was removed, and the second build is green on a clean tree |
+| `go test ./internal/supplychain/` | passes unchanged: none of its expectations named a removed package or job (the integration packages it checks for are the same four) |
+
+### Real runs (pg-local database cloned from the slice 11 database, which holds real feed data; lab VM 120)
+
+`CREATE DATABASE s6up TEMPLATE slice11b`, then four legacy rows planted by SQL: a device with `isolated = true`, a
+`detection` alert, a `policy_decisions` row and a `break_glass` row. The apid built from this branch (release flags),
+listening on the LAN address, admin API on loopback.
+
+- **Starts on an existing database.** No migration to apply; log: `device state loaded from postgres devices=3`,
+  `control catalog sync controls=150`, no error. With `DEFENDSEC_POLICY_FILE` and `DEFENDSEC_SIGMA_DIR` set in the
+  environment it logs one warning each: `setting ignored: the feature it configured was removed in slice 6`.
+- **API after the removal.** `GET /v1/devices?status=isolated` 400 (`status must be online or offline`);
+  `GET /v1/alerts?kind=detection` 200 and returns the legacy row; `POST /v1/commands` with `isolate`, `release`,
+  `kill_process`, `quarantine_path`, `run_script` 400 `unknown command type`; `live_query` and `agent_update` with
+  nothing enabled 403 naming `DEFENDSEC_ALLOW_COMMANDS`; `/v1/detection/coverage`, `/v1/detection/forwarding`,
+  `/v1/policy`, `/v1/policy/approvals`, `/v1/playbooks`, `/v1/agents`, `/v1/triage`, `/v1/packages/changes` and
+  `/mcp` all 404; `GET /v1/forwarding` 200; `GET /v1/exposure/summary` 200.
+- **Real agent, VM 120 (Ubuntu 22.04, as root, the agent built from this branch).** Enrolled, `control stream up`,
+  `inventory ok software=597 fim=6 patches=0`, heartbeats and pongs. The log has no sensor line. With
+  `DEFENDSEC_ALLOW_COMMANDS=live_query` on apid: `live_query os_info` and `listening_ports` were accepted and
+  acknowledged (`goos=linux goarch=amd64 …`, `port state pid` and three listeners); `live_query processes` 400
+  (`unsupported live_query "processes" (allowed: listening_ports, users, …)`); `isolate` 400; `agent_update` 403.
+  The last 12 ledger entries: `command_issue` 2, `command_refused` 3 (the two earlier refusals and one more with the type not enabled), `command_ack` 6 (two live-query results, four pongs), `device_enrolled` 1.
+- **Evidence still verifies.** `GET /v1/audit/evidence`, then `defendsec-verify bundle.json` (built from this branch):
+  `audit chain 25 entries intact across sequence 1-25`, `command signatures 2 of 2 commands verified`,
+  `acknowledgements 2 of 2 acknowledgements verified`, `VERIFIED — every check passed.`, exit 0. (The ledger of this
+  database already held entries from earlier slices.)
+- **FIM on a real file.** Changed `/etc/hosts` on VM 120 (appended one line, sha256 `d5785c32…` to `9c222700…`): within
+  12 s one open alert `fim_drift` ("Baseline drift (modified): /etc/hosts"), one `fim_events` row, and **no** `fim_event`
+  alert. Restored the file (hash back to `d5785c32…`): the drift alert went to `resolved`, and a second change event
+  was recorded. The unit test `TestFimChangeIsEvidenceAndOneDriftAlert` fails on the previous code with two alerts.
+- **A pre-slice-6 agent against the new apid.** The agent built from `390ecaf`, as an unprivileged user (so it fell back
+  to its /proc sensor and started shipping events), for 40 s: enrolled, `control stream up`, `inventory ok
+  software=615`, heartbeats and pongs; apid logged no warning or error. This shows an old agent is not rejected; it does
+  not show what the old agent's event batches looked like on the wire, which was not captured.
+- **Console (`next start`, production build) against that apid.** Logged in with the admin token; 200 for `/`,
+  `/devices`, `/alerts`, `/advisories`, `/patches`, `/integrity`, `/policies`, `/compliance`, `/audit`, `/updates`,
+  `/surface`, `/assets`; **404** for `/response`, `/proposals`, `/detection` and `/api/approvals`. Page text: the
+  navigation lists no Detection, Response or Proposals; the device page for the VM has "Host commands" with "Agent
+  certificate / Revoke certificate", the live-query form (no `processes`) and "Push agent update"; the legacy
+  `detection` alert still renders ("Reverse shell (legacy detection row)", kind `detection`). This is page text read
+  over HTTP, not a browser screenshot.
+- Cleanup: apid and the console stopped by PID; VM 120 has no `/tmp/s6*` files and `/etc/hosts` is back at its
+  original hash; the agent had stopped. VM 121 was not touched. The scratch database `s6up` stays in pg-local.
+
+### Decisions the card asked for
+
+| Question | Decision | Why |
+| --- | --- | --- |
+| `cmd/defendsec-loadtest` | **Kept** | It enrolls simulated agents, reports inventory, heartbeats and pages the fleet API; no events, no commands. It is the way to produce the 10,000-host timing this file lists as not measured |
+| `internal/policy` and two-person approval | **Removed** | Only the command path called them. `live_query` and `agent_update` are what is left; they are admin-only, signed, expire in two minutes, and are **off until `DEFENDSEC_ALLOW_COMMANDS` names them** (default empty). That is the default the policy engine gave in practice: no install ships a policy file, so no host command could be issued. The refusal is written to the ledger as `command_refused` |
+| `live_query` | Kept, minus `processes` | The card kept it; `processes` was a process list. The rest (ports, users, logged-in users, scheduled jobs, services, mounts, OS) is host state. It is still the closest thing to host investigation in the product |
+| `internal/forward` | Kept, event record removed | It forwards the alert table: FIM drift, failed configuration checks, vulnerability findings. **It does not forward the audit ledger**, and it never did, nor the exposure findings of the surface scanner, the Microsoft 365 collector or repository health. The card said to keep forwarding "of findings and audit events"; the audit part does not exist and is not added here |
+| `internal/agentfim` | Kept; per-event alert removed | agentfim only watches paths and asks for an inventory. The `fim_event` alert was raised by the server for every change, never resolved, and duplicated the drift alert; the drift alert (a state against the baseline) and the change events remain |
+| Windows | ETW, process sampler, firewall isolation and `kill_process` removed; service, MSI, posture pack and inventory kept | Mason has not decided on the Datto RMM collector |
+| New migration dropping tables | **None** | Dropping `policy_decisions`, `pending_commands`, `break_glass`, `agent_principals`, `playbook_runs`, `package_changes` and the `devices.isolated` and `devices.classes` columns would delete an operator's own record, and nothing reads it any more. Left as is; documented in DIRECTION.md |
+| `internal/supplychain` guards | Pass without a change | None of their expectations named anything removed |
+
+### Not verified
+
+- **Nothing was run on Windows.** `GOOS=windows go vet` and the unchanged installers only. The Windows agent has still never run on a Windows machine.
+- **Upgrading a host that an older agent had isolated.** The new agent does not re-apply or release isolation. The cleanup steps in OPERATIONS.md (nftables table, iptables chains, the two Windows firewall rules) are taken from the removed code and were **not run**.
+- **`agent_update` after the change** was only checked as a refusal (403, and 400 for a bad payload in the unit tests); no update was applied to a host in this slice.
+- **Rocky 9 (VM 121)** was not used; the real agent run is Ubuntu 22.04 only.
+- **Forwarding to a real collector** was not exercised; `TestAlertsAreForwarded` and the forward package tests use a recording destination.
+- **Branch protection.** If `isolation` is a required check in the repository settings, the removal of that job blocks every merge until the setting is changed. Not visible from here.
+- **The technical white paper** (`docs/DEFENDSEC_WHITE_PAPER.html` and the PDF) still describes the removed features. README says so; it was not rewritten.
+- **`docs/ROADMAP.md`** is the historical log and still describes the EDR work as it was.
+- **Old agents' events on the wire** (see above) and an older apid with a newer agent were not tried.
+- Branch CI: run 40096044014 on `f43dbd5`, **5/5 jobs green** (go, postgres-integration, node, provisioning, secrets-scan; there is no `isolation` job any more): https://github.com/WASP512/defendsec/actions/runs/40096044014. This line was added after it; the handoff names the run for the final head.
+
+## Feature × platform × evidence matrix — slice 6
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| `live_query` behind `DEFENDSEC_ALLOW_COMMANDS` (off by default, per type) | linux | `commands_gate_test.go` (6 tests: removed types 400, off 403, per-type, viewer/anonymous 403, `processes` 400, the parser) | see the card | VM 120: accepted and acknowledged; evidence verifies |
+| Removed command types refused | linux | same | see the card | apid 400 on the real device id |
+| FIM: change event plus one drift alert, resolves on revert | linux, Postgres 16 | `TestFimChangeIsEvidenceAndOneDriftAlert` | see the card | VM 120, `/etc/hosts` changed and restored |
+| Alert forwarding (alerts only) | linux | `TestAlertsAreForwarded`, forward package | see the card | not run |
+| Old (pre-slice 6) agent against the new apid | linux | — | — | 40 s, enrolled and heartbeating, no server warning |
+| Removed pages and routes are gone | Next.js 16 build | — | see the card | 404 over HTTP |

@@ -73,7 +73,6 @@ export type Device = {
   enrolledAt: string;
   lastSeen: string;
   nodeKey: string;
-  isolated?: boolean;
   mtlsDeviceId?: string;
 };
 

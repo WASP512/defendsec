@@ -52,7 +52,6 @@ If enroll TLS fails, wipe `data/pki` once and restart apid so the hostname/IP SA
 | SCA SSH | Reads `/etc/ssh/sshd_config` **and** `/etc/ssh/sshd_config.d/*.conf`. Missing sshd config is skipped (no openssh-server). Obsolete `Protocol 2` check is not used. |
 | SCA host | Firewall + disk encryption inventory fields, crypto-policies config, PasswordAuthentication / PermitRootLogin (shared sshd paths). |
 | Live `crontab` | Also reads `/var/spool/cron` (Fedora/RHEL layout) |
-| Isolate net | Needs root + `DEFENDSEC_ISOLATE_NET=1`. Uses nftables, alongside firewalld; see OPERATIONS.md. Prefer flag-only isolate for casual testing. |
 
 ## systemd (optional)
 
@@ -78,10 +77,9 @@ If the agent is on another host, set `DEFENDSEC_SERVER_HTTP`, `DEFENDSEC_SERVER_
 1. Host appears online on **Devices** with OS name/version from `/etc/os-release` (e.g. Fedora 41), not `Linux` / `go1.x`.
 2. **Patches** shows `dnf` pending updates (or empty with status ok).
 3. **Alerts** — touch a watched file as root (`sudo touch /etc/hosts`) and confirm FIM drift.
-4. Host **Signed response** → live query `processes`, `listening_ports`, `os_info`, `systemd_units`.
+4. With `DEFENDSEC_ALLOW_COMMANDS=live_query` set on apid, host **Host commands** → live query `listening_ports`, `os_info`, `systemd_units`.
 5. Save a query; re-run from Saved queries.
-6. Isolate without `DEFENDSEC_ISOLATE_NET` → flag only; Release clears it.
-7. Viewer token: set `DEFENDSEC_VIEWER_TOKEN` on apid + console; confirm commands return 403.
+6. Viewer token: set `DEFENDSEC_VIEWER_TOKEN` on apid + console; confirm commands return 403.
 
 ## SELinux note
 
