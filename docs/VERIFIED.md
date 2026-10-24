@@ -1277,6 +1277,15 @@ Branch `scout/11-repo-health-r3`, one commit on `335b07a` and a second one for t
 - **Console:** Fix this week rows and description; host page notice, "0 pending — unreliable, not zero" and a Package repositories table; Patches page, dashboard card, hosts list and the "No pending patches" policy (`unknown`, never `pass`).
 - **Added scope from slice 10's review:** the agent's `apt-cache policy` no longer writes `/var/cache/apt/pkgcache.bin` (see exit (c)).
 
+### Merge with slice 12 (review round 3)
+
+Main moved while this was in review: slice 12 (identity posture) took migration 028 and put `Identity` into the same three-place rank rule. This branch merged `origin/main` (merge commit, not a rebase), renumbered to `db/migrations/029_repo_health.sql` (`migrations_test.go` pins it), and kept both slices' rows in `internal/exposure/rank.go`, the k1/k4 SQL in `internal/storepg/exposure.go` and `lib/exposure-model.ts`. The identity branch of the ranked `UNION ALL` also gets the three `repo_*` columns this slice added to the select list.
+
+- New `TestEveryKindOfRowRanksTogether` (`internal/storepg/exposure_allkinds_test.go`, real Postgres): one database holding a KEV CVE, EPSS-scored, CVSS-only and unscored CVEs, critical/high/medium surface, high/medium identity, past-security-support and past-active-support software, and a dead-key and a stale-index repository. The SQL order equals the written order and `exposure.Compare`, and keyset paging at limits 1, 2, 3, 4, 5, 7 and 200 walks the same 15 rows. The TS twin is in `lib/patch-reliability.test.ts`.
+- Mutations on the merged tree, each applied, run against `go test` (exposure + storepg ranking tests) or `npm test`, and reverted: **14 of 14 killed.** Repository constants: SQL band, SQL high 8.0, SQL medium 5.0, Go `Band`, Go `effective`, TS `rankBand`, TS `effective`. Identity constants: SQL band, SQL score branch, Go `Band`, Go `effective`, TS `ranksBySeverity`, the `identity:` key prefix. One shared score (critical 9.5). The SQL medium 5.0 for a repository row is caught only by the new test.
+- `go test -p 1 -count=1 ./...` with Postgres 16 (titan CT 119): exit 0, 63 packages ok. `go vet ./...` and `GOOS=windows go vet ./...` clean. `npm test` 214/214, eslint and `tsc --noEmit` clean.
+- **Not re-run on the merged head:** the VM 120/121 exit runs below (the agent and `internal/repohealth` code are unchanged by the merge; they were taken on the tree before it), an in-place upgrade of a database that already held migration 028, and a browser render of the merged console pages.
+
 ### Exit measurements (real hosts: VM 120 Ubuntu 22.04, VM 121 Rocky 9.8; 2026-10-24)
 
 The agent was built from the merged head (`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build`), copied to the VM, enrolled against an apid on this server (`defendsec-apid` from the same head, DB `slice11b`), and run as root as the real daemon (`-heartbeat 10s`, 30 s per step). The test repository is a signed apt repository (`file:` source) whose key was created with `gpg --faked-system-time 20260101T000000 ... 1d`, so it expired on 2026-01-02, and whose Release was signed half-way through its life.

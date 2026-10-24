@@ -185,3 +185,45 @@ test("wording helpers", () => {
   assert.equal(unreliableHostsNote(0), "");
   assert.match(unreliableHostsNote(1), /^1 host's pending updates/);
 });
+
+// The same rows as TestEveryKindOfRowRanksTogether in internal/storepg: after the merge of slices 11 and 12
+// the console must put every kind of row in the order the control plane does.
+test("every kind of row ranks together: repository and identity rows beside EOL, surface and CVE rows", () => {
+  const eol = (id: string, stage: "eol" | "eoas") =>
+    row(id, {
+      severity: "high",
+      eol: { product: "x", productLabel: "X", cycle: "1", stage, date: "2023-11-26", upgradeTo: "2", origins: [] },
+    });
+  const idn = (id: string, severity: Rankable["severity"]) => row(`identity:${id}`, { severity, source: "identity" });
+  const srf = (id: string, severity: Rankable["severity"]) => row(`surface:${id}`, { severity, source: "surface" });
+  const want: Rankable[] = [
+    row("A-kev", { kev: true, kevAdded: "2026-10-01", epss: 0.5, cvss: 8, severity: "high" }),
+    srf("000000000001", "critical"),
+    eol("EOL:php:8.0", "eol"),
+    repoRow("REPO:bbbbbbbbbbbb", "high"),
+    idn("000000000001", "high"),
+    srf("000000000002", "high"),
+    row("B-scored", { epss: 0.0002, cvss: 4 }),
+    row("E-cvss-only-5", { cvss: 5 }),
+    repoRow("REPO:aaaaaaaaaaaa", "medium", "index_stale"),
+    idn("000000000002", "medium"),
+    srf("000000000003", "medium"),
+    row("F-cvss-only-3", { severity: "low", cvss: 3 }),
+    eol("EOL:nodejs:22", "eoas"),
+    row("D-unscored-high", { severity: "high" }),
+    row("C-unscored-medium", { severity: "medium" }),
+  ];
+  const shuffled = [...want];
+  for (let i = 0; i < shuffled.length; i++) {
+    const j = (i * 7 + 3) % shuffled.length;
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  assert.deepEqual(
+    shuffled.sort(compareRank).map((r) => r.advisoryId),
+    want.map((r) => r.advisoryId),
+  );
+  assert.deepEqual(
+    want.map(rankBand),
+    [0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+  );
+});
