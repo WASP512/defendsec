@@ -411,3 +411,101 @@ was used**.
 | Findings storage + `/v1/findings` API | linux, Postgres 16.15 | storepg + control integration tests, green | not checked | real apid + real agent |
 | Console findings (advisories, host, detail, policy) | any | model logic unit-tested | not checked | rendered by a built console via curl; not in a browser |
 | Zero findings on a fully patched host | Ubuntu 22.04, Rocky 9 | synthetic only (by construction) | not checked | **PENDING** |
+
+## Slice 7a — external surface scanner (migration 022)
+
+- Date: 2026-10-24 UTC (2026-10-23 evening MDT). Host `hermesagent`, go1.26.10 linux/amd64, node v22.23.3.
+- Postgres: lookout's own database on titan CT 119 (PG 16), via `TEST_DATABASE_URL`.
+- Branch `lookout/7a-surface`. What it adds: `internal/surface` (checks, scanner, fake resolver), migration
+  `022_surface.sql`, `storepg/surface.go`, `control/surface.go` (`/v1/assets`, `/v1/surface/findings`,
+  `/v1/surface/scan`, daily schedule), controls catalog entries, the Assets and Surface console pages.
+  Reference: [SURFACE.md](SURFACE.md).
+
+### Commands
+
+| # | Command | Exit | Result |
+| --- | --- | ---: | --- |
+| 1 | `go build ./...` | 0 | green |
+| 2 | `go vet ./...` | 0 | green |
+| 3 | `GOOS=windows go vet ./...` | 0 | green |
+| 4 | `TMPDIR=/tmp go test -count=1 ./...` with `TEST_DATABASE_URL` unset | 0 | every package `ok` (database tests skip) |
+| 5 | `go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/...` (the CI integration command) with `TEST_DATABASE_URL` set | 0 | all `ok` |
+| 6 | `go test -race -count=1 ./internal/surface ./internal/control` (Postgres set) | 0 | no race reported |
+| 7 | `govulncheck ./...` (with `github.com/miekg/dns` v1.1.73 added) | 0 | "No vulnerabilities found" |
+| 8 | `scripts/check-reproducible.sh` | 0 | green |
+| 9 | `npm test` | 0 | `# tests 89 / # pass 89 / # fail 0`, of which 9 are new (`lib/surface-model.test.ts`) |
+| 10 | `npm run lint` | 0 | no errors, no warnings |
+| 11 | `npm run build` (Next.js, includes TypeScript) | 0 | green, `/assets`, `/surface`, `/api/assets`, `/api/assets/[id]`, `/api/surface/scan` built |
+
+### Tests
+
+- `internal/surface`: **99 pass** (tests and subtests), 0 fail, 0 skip, 81.6% statement coverage. Every check
+  runs on fixtures (`example.com`, RFC 5737 addresses) through a fake resolver, MTA-STS against an HTTPS
+  server with a private CA, and TLS against a local TLS server with crafted certificates (healthy, expired,
+  5 and 20 days left, wrong name, missing intermediate, self-signed, TLS 1.0/1.1 accepted). The real DNS
+  resolver (`NetResolver`) is tested against a local DNS server: DO and CD bits, UDP truncation to TCP,
+  next server on error, SERVFAIL as an answer.
+- **Mutation-checked** by hand: 17 deliberate breaks of the code (SPF limit 10 to 11, void limit, `+all`
+  severity, 7- and 30-day thresholds, DKIM key-size thresholds, DNSSEC AD flag and checking-disabled retry,
+  shared-hosting cap, authorisation check removed, query budget removed, loopback allowed, dial guard
+  removed, MTA-STS redirect following, sp-weaker inverted, no_rua inverted). Each made a test fail. Two
+  survived the first round (the exact-11 SPF boundary, and MTA-STS redirect following, because the
+  redirect target also failed); tests were added and both are now killed.
+- `internal/storepg` (4 new, real Postgres): asset lifecycle and authorisation, first-seen / resolved /
+  reopened bookkeeping across five scans, "a check that could not run resolves nothing", observations
+  stored per scan, recording refused for an unauthorised asset.
+- `internal/control` (5 new, real Postgres): the whole pipeline through the handlers (declare, scan refused
+  while unconfirmed with zero DNS queries, confirm, scan, read findings, fix the zone, rescan, finding
+  closes with first-seen before resolved, withdraw confirmation, remove), viewer read-only, asynchronous
+  scan, the schedule scans only due and confirmed assets, per-asset cooldown and concurrency.
+- `internal/controls`: the new signals and catalog entries pass the existing well-formedness tests.
+
+### Real runs
+
+1. **A production domain** (Mason's company, declared as a domain plus its `www` hostname, no port checks):
+   apid and the scanner as built, real DNS from `hermesagent`, real TLS handshakes, one scan in about 2
+   seconds, 14 checks assessed and none not assessed. **5 findings, details reported privately.** Every
+   one was checked against a manual `dig` or `openssl` and matched, and so were the checks that produced
+   no finding: the SPF include chain and its lookup count, the DMARC record, the certificates (the
+   SHA-256 fingerprints and the days remaining equal `openssl x509 -fingerprint`), and TLS 1.0 and 1.1
+   being rejected (`openssl s_client -tls1` and `-tls1_1` answered alert 70, the scanner recorded
+   "protocol version not supported"). The console then rendered both pages from that data.
+2. **Port check on a real address**, this host's own LAN address (the titan lab VMs 120/121 are not
+   started yet, see below). Three throwaway listeners were started on 8080, 6379 and 5432. Result:
+   4 of the 16 ports open, 12 closed, none filtered: 22 (info), 5432 and 6379 (high), 8080 (low). That
+   equals what `ss -ltn` showed listening on all interfaces; port 25 listens only on loopback and was
+   correctly reported closed. After the listeners were stopped a second scan resolved the three and
+   kept 22 open.
+3. **Console to apid** with `curl`: login with the admin token, `/assets` and `/surface` rendered with the
+   data above (HTML fetched with `curl`; **no browser was used**), `POST /api/assets` (201, unconfirmed),
+   scan of an unconfirmed asset (409), loopback address refused (400), confirm and withdraw, remove, no
+   session (403). Declare, confirm, remove and scan appear in `/v1/audit` with the acting identity.
+
+### Not verified
+
+- **The titan lab VMs 120 and 121.** They were not started (it needs Mason's approval). The port check has
+  run on one real address, but not on those two hosts.
+- Only one production domain has been scanned, and it is on Cloudflare with Microsoft 365 mail. A Google
+  Workspace domain, a domain with a real MTA-STS policy, a DNSSEC-signed domain, a domain with CAA, a
+  certificate close to expiry and a server that accepts TLS 1.0 were **not** seen in a real run: those
+  paths are verified on fixtures only.
+- MX hosts' own TLS (SMTP STARTTLS) is not tested; see SURFACE.md.
+- The daily schedule was run by calling its function in a test, not observed firing on a long-running apid.
+- No browser: the pages were fetched as HTML, the client-side forms (declare, confirm, scan now) were
+  never clicked.
+- IPv6 targets were not exercised outside unit tests. The built-in Cloudflare ranges were copied from
+  cloudflare.com/ips on 2026-10-24.
+- Behaviour behind a firewall that drops DNS or outbound TCP is covered by the not-assessed paths in
+  tests, not by a real blocked network.
+- Windows: `GOOS=windows go vet` is green; the scanner never ran there.
+
+## Feature × platform × evidence matrix — additions from slice 7a
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Email auth checks (MX, SPF, DMARC, DKIM, MTA-STS, TLS-RPT) | linux | 99 tests incl. mutation checks, fixtures | see PR | one production domain, confirmed with `dig` |
+| DNS hygiene (DNSSEC, CAA, dangling CNAME) | linux | fixtures; DNSSEC broken/validated on a fake validating resolver | see PR | one production domain: unsigned and no CAA confirmed with `dig`; validated and broken chains **not seen for real** |
+| TLS (expiry, name, chain, TLS 1.0/1.1) | linux | local TLS server, crafted certificates | see PR | two real hostnames, confirmed with `openssl` |
+| Port check | linux | local listeners, fixtures | see PR | this host's LAN address; **lab VMs 120/121 pending** |
+| Storage, API, schedule | linux, Postgres 16 | storepg and control integration tests | see PR | real apid, real scans |
+| Console Assets and Surface pages | any | model logic unit-tested | see PR | rendered by a built console via curl; not in a browser |

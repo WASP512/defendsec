@@ -108,3 +108,6 @@ public suffix list and IDNA. `govulncheck` is clean.
   handshake. TLS checks run on port 443 of declared domains and hostnames only.
 - The built-in Cloudflare ranges go stale; the per-asset shared-hosting flag is the reliable control.
 - Only the fixed port list is probed, over IPv4/IPv6 TCP.
+- apid makes the outbound connections itself, so the host needs outbound DNS (UDP and TCP 53), TCP 443 to
+  declared hostnames and TCP to declared IPs. A firewall that blocks them shows up as checks that were not
+  assessed, not as clean results.

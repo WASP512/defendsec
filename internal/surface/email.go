@@ -105,7 +105,7 @@ func providerNote(provider string) string {
 	case "microsoft365":
 		return " The MX records point at Microsoft 365: enable DKIM for the domain in the Microsoft Defender portal (email authentication settings) and publish the two CNAME records it shows."
 	case "cloudflare":
-		return " The MX records point at Cloudflare's inbound mail filtering, which does not sign your outgoing mail. Mail you send needs its own DKIM key and SPF include from whichever service sends it (Google Workspace, Microsoft 365, a newsletter tool)."
+		return " The MX records point at Cloudflare's inbound mail service, which does not sign your outgoing mail. Mail you send needs its own DKIM key and SPF include from whichever service sends it (Google Workspace, Microsoft 365, a newsletter tool)."
 	}
 	return ""
 }
@@ -435,7 +435,8 @@ func (r *run) spfWalk(domain string, depth int, st *spfState) (byte, spfEnd) {
 		st.loops = append(st.loops, domain)
 		return 0, spfBroken
 	}
-	st.seen[domain] = true
+	st.seen[domain] = true // seen means "on the current include path": a domain reached twice by different branches is not a loop
+	defer delete(st.seen, domain)
 	txts, a := r.txt(domain)
 	if a.Status == StatusFail {
 		st.partial = append(st.partial, domain+": "+a.Reason())

@@ -480,3 +480,23 @@ func TestSPFLimitIsExactlyTen(t *testing.T) {
 	noFinding(t, spfRun(t, build(10), nil), "spf.too_many_lookups")
 	find(t, spfRun(t, build(11), nil), "spf.too_many_lookups")
 }
+
+// Two branches that include the same domain are not a loop: RFC 7208 counts the
+// repeated lookups, and only a domain that includes itself through its own
+// chain is a permanent error.
+func TestSPFRepeatedIncludeIsNotALoop(t *testing.T) {
+	f := NewFakeResolver().Add(
+		txt("example.com", "v=spf1 include:a.example.net include:b.example.net -all"),
+		txt("a.example.net", "v=spf1 include:shared.example.org -all"),
+		txt("b.example.net", "v=spf1 include:shared.example.org -all"),
+		txt("shared.example.org", "v=spf1 ip4:192.0.2.0/24 -all"),
+	)
+	res := spfRun(t, f, nil)
+	noFinding(t, res, "spf.loop")
+	if len(res.Findings) != 0 {
+		t.Fatalf("%v", ids(res.Findings))
+	}
+	if res.Observed["lookups"] != 4 {
+		t.Fatalf("a, b, and shared twice = 4 lookups, got %v", res.Observed["lookups"])
+	}
+}
