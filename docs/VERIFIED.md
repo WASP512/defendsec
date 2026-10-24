@@ -503,9 +503,9 @@ was used**.
 
 | Feature | Platform | Unit | CI | Real host |
 | --- | --- | --- | --- | --- |
-| Email auth checks (MX, SPF, DMARC, DKIM, MTA-STS, TLS-RPT) | linux | 99 tests incl. mutation checks, fixtures | see PR | one production domain, confirmed with `dig` |
-| DNS hygiene (DNSSEC, CAA, dangling CNAME) | linux | fixtures; DNSSEC broken/validated on a fake validating resolver | see PR | one production domain: unsigned and no CAA confirmed with `dig`; validated and broken chains **not seen for real** |
-| TLS (expiry, name, chain, TLS 1.0/1.1) | linux | local TLS server, crafted certificates | see PR | two real hostnames, confirmed with `openssl` |
-| Port check | linux | local listeners, fixtures | see PR | this host's LAN address; **lab VMs 120/121 pending** |
-| Storage, API, schedule | linux, Postgres 16 | storepg and control integration tests | see PR | real apid, real scans |
-| Console Assets and Surface pages | any | model logic unit-tested | see PR | rendered by a built console via curl; not in a browser |
+| Email auth checks (MX, SPF, DMARC, DKIM, MTA-STS, TLS-RPT) | linux | 99 tests incl. mutation checks, fixtures | green, run 40063765582 (commit d491180) | one production domain, confirmed with `dig` |
+| DNS hygiene (DNSSEC, CAA, dangling CNAME) | linux | fixtures; DNSSEC broken/validated on a fake validating resolver | green, run 40063765582 (commit d491180) | one production domain: unsigned and no CAA confirmed with `dig`; validated and broken chains **not seen for real** |
+| TLS (expiry, name, chain, TLS 1.0/1.1) | linux | local TLS server, crafted certificates | green, run 40063765582 (commit d491180) | two real hostnames, confirmed with `openssl` |
+| Port check | linux | local listeners, fixtures | green, run 40063765582 (commit d491180) | this host's LAN address; **lab VMs 120/121 pending** |
+| Storage, API, schedule | linux, Postgres 16 | storepg and control integration tests | green, run 40063765582 (commit d491180) | real apid, real scans |
+| Console Assets and Surface pages | any | model logic unit-tested | green, run 40063765582 (commit d491180) | rendered by a built console via curl; not in a browser |
