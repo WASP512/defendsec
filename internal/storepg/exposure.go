@@ -587,6 +587,10 @@ type ExposureSummary struct {
 		// ones quiet the longest.
 		Silent     int          `json:"silent"`
 		SilentList []SilentHost `json:"silentList"`
+		// PatchUnreliable are the hosts whose pending-updates list cannot be
+		// believed because a repository failed a check (slice 11): an empty
+		// Fix this week list says nothing about them.
+		PatchUnreliable int `json:"patchUnreliable"`
 	} `json:"hosts"`
 	Fixable struct {
 		// Findings, Advisories and Hosts count both kinds of fixable work:
@@ -640,9 +644,10 @@ func (s *Store) ExposureSummary(ctx context.Context, now time.Time) (ExposureSum
 	cutoff := now.Add(-SilentAfter)
 
 	if err := s.pool.QueryRow(ctx, `
-		SELECT count(*), count(*) FILTER (WHERE s.coverage = 'covered'), count(*) FILTER (WHERE d.last_seen < $1)
+		SELECT count(*), count(*) FILTER (WHERE s.coverage = 'covered'), count(*) FILTER (WHERE d.last_seen < $1),
+		       count(*) FILTER (WHERE d.repo_health->'assessment'->>'reliability' = 'unreliable')
 		FROM devices d LEFT JOIN host_vuln_state s ON s.device_id = d.id
-		WHERE NOT d.revoked`, cutoff).Scan(&out.Hosts.Total, &out.Hosts.Assessed, &out.Hosts.Silent); err != nil {
+		WHERE NOT d.revoked`, cutoff).Scan(&out.Hosts.Total, &out.Hosts.Assessed, &out.Hosts.Silent, &out.Hosts.PatchUnreliable); err != nil {
 		return out, err
 	}
 	out.Hosts.NotAssessed = out.Hosts.Total - out.Hosts.Assessed

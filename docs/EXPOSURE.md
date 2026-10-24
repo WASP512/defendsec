@@ -53,6 +53,11 @@ surface finding does (rules in `internal/exposure/rank.go`, "End-of-life finding
   2.0: the rest band, after every vulnerability that has an EPSS score, with the low CVSS-only ones, below every
   security-EOL row.
 
+**Repository health** (slice 11, [REPO_HEALTH.md](REPO_HEALTH.md)) is in the fix bucket as well: a package repository whose
+signing key has expired or is missing, or whose index has gone stale, is a dead source of updates. It ranks like a surface
+finding of the same severity: **high** (key problems, no index on apt) in the urgent band at 8.0, **medium** (stale index) in
+the rest band at 5.0. At equal score the row id breaks the tie bytewise: `EOL:` < `REPO:` < `surface:`.
+
 The stage decides, not the severity label. The price of the first rule is the one the surface rule already pays: a non-KEV
 CVE with a very high EPSS ranks below an unpatchable release; revisit it with real data. The SQL `ORDER BY` (`k1` band, `k4`
 score), `exposure.Compare` and `compareRank` state this one rule and are tested against each other with eol rows at

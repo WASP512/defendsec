@@ -13,6 +13,8 @@ import { apidId, evaluateDevice, fimDriftPaths, isOnline, type VulnInput } from 
 import { getFindings, getFindingsSummary } from "@/lib/findings";
 import { coverageNotice, eolAssessmentNote, exploitedAwaitingNotice, findingStatus } from "@/lib/findings-model";
 import { CoverageBanner, ExploitedAwaitingBanner, FindingSummary } from "@/components/finding-summary";
+import { PatchReliabilityNotice, RepoHealthTable } from "@/components/repo-evidence";
+import { isUnreliable, patchReliabilityOf, pendingCountLabel, unassessedNote } from "@/lib/patch-reliability";
 import {
   formatBytesMb,
   formatUptime,
@@ -50,7 +52,9 @@ export default async function DeviceDetailPage({
   const policies = evaluateDevice(device, fimEvents, store.triages, vulns);
   const findings = findingsResult?.findings ?? [];
   // End-of-life software is work for this week like a patch: upgrading is the fix.
-  const isFixable = (f: { kind: string }) => f.kind === "finding" || f.kind === "eol";
+  // So is a repository whose key or index is broken: its updates have stopped until it is put right.
+  const isFixable = (f: { kind: string }) => f.kind === "finding" || f.kind === "eol" || f.kind === "repo_health";
+  const reliability = patchReliabilityOf(device);
   const fixable = findings.filter(isFixable);
   const noFix = findings.filter((f) => !isFixable(f));
   const exploitedAwaiting = exploitedAwaitingNotice(findings.filter((f) => f.kind === "awaiting_vendor" && f.kev).length);
@@ -230,6 +234,8 @@ export default async function DeviceDetailPage({
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Pending patches</h2>
+        <PatchReliabilityNotice reliability={reliability} />
+        {reliability.state === "unassessed" ? <p className="text-sm text-muted-foreground">{unassessedNote()}</p> : null}
         {device.patchInventory !== "ok" ? (
           <p className="text-sm text-muted-foreground">
             {device.patchInventory === "unsupported"
@@ -239,7 +245,9 @@ export default async function DeviceDetailPage({
                 : "No patch inventory reported yet."}
           </p>
         ) : device.pendingUpdates.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No pending updates reported.</p>
+          <p className="text-sm text-muted-foreground" data-pending-count>
+            {isUnreliable(reliability) ? pendingCountLabel(0, reliability) : "No pending updates reported."}
+          </p>
         ) : (
           <ul className="divide-y rounded-xl border">
             {device.pendingUpdates.map((item) => (
@@ -253,6 +261,13 @@ export default async function DeviceDetailPage({
           </ul>
         )}
       </section>
+
+      {device.repoHealth && device.repoHealth.manager ? (
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold">Package repositories</h2>
+          <RepoHealthTable report={device.repoHealth} />
+        </section>
+      ) : null}
 
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">

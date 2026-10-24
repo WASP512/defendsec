@@ -30,6 +30,10 @@ export type DeviceSummary = {
   online: boolean;
   softwareCount: number;
   pendingUpdates: number;
+  /** "reliable", "unreliable", "unassessed" or "": whether pendingUpdates can be believed. Absent from an older control plane. */
+  patchReliability?: string;
+  /** The first reason the list is unreliable. */
+  patchReason?: string;
 };
 
 export type DevicePage = { devices: DeviceSummary[]; next?: string; total: number };

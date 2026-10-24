@@ -3,11 +3,13 @@ import { Badge } from "@/components/ui/badge";
 import { SeverityBadge } from "@/components/status-badge";
 import { FindingActions } from "@/components/finding-actions";
 import { WhyRanksHere } from "@/components/exposure-list";
+import { RepoEvidence } from "@/components/repo-evidence";
 import { eolStageLabel, feedLabel, originLabel, upgradeLabel } from "@/lib/findings-model";
 import {
   ageLabel,
   eolOfHosts,
   hostStatus,
+  repoOfHosts,
   resolutionLabel,
   watchLabel,
   type ExposureAdvisoryResponse,
@@ -40,6 +42,7 @@ export function ExposureDetail({
     epss: adv?.epss ?? group?.epss ?? null,
     cvss: adv?.cvssScore ?? group?.cvss ?? null,
     eol: group?.eol ?? eolOfHosts(detail.hosts),
+    repo: group?.repo ?? repoOfHosts(detail.hosts),
   } as const;
   const resolved = detail.status === "resolved";
   const kinds = [...new Set(detail.hosts.map((h) => h.kind))];
@@ -97,7 +100,15 @@ export function ExposureDetail({
             follow its support lifecycle.
           </p>
         ) : null}
-        {!adv && !subject.eol ? (
+        {!adv && subject.repo ? (
+          <p className="text-sm text-muted-foreground" data-repo-basis>
+            A repository finding comes from what the host&apos;s own package manager holds for the repository (its
+            Release file, checked with gpgv, and the date the host last refreshed), read by the agent without
+            refreshing anything. It is not an advisory. While it is open, nothing the repository publishes is being
+            installed or matched, and the host&apos;s pending updates are marked unreliable.
+          </p>
+        ) : null}
+        {!adv && !subject.eol && !subject.repo ? (
           <p className="text-sm text-muted-foreground">
             The advisory record is no longer in the database (a feed re-sync removed it); the findings below keep what
             they matched.
@@ -127,24 +138,28 @@ export function ExposureDetail({
                     {h.kind === "awaiting_vendor" ? <Badge variant="outline">awaiting vendor</Badge> : null}
                     {h.kind === "unfixed" ? <Badge variant="outline">no fix published</Badge> : null}
                     {h.kind === "eol" && h.eol ? <Badge variant="outline">{eolStageLabel(h.eol)}</Badge> : null}
+                    {h.kind === "repo_health" ? <Badge variant="outline">repository</Badge> : null}
                   </div>
                   {!readOnly && status !== "resolved" ? (
                     <FindingActions findingKey={h.key} status={status === "acknowledged" ? "acknowledged" : "open"} />
                   ) : null}
                 </div>
-                <p className="text-sm">
-                  {h.kind === "eol" && h.eol ? h.eol.packages.join(", ") : h.package}: installed <code>{h.installed}</code>
-                  {h.kind === "eol" && h.eol ? (
-                    <> · {upgradeLabel(h.eol)}</>
-                  ) : h.fixed ? (
-                    <>
-                      {" "}
-                      · fixed in <code>{h.fixed.replace(/^0:/, "")}</code>
-                    </>
-                  ) : (
-                    " · no fixed version"
-                  )}
-                </p>
+                {h.kind === "repo_health" && h.repo ? <RepoEvidence repo={h.repo} controls={h.controls} /> : null}
+                {h.kind !== "repo_health" ? (
+                  <p className="text-sm">
+                    {h.kind === "eol" && h.eol ? h.eol.packages.join(", ") : h.package}: installed <code>{h.installed}</code>
+                    {h.kind === "eol" && h.eol ? (
+                      <> · {upgradeLabel(h.eol)}</>
+                    ) : h.fixed ? (
+                      <>
+                        {" "}
+                        · fixed in <code>{h.fixed.replace(/^0:/, "")}</code>
+                      </>
+                    ) : (
+                      " · no fixed version"
+                    )}
+                  </p>
+                ) : null}
                 {h.kind === "awaiting_vendor" && h.reason ? (
                   <p className="text-sm text-muted-foreground">{h.reason}</p>
                 ) : null}
@@ -161,15 +176,17 @@ export function ExposureDetail({
                 ) : null}
                 <p className="text-xs text-muted-foreground">{ageLabel(h.firstSeen, h.resolvedAt)}</p>
                 {resolution ? <p className="text-sm" data-resolution={h.resolution || "unrecorded"}>{resolution}</p> : null}
-                <p className="text-xs text-muted-foreground">
-                  {feedLabel(h)}
-                  {h.snapshotId !== null ? ` · snapshot ${h.snapshotId}` : ""}
-                  {h.rangeId !== null ? ` · range ${h.rangeId}` : ""}
-                  {" · "}
-                  <Link href={`/findings/${h.findingId}`} className="underline">
-                    finding {h.findingId}
-                  </Link>
-                </p>
+                {h.kind !== "repo_health" ? (
+                  <p className="text-xs text-muted-foreground">
+                    {feedLabel(h)}
+                    {h.snapshotId !== null ? ` · snapshot ${h.snapshotId}` : ""}
+                    {h.rangeId !== null ? ` · range ${h.rangeId}` : ""}
+                    {" · "}
+                    <Link href={`/findings/${h.findingId}`} className="underline">
+                      finding {h.findingId}
+                    </Link>
+                  </p>
+                ) : null}
               </li>
             );
           })}

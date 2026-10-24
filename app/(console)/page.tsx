@@ -12,6 +12,7 @@ import { SurfaceSummaryCard } from "@/components/surface-summary-card";
 import { ensureStore, publicDevice } from "@/lib/store";
 import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 import { isOnline } from "@/lib/policies";
+import { isUnreliable, patchReliabilityOf, unreliableHostsNote } from "@/lib/patch-reliability";
 import { fleetAggregates } from "@/lib/fleet-aggregates";
 import { getFindingsSummary } from "@/lib/findings";
 import { getFeedStatus } from "@/lib/feeds";
@@ -48,6 +49,8 @@ export default async function HomePage({
   // null when the control plane could not be asked: shown as unknown, not zero.
   const serious = aggregates.serious;
   const patches = fleet.reduce((n, d) => n + d.pendingUpdates.length, 0);
+  // Hosts whose pending-updates list cannot be believed: a clean count must not be shown for them.
+  const patchUnreliable = fleet.filter((d) => isUnreliable(patchReliabilityOf(d))).length;
   // Everything the Monday view needs comes from the control plane a page at a
   // time or as counts; the fleet itself stays on the server.
   const [exposure, trend, feedStatus, periods] = await Promise.all([
@@ -133,9 +136,13 @@ export default async function HomePage({
         <StatCard
           title="Pending patches"
           value={patches}
-          subtitle="Updates reported across the fleet"
+          subtitle={
+            patchUnreliable > 0
+              ? `${unreliableHostsNote(patchUnreliable)} The count is a floor.`
+              : "Updates reported across the fleet"
+          }
           icon={Package}
-          tone={patches > 0 ? "warning" : "good"}
+          tone={patches > 0 || patchUnreliable > 0 ? "warning" : "good"}
         />
         <StatCard
           title="Integrity events"

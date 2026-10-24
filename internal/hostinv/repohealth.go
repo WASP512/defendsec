@@ -651,3 +651,5 @@ func (e repoEnv) checkRPMKeys(repo *repohealth.Repo, r repohealth.RPMRepo, impor
 		repo.Detail = "The repository names no gpgkey."
 	}
 }
+
+func runtimeGOOS() string { return runtime.GOOS }

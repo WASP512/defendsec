@@ -8,7 +8,8 @@
 // it was handed is in rank order and say why each row sits where it does.
 
 import { upgradeLabel } from "./findings-model.ts";
-import type { EolDetail, FindingKind, FindingSeverity } from "./findings-model.ts";
+import type { EolDetail, FindingKind, FindingSeverity, RepoDetail } from "./findings-model.ts";
+import { repoCodeLabel, repoFixPhrase } from "./patch-reliability.ts";
 import type { FindingTriage } from "./types.ts";
 
 /**
@@ -61,12 +62,22 @@ export type ExposureGroup = {
   awaitingSince: string | null;
   /** Set on an end-of-life row (advisory id "EOL:<product>:<cycle>"). */
   eol?: ExposureEol | null;
+  /** Set on a repository-health row (advisory id "REPO:<12 hex>"). */
+  repo?: ExposureRepo | null;
   source?: ExposureSource;
   /**
    * Set on a surface row. Its advisoryId is the row key ("surface:<12 digits>"),
    * its summary the finding's title; it has no hosts, KEV, EPSS or CVSS.
    */
   surface?: SurfaceRow;
+};
+
+/** The repository a repository-health row is about. */
+export type ExposureRepo = {
+  label: string;
+  manager: string;
+  /** The most serious problem found: key_expired, key_missing, no_index, index_stale, ... */
+  code: string;
 };
 
 /** The release an end-of-life row is about. */
@@ -122,6 +133,8 @@ export type ExposureHostRow = {
   origin?: string;
   originRepo?: string;
   eol?: EolDetail | null;
+  /** Repository-health rows: the repository, every problem, the evidence and the fix. */
+  repo?: RepoDetail | null;
   controls?: string[];
 };
 
@@ -163,6 +176,8 @@ export type ExposureSummary = {
     notAssessed: number;
     silent: number;
     silentList: { deviceId: string; hostname: string; lastSeen: string }[];
+    /** Hosts whose pending-updates list cannot be believed because a repository failed a check. */
+    patchUnreliable?: number;
   };
   /**
    * findings, advisories and hosts count patches to install and software to upgrade; eol is the
@@ -174,6 +189,8 @@ export type ExposureSummary = {
     hosts: number;
     kev: ExposureCount;
     eol?: ExposureCount;
+    /** Package repositories with an expired or missing key or a stale index: updates from them have stopped. */
+    repoHealth?: ExposureCount;
     /** Open external surface findings that rank (critical, high, medium, low). Absent from an older control plane. */
     surface?: number;
     /** advisories + surface: the length of the Fix this week list. */
@@ -238,8 +255,14 @@ const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2,
 
 export type Rankable = Pick<ExposureGroup, "advisoryId" | "severity" | "kev" | "kevAdded" | "epss" | "cvss"> & {
   eol?: ExposureEol | null;
+  repo?: ExposureRepo | null;
   source?: ExposureSource;
 };
+
+/** True for a row that is a repository-health finding. */
+export function isRepoRow(g: Pick<Rankable, "repo">): boolean {
+  return Boolean(g.repo);
+}
 
 /** True for a row that is an external surface finding. */
 export function isSurfaceRow(g: Pick<Rankable, "source">): boolean {
@@ -261,18 +284,20 @@ export const SURFACE_SCORE: Record<string, number> = { critical: 9.5, high: 8.0,
 export const EOL_SCORE: Record<string, number> = { eol: 8.0, eoas: 2.0 };
 
 /**
- * 0: a KEV vulnerability. 1: a critical or high surface finding, or software
- * past end of security support. 2: everything else. Mirrors exposure.Band.
+ * 0: a KEV vulnerability. 1: a critical or high surface finding, software past
+ * end of security support, or a repository with a key problem. 2: everything
+ * else. Mirrors exposure.Band.
  */
 export function rankBand(g: Rankable): 0 | 1 | 2 {
-  if (isSurfaceRow(g)) return g.severity === "critical" || g.severity === "high" ? 1 : 2;
+  if (isSurfaceRow(g) || isRepoRow(g)) return g.severity === "critical" || g.severity === "high" ? 1 : 2;
   if (g.eol && g.eol.stage in EOL_SCORE) return g.eol.stage === "eol" ? 1 : 2;
   return g.kev ? 0 : 2;
 }
 
 // A surface or end-of-life row has no exploitation signal, and the CVSS-equivalent of its severity or stage.
 function effective(g: Rankable): Rankable {
-  if (isSurfaceRow(g)) return { ...g, kev: false, kevAdded: null, epss: null, cvss: SURFACE_SCORE[g.severity] ?? null };
+  // A repository-health row ranks by its severity's CVSS-equivalent, as a surface finding does.
+  if (isSurfaceRow(g) || isRepoRow(g)) return { ...g, kev: false, kevAdded: null, epss: null, cvss: SURFACE_SCORE[g.severity] ?? null };
   if (g.eol && g.eol.stage in EOL_SCORE) return { ...g, kev: false, kevAdded: null, epss: null, cvss: EOL_SCORE[g.eol.stage] };
   return g;
 }
@@ -359,7 +384,20 @@ export type RankReason = {
 export function rankReason(g: Rankable): RankReason {
   let headline: string;
   const details: string[] = [];
-  if (g.eol) {
+  if (g.repo) {
+    // No CVE and no score: the repository's state is the signal. A dead repository hides
+    // the vulnerabilities it would have fixed, so it ranks with the urgent findings.
+    headline =
+      g.severity === "high" || g.severity === "critical"
+        ? `Updates from this repository have stopped: ${repoCodeLabel(g.repo.code)}`
+        : `Repository index out of date: ${repoCodeLabel(g.repo.code)}`;
+    details.push("no exploitation score applies");
+    details.push(
+      rankBand(g) === 1
+        ? "ranks after exploited vulnerabilities and before every other vulnerability, because it hides what it would have fixed"
+        : "ranks with the medium-scored vulnerabilities that have no EPSS score",
+    );
+  } else if (g.eol) {
     // No CVE and no score: the release calendar is the signal, and saying so
     // is better than printing "no exploitation signal" as if it were missing.
     const e = g.eol;
@@ -447,8 +485,16 @@ export function groupStatus(
 }
 
 /** How a closed finding closed, in words an operator can check against the host. */
-export function resolutionLabel(row: Pick<ExposureHostRow, "resolvedAt" | "resolution" | "resolvedInstalled" | "fixed" | "package">): string | null {
+export function resolutionLabel(
+  row: Pick<ExposureHostRow, "resolvedAt" | "resolution" | "resolvedInstalled" | "fixed" | "package"> & { kind?: FindingKind },
+): string | null {
   if (!row.resolvedAt) return null;
+  if (row.kind === "repo_health") {
+    // A repository finding closes because the repository passes its checks now, or because the host no longer uses it.
+    if (row.resolution === "fixed") return "Fixed: the repository passes its signature and freshness checks now";
+    if (row.resolution === "no_longer_affected") return "The repository is no longer enabled on this host";
+    return "Closed; the reason was not recorded";
+  }
   switch (row.resolution) {
     case "fixed":
       return `Fixed: inventory shows ${row.package} ${row.resolvedInstalled}` + (row.fixed ? ` (fix was ${row.fixed})` : "");
@@ -488,6 +534,17 @@ export function eolOfHosts(hosts: Pick<ExposureHostRow, "eol" | "origin">[]): Ex
   return { product: e.product, productLabel: e.productLabel, cycle: e.cycle, stage: e.stage, date: e.stageFrom, upgradeTo: e.upgradeTo ?? "", origins };
 }
 
+/**
+ * The repository an opened repository-health row is about, read from its host
+ * findings (the drawer can be opened on a link, without the list row).
+ */
+export function repoOfHosts(hosts: Pick<ExposureHostRow, "repo">[]): ExposureRepo | null {
+  const first = hosts.find((h) => h.repo);
+  if (!first?.repo) return null;
+  const top = first.repo.problems.find((p) => p.severity === "high") ?? first.repo.problems[0];
+  return { label: first.repo.label, manager: first.repo.manager, code: top?.code ?? "" };
+}
+
 /** "3 hosts: alpha, bravo, charlie" or "12 hosts: alpha, bravo, charlie and 9 more". */
 export function hostsLabel(g: Pick<ExposureGroup, "hostCount" | "hosts">): string {
   const n = g.hostCount;
@@ -497,7 +554,8 @@ export function hostsLabel(g: Pick<ExposureGroup, "hostCount" | "hosts">): strin
 }
 
 /** What the fixed versions of a group say, one or several. */
-export function fixedLabel(g: Pick<ExposureGroup, "fixed"> & { eol?: ExposureEol | null }): string {
+export function fixedLabel(g: Pick<ExposureGroup, "fixed"> & { eol?: ExposureEol | null; repo?: ExposureRepo | null }): string {
+  if (g.repo) return repoFixPhrase(g.repo.code);
   if (g.eol) return upgradeLabel({ productLabel: g.eol.productLabel, upgradeTo: g.eol.upgradeTo });
   if (g.fixed.length === 0) return "no fix recorded";
   return `fixed in ${g.fixed.join(", ")}`;
