@@ -1,4 +1,6 @@
 ---
 collections:
+  # Exact pin: the version bundled in the `ansible` 14.5.0 package that CI
+  # installs, so CI needs no Galaxy download. Bump together with that pin.
   - name: ansible.windows
-    version: ">=2.0.0"
+    version: "3.8.0"
