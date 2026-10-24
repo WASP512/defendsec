@@ -111,6 +111,9 @@ type Server struct {
 
 	// m365r is the Microsoft 365 identity collector's state (m365.go).
 	m365r m365Runner
+
+	// atkr is the Autotask ticketing state (autotask.go).
+	atkr autotaskRunner
 }
 
 // SetRepoStaleAfter sets the repository-index staleness threshold.
