@@ -6,7 +6,7 @@ on:
   push:
     # Bot branches get CI on push: the bots open no PRs (no gh token), so
     # this is the only CI a slice sees before it is merged.
-    branches: [main, "scout/**", "hermes/**"]
+    branches: [main, "scout/**", "lookout/**", "nitpick/**", "hermes/**"]
 
 permissions:
   contents: read
