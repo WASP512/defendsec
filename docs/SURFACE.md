@@ -59,11 +59,56 @@ control tags from `internal/controls` (new signals `surface.email`, `surface.dns
 9.5, all marked *partial*) and fix-it text. Provider hints from the MX records (Google Workspace,
 Microsoft 365, Cloudflare) change the wording of fix-it text, never the findings.
 
-## Storage (migration 023)
+## Storage (migrations 023 and 025)
 
 `surface_assets`, `surface_scans`, `surface_observations` (the raw material of every check of every
-scan, append-only), `surface_findings`. Removing an asset hides it and stops scanning but keeps its
+scan, append-only), `surface_findings`, and (025) `surface_finding_intervals` and `surface_scans.changes`. Removing an asset hides it and stops scanning but keeps its
 findings and observations. Scan history is not pruned yet.
+
+## In the exposure view (slice 7b, migration 025)
+
+Surface findings are first-class rows of the Fix this week list, the Fleet card, the trend and the evidence export. How they
+rank, what the card says and the API additions are in [EXPOSURE.md](EXPOSURE.md#external-surface-findings-slice-7b).
+
+Two storage changes carry it:
+
+- **A finding that closes and comes back restarts `first_seen`.** Until slice 7b a reopened finding kept its first
+  `first_seen` and lost the closed days, so the trend counted them as open. Now the interval that ended is copied to
+  `surface_finding_intervals` and `first_seen` restarts, as `vuln_finding_intervals` does for vulnerabilities. Rows reopened
+  before this slice already lost the closed gap; nothing can recover it.
+- **Every scan is attested in the audit chain.** `RecordSurfaceScan` appends a `surface_scan_recorded` entry (scan id, asset id,
+  SHA-256 digest, how many findings it opened and closed) in the same transaction that stores the scan, so there is never a
+  scan without its attestation or an attestation without its scan. `surface_scans.changes` keeps the findings the scan opened or
+  closed, so the digest can be recomputed at export time.
+
+## Evidence export
+
+Every evidence bundle (`GET /v1/audit/evidence`, scoped or not) carries a `surface` section when the instance has declared
+an asset: every asset (removed ones too: their findings are evidence), every scan with the raw observation of every check
+(record text, certificate fields, "not assessed" and why) and the findings it opened or closed, and every finding with each
+interval it was open.
+
+The findings, observations and assets are rows in Postgres, not entries of the hash chain, so on their own they prove nothing.
+They are made checkable the way the compliance section's audit counts are, and the bundle says exactly which part is which
+(`defendsec-verify` prints it):
+
+- **Attested scan.** The verifier recomputes the scan's digest from the bundle's own copy (asset, times, trigger, every
+  observation, every change) and compares it with the chained `surface_scan_recorded` entry. A match means the observations
+  and the findings the scan opened or closed are exactly what the control plane stored when it ran, and the chain fixes the
+  date. Editing a record text, an observation's "assessed" flag, a change or a scan date in the database or in the bundle
+  fails the scan.
+- **Open on date A, closed on date B.** A finding's intervals are recomputed from the attested scans that opened and closed it
+  and compared with the dates the bundle claims. A match proves the dates under the chain's weight; a moved date fails the
+  finding.
+- **Unattested** (not failed): a scan with no chained entry (it ran before slice 7b, or lies outside an exported audit range)
+  is carried and named, and so are the findings of its asset, because their history cannot be recomputed completely.
+- **Failed**: a chained entry whose scan is missing from the bundle, a digest that does not match, or an edited provenance
+  sentence. The section is read after the audit range on purpose, so a scan recorded in between is unattested, not "withheld".
+
+What it does not prove: that the scanner's view was the internet's view (one vantage point), the asset list's authorisation
+facts (the chain records `surface_asset_add` and `surface_asset_authorise`, which are not cross-checked), or anything about a
+scan the chain does not hold. Bundle size grows with the number of scans (observations are never pruned); it has not been
+measured at a year of daily scans.
 
 ## API (admin API, same auth as the neighbouring routes; viewers read, admins write)
 

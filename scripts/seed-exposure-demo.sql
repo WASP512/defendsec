@@ -20,7 +20,8 @@ END
 $$;
 
 TRUNCATE vuln_findings, vuln_finding_intervals, host_vuln_state, alerts, feed_status,
-         advisory_ranges, advisories, feed_snapshots, audit_periods, devices CASCADE;
+         advisory_ranges, advisories, feed_snapshots, audit_periods, devices,
+         surface_finding_intervals, surface_findings, surface_observations, surface_scans, surface_assets CASCADE;
 
 -- ---- feeds: one snapshot a day old, every feed confirmed current ---------------
 INSERT INTO feed_snapshots (id, created_at, feeds)
@@ -163,3 +164,90 @@ INSERT INTO audit_periods (id, name, framework, starts_at, ends_at, notes, creat
 VALUES ('demo-q3', '2026 Q3', 'cis-v8', '2026-07-01', '2026-09-30 23:59:59+00', 'demo', 'demo'),
        ('demo-q4', '2026 Q4', 'cis-v8', '2026-10-01', '2026-12-31 23:59:59+00', 'demo', 'demo');
 UPDATE audit_periods SET closed_at = '2026-10-05', closed_by = 'demo' WHERE id = 'demo-q3';
+
+-- ---- external surface (slice 7b) ------------------------------------------------------------
+-- Invented assets on example.com / example.net and RFC 5737 addresses. The scans are plain rows
+-- with no chained audit entry, so an evidence export of this database lists them as unattested
+-- (see docs/SURFACE.md): rendering is what this proves, not scanning.
+INSERT INTO surface_assets (id, kind, value, label, dkim_selectors, shared_hosting, mail_host, authorised, authorised_by, authorised_at,
+                            created_by, created_at, last_scan_at, removed_at)
+OVERRIDING SYSTEM VALUE VALUES
+  (1, 'domain',   'demo-client.example.com',     'Client domain',       '{}', false, false, true,  'demo', now() - interval '80 days', 'demo', now() - interval '80 days', now() - interval '2 hours', NULL),
+  (2, 'hostname', 'www.demo-client.example.com', 'Public web site',     '{}', false, false, true,  'demo', now() - interval '80 days', 'demo', now() - interval '80 days', now() - interval '2 hours', NULL),
+  (3, 'ip',       '192.0.2.10',                  'Office firewall',     '{}', false, false, true,  'demo', now() - interval '80 days', 'demo', now() - interval '80 days', now() - interval '2 hours', NULL),
+  (4, 'ip',       '198.51.100.7',                'Mail relay',          '{}', false, true,  true,  'demo', now() - interval '80 days', 'demo', now() - interval '80 days', now() - interval '2 hours', NULL),
+  (5, 'domain',   'unconfirmed.example.net',     'Not yet confirmed',   '{}', false, false, false, '',     NULL,                         'demo', now() - interval '3 days',  NULL,                         NULL);
+SELECT setval(pg_get_serial_sequence('surface_assets', 'id'), 5);
+
+-- A first scan 80 days ago and the latest two hours ago, for each confirmed asset.
+INSERT INTO surface_scans (id, asset_id, triggered_by, started_at, finished_at, checks_assessed, checks_not_assessed, findings_open, changes)
+OVERRIDING SYSTEM VALUE VALUES
+  (1, 1, 'manual',   now() - interval '80 days 6 seconds', now() - interval '80 days', 8, 1, 0, '[]'),
+  (2, 2, 'manual',   now() - interval '80 days 4 seconds', now() - interval '80 days', 2, 0, 0, '[]'),
+  (3, 3, 'manual',   now() - interval '80 days 3 seconds', now() - interval '80 days', 1, 0, 0, '[]'),
+  (4, 4, 'manual',   now() - interval '80 days 3 seconds', now() - interval '80 days', 1, 0, 0, '[]'),
+  (5, 1, 'schedule', now() - interval '2 hours 6 seconds', now() - interval '2 hours', 8, 1, 6, '[]'),
+  (6, 2, 'schedule', now() - interval '2 hours 4 seconds', now() - interval '2 hours', 2, 0, 1, '[]'),
+  (7, 3, 'schedule', now() - interval '2 hours 3 seconds', now() - interval '2 hours', 1, 0, 3, '[]'),
+  (8, 4, 'schedule', now() - interval '2 hours 3 seconds', now() - interval '2 hours', 1, 0, 0, '[]');
+SELECT setval(pg_get_serial_sequence('surface_scans', 'id'), 8);
+
+-- The raw record behind each check of the latest scan; the drawer shows these.
+INSERT INTO surface_observations (scan_id, asset_id, check_group, assessed, reason, observed, observed_at) VALUES
+  (5, 1, 'spf',    true,  '', '{"host":"demo-client.example.com","record":"v=spf1 include:_spf.example.net -all","lookups":3}', now() - interval '2 hours'),
+  (5, 1, 'dmarc',  true,  '', '{"host":"_dmarc.demo-client.example.com","record":"v=DMARC1; p=none; rua=mailto:dmarc@demo-client.example.com"}', now() - interval '2 hours'),
+  (5, 1, 'dkim',   false, 'no selector found among 9 checked: declare your selector', '{"checked":["google","selector1","selector2","s1","s2","k1","default","dkim","mail"]}', now() - interval '2 hours'),
+  (5, 1, 'caa',    true,  '', '{"host":"demo-client.example.com","records":[]}', now() - interval '2 hours'),
+  (5, 1, 'mta-sts',true,  '', '{"host":"_mta-sts.demo-client.example.com","records":[]}', now() - interval '2 hours'),
+  (5, 1, 'dnssec', true,  '', '{"ds":[],"validated":false}', now() - interval '2 hours'),
+  (6, 2, 'tls-cert', true, '', '{"host":"www.demo-client.example.com","notAfter":"2026-10-28T09:12:00Z","daysLeft":4,"issuer":"Example Demo CA","sha256":"demo0f3c9a51"}', now() - interval '2 hours'),
+  (7, 3, 'ports',  true,  '', '{"address":"192.0.2.10","checked":[21,22,23,25,445,1433,3306,3389,5432,5900,6379,8080,9200,27017],"open":[22,445,3389]}', now() - interval '2 hours'),
+  (8, 4, 'ports',  true,  '', '{"address":"198.51.100.7","checked":[21,22,23,25,445,1433,3306,3389,5432,5900,6379,8080,9200,27017],"open":[25]}', now() - interval '2 hours');
+
+-- Open findings. first_seen/last_seen/last_scan_id say what the drawer reports.
+INSERT INTO surface_findings (asset_id, check_group, finding_id, subject, severity, title, detail, fix, evidence, controls,
+                              first_seen, last_seen, first_scan_id, last_scan_id) VALUES
+  (3, 'ports', 'ports.open', '445/tcp', 'critical', 'SMB (445/tcp) is reachable from the internet',
+   'A TCP connection to 192.0.2.10 port 445 succeeded. SMB is meant for the local network; reachable here it is the entry point of most ransomware worms. Reachable means the service answered, not that it is vulnerable.',
+   'Remove the port forward for 445/tcp on the firewall. If a remote user needs file access, use a VPN.',
+   '{"port":445,"service":"smb","state":"open","address":"192.0.2.10"}', '{cis-v8:12.2,nist-800-53:SC-7}', now() - interval '12 days', now() - interval '2 hours', 3, 7),
+  (3, 'ports', 'ports.open', '3389/tcp', 'high', 'RDP (3389/tcp) is reachable from the internet',
+   'A TCP connection to 192.0.2.10 port 3389 succeeded. Remote Desktop exposed to the internet is a common way in. Reachable means the service answered, not that it is vulnerable.',
+   'Remove the port forward for 3389/tcp, or put RDP behind a VPN or a gateway with multi-factor authentication.',
+   '{"port":3389,"service":"rdp","state":"open","address":"192.0.2.10"}', '{cis-v8:12.2,nist-800-53:SC-7}', now() - interval '12 days', now() - interval '2 hours', 3, 7),
+  (3, 'ports', 'ports.open', '22/tcp', 'info', 'SSH (22/tcp) is reachable',
+   'Normal on a server; noted so it is a decision, not a surprise.', 'Allow SSH only from known addresses if you can.',
+   '{"port":22,"service":"ssh","state":"open","address":"192.0.2.10"}', '{}', now() - interval '12 days', now() - interval '2 hours', 3, 7),
+  (2, 'tls-cert', 'tls.expires_soon', 'www.demo-client.example.com', 'high', 'Certificate expires in 4 days',
+   'The certificate presented by www.demo-client.example.com expires on 2026-10-28.', 'Renew the certificate now; check why automatic renewal did not run.',
+   '{"notAfter":"2026-10-28T09:12:00Z","daysLeft":4,"issuer":"Example Demo CA","sha256":"demo0f3c9a51"}', '{cis-v8:3.10,nist-800-53:SC-8}', now() - interval '1 day', now() - interval '2 hours', 6, 6),
+  (1, 'dmarc', 'dmarc.p_none', 'demo-client.example.com', 'medium', 'DMARC policy is p=none',
+   'The DMARC record asks receivers to monitor, not to reject, mail that fails authentication, so spoofed mail from your domain is still delivered.',
+   'Move to p=quarantine, then p=reject, once the reports at the rua address show your real mail passing.',
+   '{"record":"v=DMARC1; p=none; rua=mailto:dmarc@demo-client.example.com","host":"_dmarc.demo-client.example.com"}', '{cis-v8:9.5,nist-800-53:SI-8}', now() - interval '20 days', now() - interval '2 hours', 5, 5),
+  (1, 'caa', 'caa.missing', 'demo-client.example.com', 'low', 'No CAA record',
+   'Without a CAA record any certificate authority may issue for the domain.', 'Publish a CAA record naming the authorities you use.',
+   '{"host":"demo-client.example.com","records":[]}', '{cis-v8:3.10}', now() - interval '80 days', now() - interval '2 hours', 1, 5),
+  (1, 'mta-sts', 'mtasts.missing', 'demo-client.example.com', 'low', 'No MTA-STS policy',
+   'Senders cannot be told to insist on encrypted delivery to your mail servers.', 'Publish an MTA-STS policy, starting in testing mode.',
+   '{"host":"_mta-sts.demo-client.example.com","records":[]}', '{cis-v8:9.5}', now() - interval '80 days', now() - interval '2 hours', 1, 5),
+  (1, 'dnssec', 'dnssec.unsigned', 'demo-client.example.com', 'info', 'The zone is not signed with DNSSEC',
+   'Common for small businesses; noted for completeness.', 'Enable DNSSEC at the registrar and DNS host if both support it.',
+   '{"ds":[],"validated":false}', '{}', now() - interval '80 days', now() - interval '2 hours', 1, 5);
+
+-- Findings that closed: someone fixed SPF and set up DMARC, and an exposed port on the mail relay was shut.
+INSERT INTO surface_findings (asset_id, check_group, finding_id, subject, severity, title, detail, fix, evidence, controls,
+                              first_seen, last_seen, resolved_at, first_scan_id, last_scan_id) VALUES
+  (1, 'spf', 'spf.missing', 'demo-client.example.com', 'high', 'No SPF record', 'Anyone can send mail claiming to be your domain.', 'Publish an SPF record.',
+   '{"host":"demo-client.example.com","records":[]}', '{cis-v8:9.5}', now() - interval '80 days', now() - interval '41 days', now() - interval '40 days', 1, 5),
+  (1, 'dmarc', 'dmarc.missing', 'demo-client.example.com', 'high', 'No DMARC record', 'Receivers cannot tell what to do with mail that fails authentication.', 'Publish a DMARC record.',
+   '{"host":"_dmarc.demo-client.example.com","records":[]}', '{cis-v8:9.5}', now() - interval '80 days', now() - interval '61 days', now() - interval '60 days', 1, 5),
+  (4, 'ports', 'ports.open', '3389/tcp', 'high', 'RDP (3389/tcp) is reachable from the internet', 'A TCP connection succeeded.', 'Remove the port forward.',
+   '{"port":3389,"service":"rdp","state":"open","address":"198.51.100.7"}', '{cis-v8:12.2}', now() - interval '80 days', now() - interval '9 days', now() - interval '8 days', 4, 8),
+  (4, 'ports', 'ports.open', '445/tcp', 'critical', 'SMB (445/tcp) is reachable from the internet', 'A TCP connection succeeded.', 'Remove the port forward.',
+   '{"port":445,"service":"smb","state":"open","address":"198.51.100.7"}', '{cis-v8:12.2}', now() - interval '80 days', now() - interval '33 days', now() - interval '32 days', 4, 8);
+
+-- DMARC p=none was closed for ten days (someone tried p=quarantine) and came back: the interval that
+-- ended is kept, and first_seen above restarted when it reopened.
+INSERT INTO surface_finding_intervals (asset_id, finding_id, subject, severity, opened_at, closed_at)
+VALUES (1, 'dmarc.p_none', 'demo-client.example.com', 'medium', now() - interval '58 days', now() - interval '30 days');
