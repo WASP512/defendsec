@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"defendsec/internal/repohealth"
 	"defendsec/internal/vuln"
 )
 
@@ -184,6 +185,10 @@ type PackageInventory struct {
 	DistroRelease  string     `json:"distro_release"`
 	PackageManager string     `json:"package_manager"`
 	Software       []Software `json:"software"`
+	// RepoHealth is what the agent read about the host's package repositories
+	// (empty from a host whose package manager it does not read); the matcher
+	// judges it into repository-health findings.
+	RepoHealth *repohealth.Report `json:"repoHealth,omitempty"`
 }
 
 // CollectPackages gathers only the package inventory.
@@ -191,5 +196,8 @@ func CollectPackages() PackageInventory {
 	inv := PackageInventory{PackageManager: packageManager()}
 	inv.Distro, inv.DistroRelease = osReleaseIdentity()
 	inv.Software = collectPackages(inv.PackageManager)
+	if rh := CollectRepoHealth(); !rh.Empty() {
+		inv.RepoHealth = &rh
+	}
 	return inv
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -50,8 +51,11 @@ func (v *vulnState) remember(deviceID, fp string) {
 }
 
 // vulnHost turns a device record into the matcher's input.
-func vulnHost(dev presence.Device) vuln.Host {
-	h := vuln.Host{Distro: dev.Distro, Release: dev.DistroRelease, PackageManager: dev.PackageManager}
+func vulnHost(dev presence.Device, staleAfter time.Duration) vuln.Host {
+	h := vuln.Host{Distro: dev.Distro, Release: dev.DistroRelease, PackageManager: dev.PackageManager, StaleAfter: staleAfter}
+	if dev.RepoHealth != nil && !dev.RepoHealth.Empty() {
+		h.RepoHealth = dev.RepoHealth
+	}
 	h.Packages = make([]vuln.Package, 0, len(dev.Software))
 	for _, sw := range dev.Software {
 		h.Packages = append(h.Packages, vuln.Package{
@@ -74,6 +78,12 @@ func vulnInventory(h vuln.Host) *storepg.Inventory {
 		scheme = vuln.DetectScheme(versions...)
 	}
 	inv := &storepg.Inventory{Scheme: scheme, Versions: make(map[string]string, len(h.Packages))}
+	if h.RepoHealth != nil && !h.RepoHealth.Empty() {
+		inv.Repos = make(map[string]bool, len(h.RepoHealth.Repos))
+		for _, r := range h.RepoHealth.Repos {
+			inv.Repos[r.ID] = true
+		}
+	}
 	for _, p := range h.Packages {
 		inv.Versions[p.Name] = p.Version
 	}
@@ -87,6 +97,15 @@ func vulnFingerprint(h vuln.Host, snapshotID int64) string {
 	fmt.Fprintf(sum, "%s\x00%s\x00%s\x00%d\x00", h.Distro, h.Release, h.PackageManager, snapshotID)
 	for _, p := range h.Packages {
 		fmt.Fprintf(sum, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00", p.Name, p.Version, p.SourcePackage, p.SourceVersion, p.Origin, p.OriginRepo)
+	}
+	if h.RepoHealth != nil {
+		// Repository findings depend on the evidence and on the date: an index
+		// goes stale as days pass with nothing else changing, so the day and the
+		// threshold are inputs too. The verdict and its timestamp are outputs.
+		rh := *h.RepoHealth
+		rh.Assessment, rh.AssessedAt = nil, ""
+		raw, _ := json.Marshal(rh)
+		fmt.Fprintf(sum, "repo\x00%s\x00%s\x00%d\x00", raw, time.Now().UTC().Format("2006-01-02"), h.StaleAfter)
 	}
 	return hex.EncodeToString(sum.Sum(nil))
 }
@@ -120,7 +139,7 @@ func (s *Server) matchDevice(ctx context.Context, dev presence.Device) (*vuln.Re
 	} else if ok {
 		snapID, fpSnap = &snap.ID, snap.ID
 	}
-	host := vulnHost(dev)
+	host := vulnHost(dev, s.repoStaleAfter)
 	fp := vulnFingerprint(host, fpSnap)
 	if s.vulnSeen.unchanged(dev.ID, fp) {
 		return nil, nil

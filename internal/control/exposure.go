@@ -218,6 +218,9 @@ type exposureHostRow struct {
 	OriginRepo string          `json:"originRepo"`
 	EOL        *vuln.EOLDetail `json:"eol"`
 	Controls   []string        `json:"controls"`
+	// Repo is set on repository-health findings: the repository, every problem
+	// found, the evidence dates and the fix text.
+	Repo *vuln.RepoDetail `json:"repo"`
 }
 
 // exposureSurfaceResponse is the drawer of a surface row of the list: the
@@ -291,7 +294,7 @@ func (s *Server) exposureAdvisory(w http.ResponseWriter, r *http.Request) {
 			Feed: f.Feed, FeedDate: utcPtr(f.FeedDate), SnapshotID: f.SnapshotID, RangeID: f.RangeID,
 			FirstSeen: f.FirstSeen.UTC(), LastSeen: f.LastSeen.UTC(), ResolvedAt: utcPtr(f.ResolvedAt),
 			Resolution: f.Resolution, ResolvedInstalled: f.ResolvedInstalled,
-			Origin: f.Origin, OriginRepo: f.OriginRepo, EOL: f.EOL, Controls: f.Controls,
+			Origin: f.Origin, OriginRepo: f.OriginRepo, EOL: f.EOL, Controls: f.Controls, Repo: f.Repo,
 		})
 	}
 	for _, sn := range d.Snapshots {

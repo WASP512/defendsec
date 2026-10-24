@@ -13,8 +13,15 @@ import (
 //
 // Application end-of-life applies only to software from outside the host's own
 // distribution (see internal/lifecycle), so the agent reads, for every package,
-// the repository that carries the installed version. Reading is all it does:
-// `apt-cache policy` and `rpm -qa` change nothing.
+// the repository that carries the installed version. Reading is all it does,
+// with one precaution for apt: `apt-cache policy` (like `apt list --upgradable`
+// and `apt-get indextargets`) run as root writes apt's derived package cache,
+// /var/cache/apt/pkgcache.bin, when that file is missing or older than the
+// indexes. That is a write to the host, and it is avoidable: apt builds the same
+// cache in memory when Dir::Cache::pkgcache and Dir::Cache::srcpkgcache are
+// empty (see aptReadOnly), which costs about a second and a half per call
+// instead of a fraction of one, so the calls are batched. `rpm -qa` changes
+// nothing.
 //
 // dpkg: `apt-cache policy` with no arguments lists every source with the
 // Origin: its Release file declares ("release o=Debian,a=stable,..."); with
@@ -180,11 +187,11 @@ func annotateDpkgOrigins(items []Software, distro string) {
 	if len(items) == 0 {
 		return
 	}
-	sources := ParseAptSources(run("apt-cache", "policy"))
+	sources := ParseAptSources(runApt("apt-cache", "policy"))
 	if len(sources) == 0 {
 		return // no apt, or no readable indexes: every origin stays unknown
 	}
-	const batch = 400
+	const batch = 1500
 	installed := map[string]aptInstalled{}
 	for i := 0; i < len(items); i += batch {
 		end := i + batch
@@ -195,7 +202,7 @@ func annotateDpkgOrigins(items []Software, distro string) {
 		for _, it := range items[i:end] {
 			args = append(args, it.Name)
 		}
-		for k, v := range ParseAptPolicy(run("apt-cache", args...)) {
+		for k, v := range ParseAptPolicy(runApt("apt-cache", args...)) {
 			installed[k] = v
 		}
 	}
