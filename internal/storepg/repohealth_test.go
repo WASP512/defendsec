@@ -10,6 +10,7 @@ import (
 
 	"defendsec/internal/controls"
 	"defendsec/internal/exposure"
+	"defendsec/internal/m365"
 	"defendsec/internal/presence"
 	"defendsec/internal/repohealth"
 	"defendsec/internal/surface"
@@ -218,6 +219,10 @@ func TestRepoHealthRanksWithEverythingElse(t *testing.T) {
 		{"B-scored", "CVE-2099-1001", "medium", false, "", f64(0.0002), f64(4.0)},
 		{"E-cvss-only-5", "CVE-2099-1004", "medium", false, "", nil, f64(5.0)},
 		{"F-cvss-only-3", "CVE-2099-1005", "low", false, "", nil, f64(3.0)},
+		// Pins the medium repository's 5.0 from below, and a lowercase id that sorts
+		// after every other id at the same score (the kind decides, not the bytes).
+		{"G-cvss-only-4.5", "CVE-2099-1006", "medium", false, "", nil, f64(4.5)},
+		{"z-cvss-only-5", "CVE-2099-1007", "medium", false, "", nil, f64(5.0)},
 	}
 	seedExposure(t, s, adv)
 	expoHost(t, s, "dev-1", "host-1")
@@ -248,6 +253,20 @@ func TestRepoHealthRanksWithEverythingElse(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A medium surface finding and an identity finding of each severity: a row of
+	// every kind at equal score and severity, in both bands.
+	if _, err := s.RecordSurfaceScan(ctx, dom.ID, "manual", report(dom, repoNow,
+		result("ports", true, "", finding("ports", "ports.open", "3389/tcp", surface.SevHigh)),
+		result("dmarc", true, "", finding("dmarc", "dmarc.p_none", "192.0.2.10", surface.SevMedium)))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordIdentityRun(ctx, "m365", "t", "schedule", idnReport(repoNow.Add(-time.Hour),
+		idnCheck(m365.GroupMFA, true, "",
+			idnFinding("mfa.not_registered", "u2", "pat@example.com", m365.SevHigh),
+			idnFinding("mfa.not_registered", "u3", "casey@example.com", m365.SevMedium)))); err != nil {
+		t.Fatal(err)
+	}
+
 	page, err := s.ListExposure(ctx, ExposureQuery{Limit: 200})
 	if err != nil {
 		t.Fatal(err)
@@ -259,15 +278,18 @@ func TestRepoHealthRanksWithEverythingElse(t *testing.T) {
 			order = append(order, "repo:"+g.Severity)
 		case g.Surface != nil:
 			order = append(order, "surface:"+g.Severity)
+		case g.Identity != nil:
+			order = append(order, "identity:"+g.Severity)
 		default:
 			order = append(order, g.AdvisoryID)
 		}
 	}
-	// KEV; then the 8.0 urgent group in id order (EOL:, REPO:, surface:);
-	// then EPSS-scored; then the CVSS-only 5.0 CVE with the medium repo row
-	// (equal 5.0 and equal "medium" for both, so the id order: E-cvss before REPO:
-	// is false bytewise ('E' < 'R') and the CVE comes first); then the 3.0 one.
-	want := []string{"A-kev", "EOL:php:8.0", "repo:high", "surface:high", "B-scored", "E-cvss-only-5", "repo:medium", "F-cvss-only-3"}
+	// KEV; then the 8.0 urgent group in kind order (end-of-life, repository,
+	// identity, surface: exposure.TieRank); then EPSS-scored; then the 5.0 group in
+	// the same kind order, the vulnerabilities first (by id: E-, then the lowercase
+	// z-), then the medium repo, identity and surface rows; then 4.5; then 3.0.
+	want := []string{"A-kev", "EOL:php:8.0", "repo:high", "identity:high", "surface:high", "B-scored",
+		"E-cvss-only-5", "z-cvss-only-5", "repo:medium", "identity:medium", "surface:medium", "G-cvss-only-4.5", "F-cvss-only-3"}
 	if strings.Join(order, ",") != strings.Join(want, ",") {
 		t.Fatalf("order = %v\nwant    %v", order, want)
 	}
@@ -277,7 +299,7 @@ func TestRepoHealthRanksWithEverythingElse(t *testing.T) {
 	items := make([]exposure.Item, 0, len(page.Findings))
 	for _, g := range page.Findings {
 		it := exposure.Item{AdvisoryID: g.AdvisoryID, Severity: g.Severity, KEV: g.KEV, EPSS: g.EPSS, CVSS: g.CVSS,
-			Surface: g.Source == SourceSurface, RepoHealth: g.Repo != nil}
+			Surface: g.Source == SourceSurface, Identity: g.Source == SourceIdentity, RepoHealth: g.Repo != nil}
 		if g.EOL != nil {
 			it.EOLStage = g.EOL.Stage
 		}

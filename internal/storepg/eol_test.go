@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"defendsec/internal/exposure"
+	"defendsec/internal/surface"
 	"defendsec/internal/vuln"
 )
 
@@ -311,6 +312,14 @@ func TestEOLRanksNextToHighVulnerabilities(t *testing.T) {
 		{"C-unscored-medium", "CVE-2099-1002", "medium", false, "", nil, nil},
 		{"D-unscored-high", "CVE-2099-1003", "high", false, "", nil, nil},
 		{"E-cvss-only-5", "CVE-2099-1004", "medium", false, "", nil, f64(5.0)},
+		// Neighbours on both sides of every constant the SQL carries for a row with no
+		// scores of its own: a surface medium (5.0), a surface low and past-active-support
+		// (2.0 both). A typo in k4 moves a row past one of them.
+		{"H-cvss-only-5.5", "CVE-2099-1005", "medium", false, "", nil, f64(5.5)},
+		{"I-cvss-only-4.5", "CVE-2099-1006", "medium", false, "", nil, f64(4.5)},
+		{"J-cvss-only-2", "CVE-2099-1007", "low", false, "", nil, f64(2.0)},
+		{"K-cvss-only-2.5", "CVE-2099-1008", "low", false, "", nil, f64(2.5)},
+		{"L-cvss-only-1.5", "CVE-2099-1009", "low", false, "", nil, f64(1.5)},
 	}
 	seedExposure(t, s, adv)
 	expoHost(t, s, "dev-1", "host-1")
@@ -325,6 +334,26 @@ func TestEOLRanksNextToHighVulnerabilities(t *testing.T) {
 	if err := s.RecordFindings(ctx, "dev-1", res, nil); err != nil {
 		t.Fatal(err)
 	}
+	// External surface findings among them: a critical one (9.5) above the
+	// end-of-life row, a high one (8.0) that ties with it, a medium one (5.0) that
+	// ties with the CVSS-only 5.0 CVE and a low one (2.0) that ties with the
+	// CVSS-only 2.0 CVE and past-active-support Node 22.
+	dom := surfaceAsset(t, s, "domain", "tie.example.com", true)
+	if _, err := s.RecordSurfaceScan(ctx, dom.ID, "schedule", report(dom, time.Now().UTC().Add(-time.Hour),
+		result("spf", true, "", finding("spf", "spf.plus_all", "tie.example.com", surface.SevCritical)),
+		result("ports", true, "", finding("ports", "ports.open", "3389/tcp", surface.SevHigh)),
+		result("dmarc", true, "", finding("dmarc", "dmarc.p_none", "tie.example.com", surface.SevMedium)),
+		result("caa", true, "", finding("caa", "caa.missing", "tie.example.com", surface.SevLow)))); err != nil {
+		t.Fatal(err)
+	}
+	surf, err := s.ListSurfaceFindings(ctx, SurfaceFindingFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := map[string]string{}
+	for _, f := range surf {
+		key[f.FindingID] = SurfaceKey(f.ID)
+	}
 	page, err := s.ListExposure(ctx, ExposureQuery{})
 	if err != nil {
 		t.Fatal(err)
@@ -333,11 +362,17 @@ func TestEOLRanksNextToHighVulnerabilities(t *testing.T) {
 	for _, g := range page.Findings {
 		order = append(order, g.AdvisoryID)
 	}
-	// KEV, then past-security-support PHP 8.0 above the EPSS-scored (0.0002) CVE,
-	// then the CVSS-only 5.0 CVE, then past-active-support Node 22 (2.0
-	// equivalent) below it but above the CVEs with no score at all, which keep
-	// their severity order.
-	want := []string{"A-kev", "EOL:php:8.0", "B-scored", "E-cvss-only-5", "EOL:nodejs:22", "D-unscored-high", "C-unscored-medium"}
+	// KEV; the critical surface finding (9.5); then the 8.0 high group, where the
+	// kind decides (TieRank): past-security-support PHP 8.0 before the high
+	// surface finding; then the EPSS-scored (0.0002) CVE; then CVSS-only 5.5, the
+	// CVSS-only 5.0 CVE before the medium surface finding (a vulnerability wins a
+	// tie), then 4.5; then 2.5; then the 2.0 low group in kind order, the CVE,
+	// past-active-support Node 22, the surface finding; then 1.5; then the CVEs
+	// with no score at all, which keep their severity order.
+	want := []string{"A-kev", key["spf.plus_all"], "EOL:php:8.0", key["ports.open"], "B-scored",
+		"H-cvss-only-5.5", "E-cvss-only-5", key["dmarc.p_none"], "I-cvss-only-4.5",
+		"K-cvss-only-2.5", "J-cvss-only-2", "EOL:nodejs:22", key["caa.missing"], "L-cvss-only-1.5",
+		"D-unscored-high", "C-unscored-medium"}
 	if strings.Join(order, ",") != strings.Join(want, ",") {
 		t.Errorf("order = %v\nwant    %v", order, want)
 	}
@@ -351,7 +386,7 @@ func TestEOLRanksNextToHighVulnerabilities(t *testing.T) {
 	// several page sizes.
 	items := make([]exposure.Item, 0, len(page.Findings))
 	for _, g := range page.Findings {
-		it := exposure.Item{AdvisoryID: g.AdvisoryID, Severity: g.Severity, KEV: g.KEV, EPSS: g.EPSS, CVSS: g.CVSS}
+		it := exposure.Item{AdvisoryID: g.AdvisoryID, Severity: g.Severity, KEV: g.KEV, EPSS: g.EPSS, CVSS: g.CVSS, Surface: g.Source == SourceSurface}
 		if g.EOL != nil {
 			it.EOLStage = g.EOL.Stage
 		}

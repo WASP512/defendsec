@@ -23,7 +23,9 @@
 //  4. CVSS base score, highest first. No score goes last.
 //  5. The vendor's severity label (critical, high, medium, low, unknown), so
 //     rows with no scores at all still order sensibly.
-//  6. Advisory id, so the order is total and a keyset cursor is stable.
+//  6. The kind of row (TieRank): a vulnerability, then end-of-life software, then
+//     a repository, then an identity finding, then an external surface finding.
+//  7. Advisory id, bytewise, so the order is total and a keyset cursor is stable.
 //
 // EPSS and CVSS order the KEV group too, after the date. CVSS is last among the
 // scores on purpose: severity says what could happen, EPSS and KEV say what is
@@ -111,12 +113,28 @@
 //   - Medium (a stale index): the rest band as a vulnerability with no EPSS and
 //     a CVSS of 5.0.
 //
-// Tie-break inside the urgent band. After the score (critical surface 9.5, then
-// the 8.0 group of high surface, security-EOL and high repo-health findings) the
-// severity label orders and then the advisory id, bytewise, which is a rule and
-// not an accident: "EOL:" before "REPO:" before "surface:". So at equal score
-// an end-of-life release comes first, then a dead repository, then an exposed
-// surface finding.
+// # Tie-break
+//
+// Two rows that agree on the band, the KEV date, EPSS, the CVSS-equivalent and
+// the severity label are ordered by the kind of row, then by id. The kind order
+// is a stated rule, not a by-product of how the ids happen to sort (it used to be
+// the id's bytes: "EOL:" before "REPO:" before "identity:" before "surface:",
+// which put a lowercase advisory id anywhere). It is, first to last:
+//
+//  0. a vulnerability: a vendor-confirmed advisory with a fix path;
+//  1. software past its end of life: no one will ever patch it;
+//  2. a package repository that has stopped delivering updates;
+//  3. an identity finding (a client's tenant);
+//  4. an external surface finding.
+//
+// So in the urgent band, at 8.0 and high, an end-of-life release comes first, then
+// a dead repository, then an identity finding, then an exposed surface finding;
+// and in the rest band a CVSS-only vulnerability of 5.0 comes before a stale
+// repository or DMARC p=none of the same 5.0. Among rows of one kind the id
+// decides, bytewise (a surface or identity id carries its zero-padded finding id,
+// so the older finding is first). The same rule is k6 in the SQL of
+// internal/storepg (a digit and the id, collated "C") and tieRank in
+// lib/exposure-model.ts; each is tested against this one with a row of every kind.
 package exposure
 
 import (
@@ -281,7 +299,37 @@ func Compare(a, b Item) int {
 	if c := SeverityRank(a.Severity) - SeverityRank(b.Severity); c != 0 {
 		return c
 	}
+	if c := TieRank(a) - TieRank(b); c != 0 {
+		return c
+	}
 	return strings.Compare(a.AdvisoryID, b.AdvisoryID)
+}
+
+// The kinds of row, in the order they win a tie (see the package comment).
+const (
+	TieVulnerability = 0
+	TieEOL           = 1
+	TieRepository    = 2
+	TieIdentity      = 3
+	TieSurface       = 4
+)
+
+// TieRank is the kind of row, which orders two rows that tie on everything the
+// ranking measures. The checks are in the order Band and effective use, so a row
+// is the kind they treat it as.
+func TieRank(i Item) int {
+	switch {
+	case i.Surface:
+		return TieSurface
+	case i.Identity:
+		return TieIdentity
+	case i.RepoHealth:
+		return TieRepository
+	}
+	if _, eol := EOLScore(i.EOLStage); eol {
+		return TieEOL
+	}
+	return TieVulnerability
 }
 
 // cmpScoreDesc puts the higher score first and a missing score last.

@@ -1545,3 +1545,111 @@ Re-run of (b) with this head's agent and matcher: Ubuntu `repos: 4 checked, 0 wi
 | Notes on new host and on a fix, evidence from DefendSec's record, auto-complete off by default | any | engine and storepg tests | see handoff | **not run** against Autotask |
 | Dry run changes nothing; live needs a dry run with the same fingerprint | any | engine, storepg, control tests | see handoff | fake service, in a browser |
 | Every ticket action in the audit ledger | any | storepg and control tests (Postgres) | see handoff | fake service |
+
+## Slice 7c — evidence hardening: the verifier catches withheld and edited findings (migration 031)
+
+- Date: 2026-10-24 (MDT). Host: `hermesagent`, go1.26.10, node 22, Postgres 16 on titan CT 119 (own database) and a user-space PG 16.15 (`pg-local`, port 54329).
+- Branch `scout/7c-evidence-hardening`, merged with `origin/main` (6fec0b3, slice 14; this slice's migration was 030 and is now 031 because Autotask took 030).
+- What changed: the surface section's scan digest is now v2 and covers every finding a scan saw; `Verify` cross-checks the findings list in both directions
+  (missing, extra, duplicated, edited) and fails a bundle whose section was dropped while the chain still holds the scans; v1-chained scans (written before this slice)
+  still verify, for dates and presence, and are counted as "dates only". Also: `assetsAffected`, one REPEATABLE READ snapshot for the export, upcoming-expiry reason
+  text, the old Fleet tile, UTC `surfaceSince`, and the rank tie-break as a stated rule (`exposure.TieRank`, SQL k6, TS `tieRank`). The bug and the design are in
+  [SURFACE.md](SURFACE.md#evidence-export) ("What this proves" and "What this does not prove").
+
+### The bug, shown (the exit criterion: tamper tests fail on the old verifier and pass on the new)
+
+`internal/evidence/surface_tamper_test.go` was committed first (e69f254), on top of main, with the 7b verifier (`ce1c223`) unchanged:
+
+```
+$ go test -count=1 -run 'TestVerifySurface(CatchesTampered|Reordered|FailureNames)' ./internal/evidence/     (7b verifier)
+15 of 19 tampered bundles verified (each line is a subtest that expected a failure and got VERIFIED):
+  findings emptied; findings removed (nil); severity edited; severity raised; title edited; check group edited; detail edited; fix edited;
+  evidence edited; controls edited; finding moved to asset; injected, no intervals; duplicate of a finding; duplicate, other title; section removed whole
+plus: a reordered but intact bundle FAILED (interval order), and the failure did not name the finding.
+18 "--- FAIL" lines; saved output: workspace/e7c/old-verifier-tamper.txt
+```
+
+The four it did catch (a finding id or subject renamed, an injected finding with copied dates, and "emptied + title edited" with its intervals blanked) are the cases
+the 7b date recomputation already covered. With the fix, the same file: `go test -count=1 ./internal/evidence/` is `ok` (all 19 tampered bundles fail, the reordered
+one verifies). Added tests: `surface_legacy_test.go` (v1 and mixed digests, seen tampering, self-contradicting scans, unknown digest version, withheld finding of a partly
+attested asset, dropped section, the earlier provenance sentence, content-digest stability).
+
+### The same thing on a real export, through apid and `defendsec-verify`
+
+Scans recorded through the real `RecordSurfaceScan` (synthetic example.com / RFC 5737 data: a certificate getting closer, an SPF `+all` fixed, a DMARC finding that closes and
+comes back, an RDP port closed), exported with `GET /v1/audit/evidence` from apid on its own database, checked with the built `defendsec-verify`:
+
+```
+$ defendsec-verify bundle-evid.json                                  (this branch; 8 scans chained under v2)
+  ok    surface scans        8 scans: 8 attested ...
+  ok    surface findings     4 findings: 4 with open and closed dates recomputed ... and severity, title, detail, fix, evidence and controls matched ...; 0 with dates only ...
+VERIFIED — every check passed.                                       exit 0
+```
+
+The same bundle altered (`workspace/e2e/tamper7c.py`, output in `workspace/e7c/tamper-e2e.txt`): findings emptied → `FAILED`, exit 1, "dmarc.p_none ... an attested scan recorded
+it, but the bundle does not list it (withheld); ports.open ...". Severity high→low → "tls.expires_soon ...: severity (bundle "low", scan 8 recorded "high") ...". Title edited →
+"differs from what scan 8 recorded in: title". One finding dropped → "(withheld)". Injected finding → "no attested scan opened this finding". Surface section removed →
+"the chain records 8 surface scan(s) but the bundle carries no surface section". Reordered scans, observations and findings → `VERIFIED`, exit 0. (The 7b verifier rejects every
+7c bundle by its provenance sentence, so the old-versus-new comparison below uses a real 7b bundle.)
+
+On a **real 7b bundle** (apid built from `ce1c223`, its own database, the same scans; `workspace/e7c/tamper-e2e-7b-bundle.txt`): the 7b verifier prints `VERIFIED` for **all 8 variants**,
+the six altered ones included (findings emptied, severity edited, title edited, one finding dropped, finding injected, section removed). This branch's verifier fails findings emptied,
+one dropped, finding injected and section removed, and verifies the intact and the reordered bundle. **It still verifies an edited severity or title on that bundle**, because the scans
+were chained with the v1 digest, which never covers them; the report says so ("4 with dates only", and a Note line) and `SURFACE.md` states it as a limit.
+
+In-place upgrade: apid on the 7b database (8 scans, `seen` NULL) started with this branch's binary (migration 031 applied, no errors in the log), one more scan recorded, exported:
+`9 scans: 9 attested`, `4 findings: 2 with dates and content matched ..., 2 with dates only` (the two that closed before the upgrade), `VERIFIED` plus the dates-only Note. On that bundle the variants that alter the
+finding the new scan saw (severity high→low, title) fail, as do findings emptied, one dropped, injected and section removed, and reordered verifies
+(`workspace/e7c/tamper-e2e-upgraded.txt`); the two findings that closed before the upgrade stay dates-only, so their title and severity could still be edited unseen.
+
+### Other fixes and how each was checked
+
+| # | Item | Check |
+| --- | --- | --- |
+| 2 | `assetsAffected` counted info-only assets | One query in Go now (`exposure.SurfaceScore` decides what ranks); `TestSurfaceAssetsAffectedIgnoresInfoOnlyAssets` (an asset with only info findings → 2 not 3; a low finding → 3); mutation of the rule makes it fail |
+| 3 | Export without a snapshot | `ExportSurfaceEvidence` in one `REPEATABLE READ` read-only transaction. `TestSurfaceEvidenceExportReadsOneSnapshot` (scans recorded in a loop while 40 exports are verified) passes; with the reads put back on separate connections it fails ("export 7 is not a snapshot", "export 9 ...") |
+| 4 | "Live for anyone ..." for an upcoming certificate expiry | `tls.expires_soon` says "Not yet in effect, but with a deadline: every visitor is refused when it lapses, and no attacker is needed"; `tls.expired` and ports keep the old wording. TS tests; read in a browser on the seeded console (row "Certificate expires in 4 days") |
+| 5 | Two "fix" numbers on Fleet | The "Fix these N" tile is gone; `Fix this week` is the only count. Browser run below, screenshot `workspace/e7c/fleet-7c.png` |
+| 6 | `surfaceSince` with `-06:00` | UTC in `surfaceTrend`; `TestSurfaceTrendSinceIsUTCWhateverTheProcessZone` runs with `time.Local` set to UTC-6, fails on the old line ("surfaceSince is in MDT, want UTC") |
+| 7 | Scheduled scan failures not in the ledger | **Already fixed on main in 7b (926a9d3)**, so no change here. Checked: `TestFailedSurfaceScansAreWrittenToTheLedger` passes; with the schedule's `auditSurfaceScanFailed` call commented out it fails ("the failed scheduled scan is in the ledger 0 times, want 1") |
+| CEO 1 | `k4 = -8.0` for security-EOL survived | `TestEOLRanksNextToHighVulnerabilities` now has a critical, a high, a medium and a low surface finding and CVSS-only neighbours either side of each constant. SQL mutation run (`workspace/e7c/mutate_sql.sh`, 15 mutants): 14 killed, 1 survived (below) |
+| CEO 2 | EOL vs high-surface tie by the ids' bytes | A stated rule: after score and severity, the kind of row (vulnerability, end-of-life, repository, identity, surface), then the id. Go `TieRank`, SQL leading digit of `k6`, TS `tieRank`; `TestRepoHealthRanksWithEverythingElse` has a row of every kind in both bands and a lowercase vulnerability id; the digit of each kind is killed by a mutation |
+| nitpick, slice 11 | SQL surface/identity medium 5.0 and repo medium 5.0 survived | Both killed now (neighbours at 4.5 and 5.5) |
+
+The one surviving SQL mutant, `critical 9.5 -> 8.0` for surface and identity rows, is equivalent: in the urgent band nothing scores between 8.0 and 9.5, and a critical row beats a high one on the severity label at equal score. Not killed, not killable.
+
+### Commands run (this box, on the merged head)
+
+| Command | Result |
+| --- | --- |
+| `gofmt -l .` | only `.sqlrun/main.go` (a scratch helper outside git) |
+| `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./...` | exit 0, no output |
+| `go test -p 1 ./...` with no database | exit 0, 65 packages `ok` |
+| CI integration command with `TEST_DATABASE_URL` set (`go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/... ./internal/rmm/...`) | exit 0; with `-json`: 406 pass (tests and subtests), 0 fail, 0 skip |
+| `go test -count=1 -v ./internal/evidence/ ./internal/exposure/` | 90 pass |
+| `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build` | clean; `npm test` 227/227 |
+| `npm audit --audit-level=high` (local, 11:40 MDT) | **exit 1**: `@modelcontextprotocol/sdk <=1.31.0` (high, five advisories) pulled in by the dev tool `shadcn@4.21.0`. Package files are untouched by this slice. The same step in branch CI on 673f32a (11:44Z) **passed**; I did not find out why the two differ, so treat the audit result as unsettled |
+
+### Browser run, Fleet page (slice 7c build, `next start`, demo database `e7c_demo` cloned from the slice 5 database, so migrations 023-031 ran in place; apid second start without errors)
+
+`document.body.innerText` of `/`: "Fix these" appears 0 times, "Fix this week" once: "9 vulnerabilities with a fix to install and 3 end-of-life releases to upgrade, across 16 hosts
+and 6 external surface findings." The tile row is Hosts online, Pending patches, Integrity events. Screenshot: `~/.hermes/profiles/scout/workspace/e7c/fleet-7c.png`.
+
+### Not verified
+
+- **A real client scan or a real long history.** The scans in the round trip are synthetic findings recorded through the real store; no live domain was scanned in this slice (7a/7b did that).
+- **Pre-7c bundles can still be edited in title and severity without detection.** Nothing can fix history that was chained without those fields; the verifier names them ("with dates only"). They become fully verified after the first scan of this version that sees them again, except for findings that closed before it.
+- **Bundle size** at a year of daily scans; `seen` adds one small object per finding per scan.
+- The vulnerability evidence export asked about in the card **does not exist**: bundles carry no vulnerability rows, intervals or findings at all (`ExportEvidence` writes audit entries, checkpoints, commands and the compliance and surface sections). There is no gap in a verifier to fix; the missing export is a product gap (see the report).
+- Windows and macOS: nothing here is platform-specific; `GOOS=windows go vet` only.
+- Branch CI: run 40091074577 on 673f32a, 6/6 jobs green (go, postgres-integration, node, isolation, provisioning, secrets-scan); re-checked on the final head in the handoff.
+
+## Feature × platform × evidence matrix — additions from slice 7c
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Surface evidence: findings list complete and unaltered (v2 digest, both directions) | linux, Postgres 16 | 19 tamper cases + 10 more evidence tests, DB-level edits of every finding column | see the card | n/a (agentless); round trip through apid and `defendsec-verify` on synthetic scans |
+| Legacy (v1) bundles and in-place upgrade | Postgres 16 | v1, mixed and unknown-version tests, `TestSurfaceEvidenceUpgradesInPlaceFromV1Scans` | see the card | real 7b bundle and database upgraded in place |
+| Export snapshot (REPEATABLE READ) | Postgres 16 | concurrent record-and-export test, killed by the mutation | see the card | — |
+| Rank tie-break rule (Go = SQL = TS) | linux, Postgres 16 | Go, TS, Postgres; 15 SQL mutants | see the card | seeded console |
+| One Fix-this-week number on Fleet | Next.js 16 build | — | see the card | browser, seeded database |

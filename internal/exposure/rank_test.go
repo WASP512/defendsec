@@ -198,8 +198,8 @@ func TestEOLJoinsTheOrderNextToHighVulnerabilities(t *testing.T) {
 		{AdvisoryID: "epss-0.0005", EPSS: f(0.0005), CVSS: f(3), Severity: "low"}, // even a tiny EPSS ranks above past-active-support
 		{AdvisoryID: "cvss-only-9.8", CVSS: f(9.8), Severity: "critical"},
 		{AdvisoryID: "cvss-only-4.3", CVSS: f(4.3), Severity: "medium"},
-		eol("EOL:nodejs:22", EOLStageEOAS, "low"), // 2.0 equivalent; ties with the next on severity, the id breaks it
-		{AdvisoryID: "cvss-only-2.0", CVSS: f(2.0), Severity: "low"},
+		{AdvisoryID: "cvss-only-2.0", CVSS: f(2.0), Severity: "low"}, // 2.0 and low, as the EOL row below: a vulnerability wins the tie
+		eol("EOL:nodejs:22", EOLStageEOAS, "low"),                    // 2.0 equivalent; ties with the one above on score and severity
 		{AdvisoryID: "cvss-only-1.0", CVSS: f(1.0), Severity: "low"},
 		{AdvisoryID: "no-scores-critical", Severity: "critical"},
 	}

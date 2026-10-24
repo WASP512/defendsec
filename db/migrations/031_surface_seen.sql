@@ -1,0 +1,12 @@
+-- Slice 7c: what each surface scan saw.
+--
+-- The v2 scan digest (internal/evidence/surface.go) covers every finding a scan
+-- reported, not only the ones it opened or closed, so that a finding's severity,
+-- title and content can be checked against a scan the chain vouches for. This is
+-- the list that digest is computed over, kept as it was hashed: one object per
+-- finding with its id, subject, check, severity, title and a content digest.
+--
+-- NULL means the scan was recorded before this migration and chained under the
+-- v1 digest; such a scan is verified as before and its findings' titles and
+-- severities are reported as not attested. A v2 scan that saw nothing stores [].
+ALTER TABLE surface_scans ADD COLUMN IF NOT EXISTS seen JSONB;

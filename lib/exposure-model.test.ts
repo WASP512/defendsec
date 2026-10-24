@@ -23,6 +23,8 @@ import {
   prevHref,
   rankBand,
   SURFACE_SCORE,
+  tieRank,
+  UPCOMING_SURFACE_IDS,
   surfaceChart,
   rankReason,
   resolutionLabel,
@@ -385,8 +387,8 @@ test("end-of-life rows rank next to high vulnerabilities: security-EOL in the ur
     row("epss-0.0005", { epss: 0.0005, cvss: 3, severity: "low" }), // even a tiny EPSS ranks above past-active-support
     row("cvss-only-9.8", { cvss: 9.8, severity: "critical" }),
     row("cvss-only-4.3", { cvss: 4.3, severity: "medium" }),
-    eolRow("EOL:nodejs:22", "eoas", "low"), // 2.0 equivalent; ties on severity, the id breaks it
-    row("cvss-only-2.0", { cvss: 2.0, severity: "low" }),
+    row("cvss-only-2.0", { cvss: 2.0, severity: "low" }), // 2.0 and low like the row below: a vulnerability wins the tie
+    eolRow("EOL:nodejs:22", "eoas", "low"), // 2.0 equivalent; ties on score and severity with the one above
     row("cvss-only-1.0", { cvss: 1.0, severity: "low" }),
     row("no-scores-critical", { severity: "critical" }),
   ];
@@ -526,4 +528,94 @@ test("the surface series is a chart of its own, on its own scale, with no bar fo
   // An older control plane sends no surface series at all: nothing is drawn as a measurement.
   const old = surfaceChart([{ day: "2026-10-01", known: true, open: 3, kev: 0, watch: 0 }], 100, 100);
   assert.deepEqual(old.bars.map((b) => [b.known, b.height]), [[false, 0]]);
+});
+
+// ---- the tie-break: a stated rule, the same as exposure.TieRank and the SQL's k6 -------------
+
+function repoRow(id: string, severity: Rankable["severity"]): Rankable {
+  return row(id, { severity, repo: { label: "deb http://repo.example.invalid stable", manager: "apt", code: "key_expired" } });
+}
+
+function identityRow(id: string, severity: Rankable["severity"]): Rankable {
+  return { advisoryId: `identity:${id}`, severity, kev: false, kevAdded: null, epss: null, cvss: null, source: "identity" };
+}
+
+test("rows that tie on everything the ranking measures are ordered by kind, not by the bytes of their ids", () => {
+  // Rest band, 5.0, medium. The ids are chosen so that the id order is the reverse of the rule's:
+  // a lowercase vulnerability id sorts after "REPO:", "identity:" and "surface:".
+  const rest: Rankable[] = [
+    surfaceRow("000000000001", "medium"),
+    identityRow("000000000001", "medium"),
+    repoRow("REPO:aaaaaaaaaaaa", "medium"),
+    row("zzz-lowercase-vulnerability-id", { cvss: 5.0, severity: "medium" }),
+  ];
+  const wantRest = ["zzz-lowercase-vulnerability-id", "REPO:aaaaaaaaaaaa", "identity:000000000001", "surface:000000000001"];
+  // Urgent band, 8.0, high: security-EOL, a dead repository, an identity finding, an exposed surface finding.
+  const urgent: Rankable[] = [
+    surfaceRow("000000000001", "high"),
+    identityRow("000000000001", "high"),
+    repoRow("REPO:aaaaaaaaaaaa", "high"),
+    eolRow("EOL:zzz:1", "eol", "high"),
+  ];
+  const wantUrgent = ["EOL:zzz:1", "REPO:aaaaaaaaaaaa", "identity:000000000001", "surface:000000000001"];
+  for (const [items, want] of [
+    [rest, wantRest],
+    [urgent, wantUrgent],
+  ] as const) {
+    for (let shift = 0; shift < items.length; shift++) {
+      const rotated = [...items.slice(shift), ...items.slice(0, shift)];
+      assert.deepEqual(sorted(rotated), want, `rotation ${shift}`);
+    }
+  }
+  // Past-active-support and a CVSS-only 2.0 low vulnerability: the vulnerability first.
+  assert.deepEqual(sorted([eolRow("EOL:a:1", "eoas", "low"), row("zzz", { cvss: 2.0, severity: "low" })]), ["zzz", "EOL:a:1"]);
+});
+
+test("tieRank is vulnerability, end-of-life, repository, identity, surface, with the precedence of rankBand", () => {
+  assert.equal(tieRank(row("CVE-1")), 0);
+  assert.equal(tieRank(row("CVE-1", { kev: true })), 0);
+  assert.equal(tieRank(eolRow("EOL:php:8.0", "eol", "high")), 1);
+  assert.equal(tieRank(eolRow("EOL:php:8.4", "eoas", "low")), 1);
+  assert.equal(tieRank(repoRow("REPO:x", "high")), 2);
+  assert.equal(tieRank(identityRow("1", "high")), 3);
+  assert.equal(tieRank(surfaceRow("1", "high")), 4);
+  assert.equal(tieRank({ ...surfaceRow("1", "high"), repo: repoRow("REPO:x", "high").repo }), 4, "surface beats repository");
+  assert.equal(tieRank({ ...repoRow("REPO:x", "high"), eol: eolRow("EOL:p:1", "eol", "high").eol }), 2, "repository beats end-of-life");
+});
+
+test("within one kind the id decides, bytewise", () => {
+  assert.deepEqual(sorted([surfaceRow("000000000002", "high"), surfaceRow("000000000001", "high")]), ["surface:000000000001", "surface:000000000002"]);
+});
+
+// ---- reason text for an upcoming expiry ------------------------------------------------------
+
+function surfaceRowOf(id: string, findingId: string, severity: Rankable["severity"]): Rankable {
+  return {
+    ...surfaceRow(id, severity),
+    surface: {
+      findingId: 1, assetId: 1, assetKind: "domain", assetValue: "client.example.com", check: "tls-cert", id: findingId,
+      subject: "client.example.com", detail: "", fix: "", lastSeen: "2026-10-24T06:00:00Z", unconfirmed: false,
+    },
+  };
+}
+
+test("a certificate that has not expired yet is not described as live", () => {
+  const soon = rankReason(surfaceRowOf("000000000001", "tls.expires_soon", "high"));
+  assert.doesNotMatch(soon.text, /Live for anyone/i);
+  assert.doesNotMatch(soon.text, /no foothold or exploit needed/i);
+  assert.match(soon.headline, /Not yet in effect/);
+  assert.match(soon.headline, /when it lapses/);
+  assert.match(soon.text, /high severity/);
+  assert.match(soon.text, /ranks after exploited vulnerabilities and before every other vulnerability/);
+
+  // An expired one is live: the original wording stands.
+  const expired = rankReason(surfaceRowOf("000000000002", "tls.expired", "critical"));
+  assert.match(expired.headline, /Live for anyone on the internet/);
+  const open = rankReason(surfaceRowOf("000000000003", "ports.open", "high"));
+  assert.match(open.headline, /Live for anyone on the internet/);
+
+  assert.deepEqual([...UPCOMING_SURFACE_IDS], ["tls.expires_soon"]);
+  // A low "expires within 30 days" finding is in the rest band and says no such thing.
+  const low = rankReason(surfaceRowOf("000000000004", "tls.expiring", "low"));
+  assert.equal(low.headline, "No exploitation signal (external surface finding)");
 });

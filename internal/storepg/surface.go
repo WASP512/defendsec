@@ -260,7 +260,9 @@ func (s *Store) RecordSurfaceScan(ctx context.Context, assetID int64, trigger st
 		ScanID: sum.ScanID, AssetID: assetID, AssetKind: assetKind, AssetValue: assetValue,
 		TriggeredBy: trigger, StartedAt: startedAt, FinishedAt: at,
 		Observations: []evidence.SurfaceObservation{}, Changes: []evidence.SurfaceChange{},
+		Seen: []evidence.SurfaceSeen{},
 	}
+	seenAt := map[string]int{} // a finding reported twice in one scan is stored once, as its last report says
 
 	for _, res := range rep.Results {
 		observed := res.Observed
@@ -294,6 +296,16 @@ func (s *Store) RecordSurfaceScan(ctx context.Context, assetID int64, trigger st
 			controls := f.Controls
 			if controls == nil {
 				controls = []string{}
+			}
+			seen := evidence.SeenFromFinding(evidence.SurfaceFinding{
+				FindingID: f.ID, Subject: f.Subject, Check: res.Check, Severity: string(f.Severity), Title: f.Title,
+				Detail: f.Detail, Fix: f.Fix, Evidence: f.Evidence, Controls: controls,
+			})
+			if i, dup := seenAt[findingKey(f.ID, f.Subject)]; dup {
+				scan.Seen[i] = seen
+			} else {
+				seenAt[findingKey(f.ID, f.Subject)] = len(scan.Seen)
+				scan.Seen = append(scan.Seen, seen)
 			}
 			var prevResolved, prevFirstSeen *time.Time
 			var prevSeverity string
@@ -381,12 +393,17 @@ func (s *Store) RecordSurfaceScan(ctx context.Context, assetID int64, trigger st
 	if err != nil {
 		return sum, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE surface_scans SET changes = $2::jsonb WHERE id = $1`, sum.ScanID, string(changes)); err != nil {
+	seenJSON, err := json.Marshal(scan.Seen)
+	if err != nil {
+		return sum, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE surface_scans SET changes = $2::jsonb, seen = $3::jsonb WHERE id = $1`,
+		sum.ScanID, string(changes), string(seenJSON)); err != nil {
 		return sum, err
 	}
 	sum.Digest = evidence.ScanDigest(scan)
 	if err := auditInTx(ctx, tx, "system:surface-scanner", evidence.SurfaceScanAction, "", evidence.SurfaceScanEntry{
-		ScanID: sum.ScanID, AssetID: assetID, Digest: sum.Digest, FinishedAt: at.Format(time.RFC3339Nano),
+		Version: evidence.DigestV2, ScanID: sum.ScanID, AssetID: assetID, Digest: sum.Digest, FinishedAt: at.Format(time.RFC3339Nano),
 		Opened: sum.New + sum.Reopened, Resolved: sum.Resolved,
 	}); err != nil {
 		return sum, fmt.Errorf("chain the scan: %w", err)
