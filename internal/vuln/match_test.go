@@ -157,8 +157,9 @@ func TestDebianBackport(t *testing.T) {
 	}
 }
 
-// RHEL ranges are per binary RPM and carry an epoch. Rocky and Alma are matched
-// against the RHEL feed by major release.
+// RHEL ranges are per binary RPM and carry an epoch. RHEL, CentOS Stream and
+// Oracle Linux are matched against the RHEL feed by major release. (Rocky and
+// Alma have their own errata too: see rebuild_test.go.)
 func TestRHELFamilyBackport(t *testing.T) {
 	src := &fakeSource{ranges: []Candidate{
 		rng(Candidate{CVE: "CVE-2024-6387", Ecosystem: "Red Hat", Distro: "rhel", Release: "9",
@@ -166,7 +167,7 @@ func TestRHELFamilyBackport(t *testing.T) {
 		rng(Candidate{CVE: "CVE-2024-5535", Ecosystem: "Red Hat", Distro: "rhel", Release: "9",
 			Package: "openssl-libs", Fixed: "1:3.0.7-28.el9_4", State: StateFixed, Feed: "rhel-9"}),
 	}}
-	for _, distro := range []string{"rhel", "rocky", "almalinux"} {
+	for _, distro := range []string{"rhel", "centos", "ol"} {
 		h := Host{Distro: distro, Release: "9.4", PackageManager: "rpm", Packages: []Package{
 			{Name: "openssh-server", Version: "0:8.7p1-38.el9_4.4", SourcePackage: "openssh"},
 			{Name: "openssl-libs", Version: "1:3.0.7-28.el9_4", SourcePackage: "openssl"},
@@ -179,17 +180,17 @@ func TestRHELFamilyBackport(t *testing.T) {
 			t.Errorf("%s normalised to %s %s (%s)", distro, res.Distro, res.Release, res.Coverage)
 		}
 	}
-	behind := Host{Distro: "rocky", Release: "9.4", PackageManager: "rpm", Packages: []Package{
+	behind := Host{Distro: "centos", Release: "9", PackageManager: "rpm", Packages: []Package{
 		{Name: "openssl-libs", Version: "1:3.0.7-27.el9", SourcePackage: "openssl"},
 	}}
 	res := openFindings(t, src, behind)
-	if len(res.Findings) != 1 || res.Findings[0].CVE != "CVE-2024-5535" {
-		t.Errorf("Rocky one update behind: %+v", res.Findings)
+	if len(res.Findings) != 1 || res.Findings[0].CVE != "CVE-2024-5535" || res.Findings[0].Kind != KindFinding {
+		t.Errorf("CentOS Stream one update behind: %+v", res.Findings)
 	}
 	// The epoch is part of the version: an inventory that drops it compares
 	// "3.0.7-28.el9_4" with "1:3.0.7-28.el9_4" and flags the patched host.
 	// ParseRPMQuery keeps it; this documents why.
-	noEpoch := Host{Distro: "rocky", Release: "9.4", PackageManager: "rpm", Packages: []Package{
+	noEpoch := Host{Distro: "rhel", Release: "9.4", PackageManager: "rpm", Packages: []Package{
 		{Name: "openssl-libs", Version: "3.0.7-28.el9_4"},
 	}}
 	if res := openFindings(t, src, noEpoch); len(res.Findings) != 1 {
@@ -465,8 +466,12 @@ func TestNormalizeDistro(t *testing.T) {
 		scheme       Scheme
 	}{
 		{"ubuntu", "22.04", "dpkg", "ubuntu", "22.04", SchemeDpkg},
-		{"Rocky", "9.4", "rpm", "rhel", "9", SchemeRPM},
-		{"almalinux", "8.10", "", "rhel", "8", SchemeRPM},
+		// Rebuilds keep their own name: they publish their own errata.
+		{"Rocky", "9.4", "rpm", "rocky", "9", SchemeRPM},
+		{"almalinux", "8.10", "", "almalinux", "8", SchemeRPM},
+		{"rhel", "9.4", "rpm", "rhel", "9", SchemeRPM},
+		{"centos", "9", "rpm", "rhel", "9", SchemeRPM},
+		{"ol", "8.9", "", "rhel", "8", SchemeRPM},
 		{"debian", "12", "dpkg", "debian", "12", SchemeDpkg},
 		{"opensuse-tumbleweed", "20241012", "rpm", "opensuse-tumbleweed", "", SchemeRPM},
 		{"opensuse-leap", "15.6", "rpm", "opensuse-leap", "15.6", SchemeRPM},
@@ -504,7 +509,7 @@ func TestSourceVersionInheritsBinaryEpoch(t *testing.T) {
 		rng(Candidate{CVE: "CVE-2026-0001", Ecosystem: "Red Hat:9", Distro: "rhel", Release: "9",
 			Package: "openssl", SourcePackage: "openssl", Fixed: "1:3.5.1-4.el9_8", State: StateFixed, Feed: "rhel-9"}),
 	}}
-	rh := Host{Distro: "rocky", Release: "9.8", PackageManager: "rpm", Packages: []Package{
+	rh := Host{Distro: "rhel", Release: "9.8", PackageManager: "rpm", Packages: []Package{
 		{Name: "openssl-libs", Version: "1:3.5.1-4.el9_8", SourcePackage: "openssl", SourceVersion: "3.5.1-4.el9_8"}}}
 	if res := openFindings(t, rsrc, rh); len(res.Findings) != 0 {
 		t.Errorf("rpm, patched: %+v", res.Findings)

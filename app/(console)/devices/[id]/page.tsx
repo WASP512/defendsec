@@ -11,8 +11,8 @@ import { ensureStore } from "@/lib/store";
 import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 import { apidId, evaluateDevice, fimDriftPaths, isOnline, type VulnInput } from "@/lib/policies";
 import { getFindings, getFindingsSummary } from "@/lib/findings";
-import { coverageNotice, findingStatus } from "@/lib/findings-model";
-import { CoverageBanner, FindingSummary } from "@/components/finding-summary";
+import { coverageNotice, exploitedAwaitingNotice, findingStatus } from "@/lib/findings-model";
+import { CoverageBanner, ExploitedAwaitingBanner, FindingSummary } from "@/components/finding-summary";
 import {
   formatBytesMb,
   formatUptime,
@@ -51,6 +51,7 @@ export default async function DeviceDetailPage({
   const findings = findingsResult?.findings ?? [];
   const fixable = findings.filter((f) => f.kind === "finding");
   const noFix = findings.filter((f) => f.kind !== "finding");
+  const exploitedAwaiting = exploitedAwaitingNotice(findings.filter((f) => f.kind === "awaiting_vendor" && f.kev).length);
   const notice = findingsResult ? coverageNotice(findingsResult.state) : null;
   const drifts = fimDriftPaths(device);
   const events = fimEvents.filter(
@@ -179,6 +180,7 @@ export default async function DeviceDetailPage({
           />
         ) : null}
         {notice ? <CoverageBanner notice={notice} /> : null}
+        {exploitedAwaiting ? <ExploitedAwaitingBanner notice={exploitedAwaiting} /> : null}
         {findingsResult && !notice ? (
           <p className="text-sm text-muted-foreground" data-match-summary>
             Matched {findingsResult.state?.packages ?? 0} packages against {findingsResult.state?.distro}{" "}
@@ -206,7 +208,7 @@ export default async function DeviceDetailPage({
         {noFix.length > 0 ? (
           <details className="rounded-xl border">
             <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-              {noFix.length} with no fix to install (no fix published, or the distribution will not fix)
+              {noFix.length} with no fix to install (fixed upstream but not yet released for this distribution, no fix published, or the distribution will not fix)
             </summary>
             <ul className="divide-y border-t">
               {noFix.map((finding) => (

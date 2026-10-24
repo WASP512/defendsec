@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   coverageNotice,
+  exploitedAwaitingNotice,
   feedLabel,
   findingStatus,
   fixLabel,
@@ -20,6 +21,8 @@ const summary = (over: Partial<DeviceFindingsSummary> = {}): DeviceFindingsSumma
   kev: 1,
   unfixed: 0,
   informational: 0,
+  awaitingVendor: 0,
+  kevAwaitingVendor: 0,
   seriousKeys: ["d1:CVE-1:openssh", "d1:CVE-2:curl"],
   matchedAt: "2026-10-23T12:00:00Z",
   ...over,
@@ -73,4 +76,23 @@ test("labels name the fix and the feed the finding came from", () => {
 test("severity ranks put critical first and unknown last", () => {
   const order = (["low", "unknown", "critical", "medium", "high"] as const).slice().sort((a, b) => severityRank(a) - severityRank(b));
   assert.deepEqual(order, ["critical", "high", "medium", "low", "unknown"]);
+});
+
+test("a finding fixed upstream but not yet released for the distribution is labelled as such", () => {
+  assert.equal(
+    fixLabel({ fixed: "0:5.14.0-687.60.1.el9_8", kind: "awaiting_vendor", fixState: "fixed" }),
+    "fixed upstream in 0:5.14.0-687.60.1.el9_8, not yet released for this distribution",
+  );
+});
+
+test("an exploited CVE awaiting the vendor gets a red notice, and nothing else does", () => {
+  assert.equal(exploitedAwaitingNotice(0), null);
+  const one = exploitedAwaitingNotice(1);
+  assert.ok(one);
+  assert.equal(one.tone, "red");
+  assert.match(one.title, /^1 exploited-in-the-wild vulnerability is fixed upstream/);
+  const many = exploitedAwaitingNotice(3);
+  assert.ok(many);
+  assert.match(many.title, /^3 exploited-in-the-wild vulnerabilities are fixed upstream/);
+  assert.match(many.detail, /KEV/);
 });

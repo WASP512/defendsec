@@ -27,7 +27,7 @@ const candidateColumns = `
 	r.id, r.advisory_id, COALESCE(a.cve,''), COALESCE(a.severity,'unknown'), COALESCE(a.summary,''),
 	COALESCE(a.kev,false), a.epss, a.cvss_score,
 	r.ecosystem, COALESCE(r.distro,''), COALESCE(r.release,''), r.package, COALESCE(r.source_package,''),
-	COALESCE(r.introduced,''), COALESCE(r.fixed,''), r.fix_state, r.snapshot_id, r.feed`
+	COALESCE(r.introduced,''), COALESCE(r.fixed,''), r.fix_state, r.snapshot_id, r.feed, COALESCE(r.issued::text,'')`
 
 const (
 	distroCandidatesSQL = `
@@ -86,7 +86,7 @@ func (s *Store) scanCandidates(ctx context.Context, rows pgx.Rows) ([]vuln.Candi
 		if err := rows.Scan(&c.RangeID, &c.AdvisoryID, &c.CVE, &c.Severity, &c.Summary,
 			&c.KEV, &c.EPSS, &c.CVSS,
 			&c.Ecosystem, &c.Distro, &c.Release, &c.Package, &c.SourcePackage,
-			&c.Introduced, &c.Fixed, &c.State, &c.SnapshotID, &c.Feed); err != nil {
+			&c.Introduced, &c.Fixed, &c.State, &c.SnapshotID, &c.Feed, &c.Issued); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -296,7 +296,8 @@ func normSeverity(s string) string {
 // FindingFilter selects stored findings.
 type FindingFilter struct {
 	DeviceID string
-	// Kind is "finding", "unfixed", "informational" or "" for all three.
+	// Kind is "finding", "awaiting_vendor", "unfixed", "informational" or ""
+	// for all four.
 	Kind string
 	// IncludeResolved adds findings that have since been closed.
 	IncludeResolved bool
@@ -318,7 +319,7 @@ func (s *Store) ListFindings(ctx context.Context, f FindingFilter) ([]VulnFindin
 		WHERE ($1 = '' OR f.device_id = $1)
 		  AND ($2 = '' OR f.kind = $2)
 		  AND ($3 OR f.resolved_at IS NULL)
-		ORDER BY f.kind, f.kev DESC,
+		ORDER BY array_position(ARRAY['finding','awaiting_vendor','unfixed','informational'], f.kind), f.kev DESC,
 		         array_position(ARRAY['critical','high','medium','low','unknown'], f.severity),
 		         f.epss DESC NULLS LAST, f.cvss_score DESC NULLS LAST, f.device_id, f.advisory_id, f.family
 		LIMIT $4`, f.DeviceID, f.Kind, f.IncludeResolved, f.Limit)
@@ -421,19 +422,26 @@ func (s *Store) GetFindingDetail(ctx context.Context, id int64) (FindingDetail, 
 
 // DeviceFindingsSummary is one host's standing, compact enough to fetch for a
 // whole fleet. SeriousKeys are the triage keys of its open findings that are
-// critical, high or on the KEV list, so a caller can drop the acknowledged ones
-// without fetching every finding; capped at SummaryKeyCap.
+// critical, high or on the KEV list (a KEV entry awaiting the vendor's release
+// included), so a caller can drop the acknowledged ones without fetching every
+// finding; capped at SummaryKeyCap.
 type DeviceFindingsSummary struct {
-	DeviceID      string    `json:"deviceId"`
-	Distro        string    `json:"distro"`
-	Release       string    `json:"release"`
-	Coverage      string    `json:"coverage"`
-	Open          int       `json:"open"`
-	KEV           int       `json:"kev"`
-	Unfixed       int       `json:"unfixed"`
-	Informational int       `json:"informational"`
-	SeriousKeys   []string  `json:"seriousKeys"`
-	MatchedAt     time.Time `json:"matchedAt"`
+	DeviceID      string `json:"deviceId"`
+	Distro        string `json:"distro"`
+	Release       string `json:"release"`
+	Coverage      string `json:"coverage"`
+	Open          int    `json:"open"`
+	KEV           int    `json:"kev"`
+	Unfixed       int    `json:"unfixed"`
+	Informational int    `json:"informational"`
+	// AwaitingVendor: fixed by Red Hat, not yet released by the host's own
+	// distribution (Rocky, AlmaLinux). Nothing to install, so it is not in Open;
+	// KEVAwaitingVendor is the part of it that is exploited in the wild and
+	// still needs the red callout.
+	AwaitingVendor    int       `json:"awaitingVendor"`
+	KEVAwaitingVendor int       `json:"kevAwaitingVendor"`
+	SeriousKeys       []string  `json:"seriousKeys"`
+	MatchedAt         time.Time `json:"matchedAt"`
 }
 
 // SummaryKeyCap bounds SeriousKeys per host.
@@ -442,6 +450,7 @@ const SummaryKeyCap = 200
 const findingsSummarySQL = `
 	SELECT s.device_id, s.distro, s.release, s.coverage, s.matched_at,
 	       COALESCE(a.open, 0), COALESCE(a.kev, 0), COALESCE(a.unfixed, 0), COALESCE(a.info, 0),
+	       COALESCE(a.awaiting, 0), COALESCE(a.kev_awaiting, 0),
 	       COALESCE(a.keys, ARRAY[]::text[])
 	FROM host_vuln_state s
 	LEFT JOIN (
@@ -450,8 +459,11 @@ const findingsSummarySQL = `
 	         count(*) FILTER (WHERE f.kind = 'finding' AND f.kev) AS kev,
 	         count(*) FILTER (WHERE f.kind = 'unfixed') AS unfixed,
 	         count(*) FILTER (WHERE f.kind = 'informational') AS info,
+	         count(*) FILTER (WHERE f.kind = 'awaiting_vendor') AS awaiting,
+	         count(*) FILTER (WHERE f.kind = 'awaiting_vendor' AND f.kev) AS kev_awaiting,
 	         (array_agg(f.device_id || ':' || f.advisory_id || ':' || lower(f.family) ORDER BY f.advisory_id)
-	            FILTER (WHERE f.kind = 'finding' AND (f.kev OR f.severity IN ('critical', 'high'))))[1:` + "200" + `] AS keys
+	            FILTER (WHERE (f.kind = 'finding' AND (f.kev OR f.severity IN ('critical', 'high')))
+	                       OR (f.kind = 'awaiting_vendor' AND f.kev)))[1:` + "200" + `] AS keys
 	  FROM vuln_findings f WHERE f.resolved_at IS NULL GROUP BY f.device_id
 	) a ON a.device_id = s.device_id
 	WHERE ($1 = '' OR s.device_id = $1)
@@ -469,7 +481,7 @@ func (s *Store) FindingsSummary(ctx context.Context, deviceID string) ([]DeviceF
 	for rows.Next() {
 		var d DeviceFindingsSummary
 		if err := rows.Scan(&d.DeviceID, &d.Distro, &d.Release, &d.Coverage, &d.MatchedAt,
-			&d.Open, &d.KEV, &d.Unfixed, &d.Informational, &d.SeriousKeys); err != nil {
+			&d.Open, &d.KEV, &d.Unfixed, &d.Informational, &d.AwaitingVendor, &d.KEVAwaitingVendor, &d.SeriousKeys); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

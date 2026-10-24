@@ -7,9 +7,11 @@
 
 import type { FindingStatus, FindingTriage } from "./types.ts";
 
-/** finding: a fix is available. unfixed: affected, no fix published.
+/** finding: a fix is available (fixable). awaiting_vendor: fixed upstream by
+ *  Red Hat but not yet released by the rebuild the host runs (Rocky, AlmaLinux),
+ *  so there is nothing to install yet. unfixed: affected, no fix published.
  *  informational: the distro will not fix it, or is still investigating. */
-export type FindingKind = "finding" | "unfixed" | "informational";
+export type FindingKind = "finding" | "awaiting_vendor" | "unfixed" | "informational";
 
 export type FindingSeverity = "critical" | "high" | "medium" | "low" | "unknown";
 
@@ -79,7 +81,12 @@ export type DeviceFindingsSummary = {
   kev: number;
   unfixed: number;
   informational: number;
-  /** Triage keys of open findings that are critical, high or KEV. */
+  /** Fixed upstream, not yet released by the host's own distribution. Not in `open`. */
+  awaitingVendor: number;
+  /** The part of `awaitingVendor` that is on the CISA KEV list: exploited now. */
+  kevAwaitingVendor: number;
+  /** Triage keys of open findings that are critical, high or KEV (a KEV entry
+   *  awaiting the vendor's release included). */
   seriousKeys: string[];
   matchedAt: string;
 };
@@ -185,8 +192,27 @@ export function feedLabel(f: Pick<VulnFinding, "feed" | "feedDate">): string {
 
 /** "fixed in 1:8.9p1-3ubuntu0.10" / "no fix published". */
 export function fixLabel(f: Pick<VulnFinding, "fixed" | "kind" | "fixState">): string {
+  if (f.kind === "awaiting_vendor") return `fixed upstream in ${f.fixed}, not yet released for this distribution`;
   if (f.fixed) return `fixed in ${f.fixed}`;
   if (f.fixState === "will_not_fix") return "the distro will not fix this";
   if (f.fixState === "under_investigation") return "the distro is investigating";
   return "no fix published";
+}
+
+export type ExploitedNotice = { tone: "red"; title: string; detail: string };
+
+/**
+ * Red Hat has fixed a CVE that is being exploited in the wild, but the host's
+ * own distribution (Rocky, AlmaLinux) has not released the rebuild, so there is
+ * nothing to install. It is not "fix this week", and it must not look safe
+ * either. Null when no such finding exists.
+ */
+export function exploitedAwaitingNotice(count: number): ExploitedNotice | null {
+  if (count <= 0) return null;
+  return {
+    tone: "red",
+    title: `${count} exploited-in-the-wild ${count === 1 ? "vulnerability is" : "vulnerabilities are"} fixed upstream but not yet released for your distribution`,
+    detail:
+      "These CVEs are on the CISA KEV list and Red Hat has shipped a fix, but Rocky Linux or AlmaLinux has not released the rebuild yet, so there is nothing to install. Apply a mitigation or restrict exposure now, and watch for the release.",
+  };
 }

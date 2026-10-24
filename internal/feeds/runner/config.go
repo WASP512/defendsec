@@ -27,6 +27,8 @@ const (
 	KindUbuntu Kind = "ubuntu"
 	KindDebian Kind = "debian"
 	KindRHEL   Kind = "rhel"
+	KindRocky  Kind = "rocky"
+	KindAlma   Kind = "almalinux"
 	KindSUSE   Kind = "suse"
 	KindOSV    Kind = "osv"
 )
@@ -52,7 +54,7 @@ type Spec struct {
 // they only annotate advisories.
 func (s Spec) Scopes() []storepg.RangeScope {
 	switch s.Kind {
-	case KindUbuntu, KindRHEL, KindSUSE:
+	case KindUbuntu, KindRHEL, KindRocky, KindAlma, KindSUSE:
 		return []storepg.RangeScope{{Distro: s.Distro, Release: s.Release}}
 	case KindDebian:
 		var out []storepg.RangeScope
@@ -85,6 +87,8 @@ var DefaultEnabled = []string{
 	"ubuntu-jammy", "ubuntu-noble",
 	"debian",
 	"rhel-8", "rhel-9",
+	"rocky-8", "rocky-9",
+	"almalinux-8", "almalinux-9",
 	"suse-leap-16.0", "suse-tumbleweed",
 }
 
@@ -222,6 +226,14 @@ func Catalog(c Config) []Spec {
 	for _, n := range []string{"8", "9"} { // RHEL 10 has no v2 OVAL feed yet (404)
 		add(Spec{Name: "rhel-" + n, Kind: KindRHEL, Distro: "rhel", Release: n,
 			URL: "https://security.access.redhat.com/data/oval/v2/RHEL" + n + "/rhel-" + n + ".oval.xml.bz2"})
+	}
+	// The rebuilds publish their own errata after rebuilding Red Hat's fix; the
+	// matcher uses them to tell "fixed upstream" from "fixed for this distro".
+	for _, n := range []string{"8", "9"} {
+		add(Spec{Name: "rocky-" + n, Kind: KindRocky, Distro: "rocky", Release: n,
+			URL: "https://apollo.build.resf.org/v2/advisories"})
+		add(Spec{Name: "almalinux-" + n, Kind: KindAlma, Distro: "almalinux", Release: n,
+			URL: "https://errata.almalinux.org/" + n + "/errata.full.json"})
 	}
 
 	const suse = "https://ftp.suse.com/pub/projects/security/oval/"

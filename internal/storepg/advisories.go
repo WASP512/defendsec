@@ -73,6 +73,9 @@ type AdvisoryRange struct {
 	Fixed         string
 	FixState      FixState
 	SnapshotID    *int64
+	// Issued is the calendar date (YYYY-MM-DD) the vendor published the erratum
+	// behind the range; empty when the feed does not say.
+	Issued string
 	// Feed names the feed that loaded the range ("ubuntu-jammy"); empty for
 	// ranges loaded before the column existed.
 	Feed string
@@ -198,12 +201,12 @@ const (
 	insertRangeSQL = `
 		INSERT INTO advisory_ranges (
 			advisory_id, ecosystem, distro, release, package, source_package,
-			introduced, fixed, fix_state, snapshot_id, feed
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`
+			introduced, fixed, fix_state, snapshot_id, feed, issued
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NULLIF($12::text, '')::date)`
 
 	rangeColumns = `r.id, r.advisory_id, r.ecosystem, COALESCE(r.distro,''), COALESCE(r.release,''),
 		r.package, COALESCE(r.source_package,''), COALESCE(r.introduced,''), COALESCE(r.fixed,''),
-		r.fix_state, r.snapshot_id, r.feed`
+		r.fix_state, r.snapshot_id, r.feed, COALESCE(r.issued::text,'')`
 
 	// A range matches when its binary or source package is the one asked for
 	// and it applies to the distro/release: the same distro with the same (or
@@ -303,7 +306,7 @@ func (s *Store) UpsertAdvisoryWithRanges(ctx context.Context, a Advisory) error 
 		}
 		batch.Queue(insertRangeSQL, a.ID, r.Ecosystem, nullable(r.Distro), nullable(r.Release),
 			r.Package, nullable(r.SourcePackage), nullable(r.Introduced), nullable(r.Fixed),
-			string(r.FixState), snap, sourceOrLocal(a.Source))
+			string(r.FixState), snap, sourceOrLocal(a.Source), r.Issued)
 	}
 	if batch.Len() > 0 {
 		br := tx.SendBatch(ctx, batch)
@@ -361,7 +364,7 @@ func scanRanges(rows pgx.Rows) ([]AdvisoryRange, error) {
 		var r AdvisoryRange
 		var state string
 		if err := rows.Scan(&r.ID, &r.AdvisoryID, &r.Ecosystem, &r.Distro, &r.Release,
-			&r.Package, &r.SourcePackage, &r.Introduced, &r.Fixed, &state, &r.SnapshotID, &r.Feed); err != nil {
+			&r.Package, &r.SourcePackage, &r.Introduced, &r.Fixed, &state, &r.SnapshotID, &r.Feed, &r.Issued); err != nil {
 			return nil, err
 		}
 		r.FixState = FixState(state)
