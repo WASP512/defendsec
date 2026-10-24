@@ -106,16 +106,19 @@ export function surfaceCard(s: SurfaceSummary | undefined, now: number = Date.no
 
 // ---- the Fix this week list ---------------------------------------------------------------
 
-/** How many rows the Fix this week list has in all: vulnerabilities plus surface findings. */
+/** How many rows the Fix this week list has in all: vulnerabilities plus surface and identity findings. */
 export function fixTotal(f: ExposureSummary["fixable"]): number {
-  return f.total ?? f.advisories + (f.surface ?? 0);
+  return f.total ?? f.advisories + (f.surface ?? 0) + (f.identity ?? 0);
 }
 
 /** The card's description: what is in the list, in words that keep the two kinds apart. */
 export function fixDescription(summary: Pick<ExposureSummary, "fixable">, shown: number): string {
   const { fixable } = summary;
   const surface = fixable.surface ?? 0;
-  if (fixable.advisories === 0 && surface === 0) return "Nothing with a fix to install, and no external finding open.";
+  const identity = fixable.identity ?? 0;
+  if (fixable.advisories === 0 && surface === 0 && identity === 0) {
+    return `Nothing with a fix to install, and no external${fixable.identity === undefined ? "" : " or identity"} finding open.`;
+  }
   const parts: string[] = [];
   if (fixable.advisories > 0) {
     // advisories counts patches to install and, since slice 10, end-of-life releases to upgrade.
@@ -127,12 +130,13 @@ export function fixDescription(summary: Pick<ExposureSummary, "fixable">, shown:
     parts.push(`${what.join(" and ")}, across ${plural(fixable.hosts, "host")}`);
   }
   if (surface > 0) parts.push(`${plural(surface, "external surface finding")}`);
+  if (identity > 0) parts.push(`${plural(identity, "identity finding")}`);
   return `${parts.join(" and ")}. The top ${shown}, most urgent first:`;
 }
 
 /** What an empty Fix this week list may say: good news only where something was actually checked. */
-export function fixEmptyText(summary: Pick<ExposureSummary, "hosts" | "surface">): string {
-  const { hosts, surface } = summary;
+export function fixEmptyText(summary: Pick<ExposureSummary, "hosts" | "surface"> & Partial<Pick<ExposureSummary, "identity">>): string {
+  const { hosts, surface, identity } = summary;
   const hostPart =
     hosts.assessed === 0
       ? "No host has been assessed yet, so this says nothing about the fleet."
@@ -142,7 +146,13 @@ export function fixEmptyText(summary: Pick<ExposureSummary, "hosts" | "surface">
   if (surface === undefined) outside = "";
   else if (surface.scanned === 0) outside = " The external surface has not been scanned, so that says nothing either.";
   else outside = " No external surface finding is open.";
-  return hostPart + notAssessed + outside;
+  let accounts = "";
+  if (identity === undefined) accounts = "";
+  else if (!identity.configured) accounts = " No Microsoft 365 tenant is connected, so that says nothing about the accounts.";
+  else if (!identity.lastStatus) accounts = " The Microsoft 365 tenant has not been read yet, so that says nothing about the accounts either.";
+  else if (identity.lastStatus === "not_assessed") accounts = " The last Microsoft 365 read could not assess anything, so that says nothing about the accounts.";
+  else accounts = " No identity finding is open.";
+  return hostPart + notAssessed + outside + accounts;
 }
 
 // ---- rows ------------------------------------------------------------------------------------

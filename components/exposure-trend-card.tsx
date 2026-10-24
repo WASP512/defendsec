@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { surfaceChart, trendChart, trendHref, trendSummary, TREND_WINDOWS, type ExposureTrend, type TrendQuery } from "@/lib/exposure-model";
 import { surfaceTrendSummary } from "@/lib/surface-exposure";
+import { identityTrendSummary } from "@/lib/identity-exposure";
 import type { AuditPeriod } from "@/lib/compliance";
 import { cn } from "@/lib/utils";
 
@@ -57,6 +58,11 @@ export function ExposureTrendCard({
           {trend ? (
             <span className="block" data-surface-trend-summary>
               {surfaceTrendSummary(trend.points, trend.surfaceSince)}
+            </span>
+          ) : null}
+          {trend ? (
+            <span className="block" data-identity-trend-summary>
+              {identityTrendSummary(trend.points, trend.identitySince)}
             </span>
           ) : null}
         </CardDescription>
