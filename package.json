@@ -2,6 +2,7 @@
   "name": "defendsec",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "DefendSec — self-hosted host security inventory and policy checks.",
   "scripts": {
     "dev": "next dev --port 47261 --hostname 0.0.0.0",
