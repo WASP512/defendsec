@@ -407,6 +407,47 @@ func TestCollectMailboxLimitIsCountedAsSkipped(t *testing.T) {
 	if !strings.Contains(r.Reason(), "skipped") {
 		t.Errorf("reason = %q", r.Reason())
 	}
+	// The mailboxes past the cap (sorted by UPN) are neither confirmed nor cleared:
+	// every one is an unassessed prefix, so RecordIdentityRun keeps their findings.
+	// Eligible, by UPN: alex.admin, casey, dana, erin, pat.helpdesk, sam.admin,
+	// shared.noMailbox; the first three are read.
+	inbox := check(t, r, m365.GroupInboxRules)
+	want := []string{
+		m365test.UserErin + "/", m365test.UserPatHelp + "/", m365test.UserSamAdmin + "/", m365test.UserNoMailbox + "/",
+	}
+	sort.Strings(want)
+	eq(t, "unassessed prefixes", inbox.UnassessedPrefixes, want)
+	if len(inbox.UnassessedPrefixes) != r.Counts.Skipped {
+		t.Errorf("%d prefixes for %d skipped mailboxes", len(inbox.UnassessedPrefixes), r.Counts.Skipped)
+	}
+}
+
+// Only the mailboxes past the cap are listed as unassessed; one that was read never is.
+func TestCollectMailboxLimitPrefixesAreOnlyTheSkippedOnes(t *testing.T) {
+	srv := m365test.New(t)
+	r := collect(t, srv, m365.Options{MaxMailboxes: 3})
+	for _, pfx := range check(t, r, m365.GroupInboxRules).UnassessedPrefixes {
+		for _, read := range []string{m365test.UserAlexAdmin, m365test.UserCasey, m365test.UserDana} {
+			if pfx == read+"/" {
+				t.Errorf("%s was read but is listed as unassessed", read)
+			}
+		}
+	}
+}
+
+// A disabled account is dropped from the MFA check even when the registration
+// report lists it as not registered.
+func TestCollectDisabledAccountIsNotInTheMFACheck(t *testing.T) {
+	srv := m365test.New(t)
+	srv.Override["/reports/authenticationMethods/userRegistrationDetails"] = `{"value":[
+{"id":"` + m365test.UserCasey + `","userPrincipalName":"casey@example.com","userDisplayName":"Casey Example","isAdmin":false,"isMfaRegistered":false,"methodsRegistered":[],"userType":"member"},
+{"id":"11111111-0000-4000-8000-000000000008","userPrincipalName":"former@example.com","userDisplayName":"Former Employee","isAdmin":false,"isMfaRegistered":false,"methodsRegistered":[],"userType":"member"}]}`
+	r := collect(t, srv, m365.Options{})
+	mfa := check(t, r, m365.GroupMFA)
+	if !mfa.Assessed {
+		t.Fatalf("mfa not assessed: %s", mfa.Reason)
+	}
+	eq(t, "mfa", summary(mfa), []string{"mfa.not_registered|casey@example.com|medium"})
 }
 
 func TestCollectStopsWhenCancelled(t *testing.T) {

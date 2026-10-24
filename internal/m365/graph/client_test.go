@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
@@ -315,6 +318,10 @@ func TestCertificateCredentialSignsAValidAssertion(t *testing.T) {
 	}
 	if len(cert.Thumbprint()) != 64 {
 		t.Errorf("thumbprint %q is not 64 hex characters", cert.Thumbprint())
+	}
+	s256, s1 := sha256.Sum256(der), sha1.Sum(der)
+	if cert.Thumbprint() != strings.ToUpper(hex.EncodeToString(s256[:])) || cert.ThumbprintSHA1() != strings.ToUpper(hex.EncodeToString(s1[:])) {
+		t.Errorf("thumbprints %s / %s are not the SHA-256 / SHA-1 of the certificate", cert.Thumbprint(), cert.ThumbprintSHA1())
 	}
 	srv := m365test.New(t)
 	srv.CertDER, srv.CertPub = der, pub

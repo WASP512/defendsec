@@ -1254,6 +1254,25 @@ Branch head after merging `origin/main` (`7bc5b19`, slice 7b) into `scout/10-app
 - A malformed query on `GET /v1/identity/findings` that contains a `;` is ignored by Go's query parser rather than refused (the filter is then not
   applied); an unknown `check` value is a `400`.
 
+### Slice 12 follow-up — mailboxes past the per-read cap (branch `lookout/12-followup-skipped-mailboxes`)
+
+- **Fixed:** a mailbox past `MaxMailboxes` is now an unassessed prefix (`<user id>/`) of the inbox-rules check, so `RecordIdentityRun` neither confirms nor
+  resolves a finding open on it; before, it was closed as fixed with a ledger entry.
+- **Evidence (unit + Postgres, fixture tenant, no real tenant):** `TestCollectMailboxLimitIsCountedAsSkipped` (`MaxMailboxes: 3`: `Skipped == 4`, the 4 prefixes
+  are exactly the skipped users' ids), `TestCollectMailboxLimitPrefixesAreOnlyTheSkippedOnes`, and `TestIdentitySkippedMailboxKeepsItsFinding` (storepg: a finding
+  recorded on a mailbox, then a run with the mailbox skipped: still open, `Unconfirmed`, 0 resolved; a user whose id merely starts the same way is not caught;
+  a later run that reads the mailbox without the rule resolves it).
+- **Mutations, both killed:** dropping the skipped prefixes fails `TestCollectMailboxLimitIsCountedAsSkipped`; `known && !on` → `known && !on && false`
+  (a disabled account kept in the MFA check) fails the new `TestCollectDisabledAccountIsNotInTheMFACheck` (a disabled account that is in the registration
+  report with `isMfaRegistered=false` produces no finding, an enabled one in the same report does).
+- **Certificate thumbprint:** the status page now shows both. `openssl x509 -fingerprint -sha1` on a generated certificate printed
+  `2F:A9:6D:2C:…:E7:88`; the Go code printed `2FA96D2CD776B52CD17F44AE6203B42AAFC8E788` (same bytes); SHA-256 `9C44021E…1B5C6F` matched likewise.
+  **Which one the Entra portal lists is not observed:** no real tenant has been read. M365.md says SHA-1 on the strength of Microsoft Graph's
+  `keyCredential.customKeyIdentifier` doc (40 characters, defaults to the certificate thumbprint); the first real run must confirm it by eye.
+- **Commands:** `gofmt -l`, `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./...` clean; `TMPDIR=/tmp go test -count=1 -p 1` on `internal/m365/...`,
+  `internal/secret`, `internal/storepg`, `internal/control`, `db/migrations`: all `ok`; `eslint` on the changed page and model: clean. The Identity page
+  change (one extra `<code>`) was type-checked only (`tsc` reports just the pre-existing `LayoutProps` error from `app/layout.tsx`) and not looked at in a browser.
+
 ## Feature × platform × evidence matrix — additions from slice 12
 
 | Feature | Platform | Unit | CI | Real host |

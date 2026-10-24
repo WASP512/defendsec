@@ -19,6 +19,7 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1" //nolint:gosec // an identifier the Entra portal shows, not a security use
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -241,9 +242,20 @@ func ParseCertificatePEM(data []byte) (*Certificate, error) {
 	return &c, nil
 }
 
-// Thumbprint is the SHA-256 thumbprint Entra shows for the certificate, as hex.
+// Thumbprint is the certificate's SHA-256 thumbprint, as hex. It is what the
+// assertion's x5t#S256 header carries. The Entra portal lists the SHA-1 one
+// (ThumbprintSHA1), so the status page shows both.
 func (c *Certificate) Thumbprint() string {
 	sum := sha256.Sum256(c.der)
+	return fmt.Sprintf("%X", sum[:])
+}
+
+// ThumbprintSHA1 is the certificate's SHA-1 thumbprint, as hex (40 characters): the
+// value Microsoft Graph keeps as the key credential's customKeyIdentifier and the
+// one the portal's Certificates & secrets blade lists. It identifies a certificate
+// to a person comparing two screens; nothing here relies on SHA-1's strength.
+func (c *Certificate) ThumbprintSHA1() string {
+	sum := sha1.Sum(c.der) //nolint:gosec // identifier, not a security use
 	return fmt.Sprintf("%X", sum[:])
 }
 

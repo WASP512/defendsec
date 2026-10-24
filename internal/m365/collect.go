@@ -231,8 +231,14 @@ func collectInboxRules(ctx context.Context, src Source, users []User, opt Option
 	}
 	sort.Slice(eligible, func(i, j int) bool { return eligible[i].UPN < eligible[j].UPN })
 	skipped := 0
+	// A mailbox past the cap is not read, so a finding already open on it is neither
+	// confirmed nor cleared by this run: it goes into the unassessed prefixes.
+	var notCovered []string
 	if len(eligible) > opt.MaxMailboxes {
 		skipped = len(eligible) - opt.MaxMailboxes
+		for _, u := range eligible[opt.MaxMailboxes:] {
+			notCovered = append(notCovered, u.ID+"/")
+		}
 		eligible = eligible[:opt.MaxMailboxes]
 	}
 	rep.Counts.MailboxesEligible = len(eligible) + skipped
@@ -362,6 +368,7 @@ func collectInboxRules(ctx context.Context, src Source, users []User, opt Option
 		return res
 	}
 	res.Assessed = true
+	res.UnassessedPrefixes = append(res.UnassessedPrefixes, notCovered...)
 	for _, id := range unreadable {
 		res.UnassessedPrefixes = append(res.UnassessedPrefixes, id+"/")
 	}
