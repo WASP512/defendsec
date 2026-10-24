@@ -178,3 +178,17 @@ Empty on purpose. As of this baseline there is **no** row with a "real host" run
 - `go test -race`, Windows tests (only cross-vet), eBPF tests (need root), pwsh script parsing.
 - Whether any binary runs: nothing was started. `go build ./...` proves compilation only.
 - The console at 10.10.10.214 was not touched or inspected.
+
+## Slice 1 — direction, README, LICENSE (docs only)
+
+- Branch `scout/1-direction`, from `main` at `04a793f` plus the slice 0 commit above.
+- Changed: `README.md`, `docs/DIRECTION.md` (new), `docs/ROADMAP.md` (banner only), `docs/NEXT-PHASES.md` (deleted), `LICENSE` (new, AGPL-3.0 text from `https://www.gnu.org/licenses/agpl-3.0.txt`, SHA-256 `0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0`), `package.json` (`"license": "AGPL-3.0-only"`), this file.
+- No Go or console source changed.
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `grep -in 'edr\|sigma\|isolat\|playbook' README.md` | 0 | 2 matching lines (80, 81), both inside "What it is not"; none elsewhere |
+| `npm run lint` | 0 | green, no output |
+| `npm test` | 0 | `# tests 71 / # pass 71 / # fail 0` |
+
+Not run in this slice: `npm run build`, any Go command (no Go file changed). Not verified: the README's feature claims were carried over from the previous README, not re-tested; dependency licence compatibility with AGPL-3.0 has not been audited.
