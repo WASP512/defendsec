@@ -909,7 +909,7 @@ now present), unattested counted as attested: each made at least one test fail.
      interval is `06:34:23Z` to `06:35:39Z`, exactly the two scans. The same bundle with that closed date moved by an hour:
      **exit 1**, "the bundle claims … to 07:35:39Z, the attested scans give … to 06:35:39Z".
   Only the TCP port check was exercised on a real host (the VM has no domain); DNS, email and TLS checks stay verified by
-  fixtures and the 7a real run. The listener process was killed afterwards (its script remains in `/tmp` on the VM).
+  fixtures and the 7a real run. The listener was killed and its script deleted afterwards; `ss -ltn` on the VM shows only the original listeners (53 on loopback, 22).
 - **Evidence export through `defendsec-verify`.** The control test's bundle (`DEFENDSEC_TEST_BUNDLE_OUT=…`, never set in
   CI) was run through the built binary. On the shared test database the output was: `ok surface scans 166 scans: 2 attested …,
   164 unattested …`, `ok surface findings 258 findings: 6 with open and closed dates recomputed from attested scans and
