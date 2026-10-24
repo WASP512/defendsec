@@ -359,11 +359,32 @@ ensure_go() {
   info "Using Go $("$GO_BIN" version | awk '{print $3}') (${GO_BIN})"
 }
 
+# SELinux: systemd runs a service from a bin_t file as unconfined_service_t, which
+# may map executable memory. A symlink into /usr/local/lib/nodejs (lib_t) does
+# not get that, so on Rocky, Alma, RHEL and Fedora the console's V8 aborts at
+# start ("SELinux is preventing node from using the execmem access", measured on
+# Rocky 9.8). A real copy in /usr/local/bin takes that directory's bin_t label.
+# Measured: console crash-loops with the symlink, starts with the copy.
+ensure_node_selinux_label() {
+  [[ "$NODE_BIN" == /usr/local/bin/node && -L "$NODE_BIN" ]] || return 0
+  command -v getenforce >/dev/null 2>&1 || return 0
+  local real tmp
+  real="$(readlink -f "$NODE_BIN")"
+  [[ -x "$real" ]] || return 0
+  tmp="$(mktemp /usr/local/bin/.node.XXXXXX)"
+  cp --no-preserve=all "$real" "$tmp"
+  chmod 0755 "$tmp"
+  mv -f "$tmp" "$NODE_BIN"
+  command -v restorecon >/dev/null 2>&1 && restorecon -F "$NODE_BIN" >/dev/null 2>&1 || true
+  echo "    Node binary copied to ${NODE_BIN} so SELinux labels it bin_t"
+}
+
 ensure_node() {
   local have
   detect_node
   have="$NODE_HAVE"
   if [[ -n "$have" ]] && version_ge "$have" "$NODE_MIN" && command -v npm >/dev/null 2>&1; then
+    ensure_node_selinux_label
     info "Using Node ${have} (${NODE_BIN})"
     return
   fi
@@ -402,6 +423,7 @@ ensure_node() {
 
   NODE_BIN=/usr/local/bin/node
   [[ -x "$NODE_BIN" ]] || die "Node install failed"
+  ensure_node_selinux_label
   info "Using Node $("$NODE_BIN" --version) (${NODE_BIN})"
 }
 

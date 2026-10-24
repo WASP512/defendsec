@@ -95,6 +95,8 @@ inventory agent, service and MSI.
 
 - The Windows agent, the Datto RMM collector, the Microsoft 365 collector and Autotask have **not
   been run against real Windows machines, accounts or tenants**. Fakes and fixtures only.
+- A Rocky or Alma host can show a fixable finding for a fix that the errata feed has published but
+  the mirrors do not carry yet. It clears when the mirror catches up.
 - The external scanner has one vantage point.
 - Alert forwarding does not carry the audit ledger, surface, Microsoft 365 or repository-health
   findings.

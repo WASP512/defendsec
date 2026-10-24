@@ -185,11 +185,14 @@ drop the detection and response settings; where they disagree with this README, 
 
 - **Findings come from the synced distro feeds.** The matcher compares each package against the
   distro's own fixed versions (Ubuntu, Debian, RHEL family, SUSE), so backported fixes are not
-  flagged. Measured on a fully patched Ubuntu 22.04: 0 findings. On a fully patched **Rocky 9.8**: 0
-  fixable findings; the 8 kernel CVEs Red Hat fixed in a build Rocky had not yet shipped are
-  `awaiting_vendor`, on the watch list and not in Fix this week. Debian's tracker lists open CVEs,
-  so a patched Debian host still shows `unfixed` rows. Only Ubuntu 22.04 and Rocky 9.8 have been
-  matched on a real host; see `docs/VERIFIED.md`.
+  flagged. Measured on a fully patched Ubuntu 22.04: 0 findings. On a fully patched **Rocky 9.8**
+  the answer depends on the hour: while only Red Hat had published a kernel fix, the 8 kernel CVEs
+  were `awaiting_vendor` (watch list, not in Fix this week); once Rocky's errata feed published it
+  (2026-10-24) the same up-to-date host showed 8 *fixable* findings naming a kernel version Rocky's
+  mirrors did not carry yet, so `dnf` had nothing to install. A Rocky/Alma "fix available" row can
+  therefore be ahead of your repositories by hours. Debian's tracker lists open CVEs, so a patched
+  Debian host still shows `unfixed` rows. Only Ubuntu 22.04 and Rocky 9.8 have been matched on a
+  real host; see `docs/VERIFIED.md`.
 - **The Windows agent has never been run on a real Windows machine.** It has been verified by
   cross-compilation, parser tests and PowerShell parse checks only. That covers the service,
   inventory and posture checks. Treat any Windows deployment as an experiment. The Windows agent is
