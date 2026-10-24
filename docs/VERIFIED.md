@@ -1821,6 +1821,7 @@ listening on the LAN address, admin API on loopback.
 - **The technical white paper** (`docs/DEFENDSEC_WHITE_PAPER.html` and the PDF) still describes the removed features. README says so; it was not rewritten.
 - **`docs/ROADMAP.md`** is the historical log and still describes the EDR work as it was.
 - **Old agents' events on the wire** (see above) and an older apid with a newer agent were not tried.
+- Branch CI: run 40096044014 on `f43dbd5`, **5/5 jobs green** (go, postgres-integration, node, provisioning, secrets-scan; there is no `isolation` job any more): https://github.com/WASP512/defendsec/actions/runs/40096044014. This line was added after it; the handoff names the run for the final head.
 
 ## Feature × platform × evidence matrix — slice 6
 
