@@ -807,3 +807,125 @@ screenshots of every surface the card asks for are in `docs/screenshots/`:
 | Resolution recorded from inventory | dpkg, rpm | integration tests incl. through apid | green (run 40066538275) | not observed on a real host |
 | Trend from first_seen/resolved_at | linux, Postgres 16 | integration test with recurrence | green (run 40066538275) | one real day |
 | Console: Exposure, Fleet cards, drawer | any | model logic unit-tested | green (run 40066538275) | rendered in a browser on real and synthetic data |
+
+## Slice 7b — surface findings in the exposure view (migration 025)
+
+- Date of the runs: 2026-10-24 UTC. Host `hermesagent`, go1.26.10 linux/amd64, node v22.23.3. Postgres: lookout's own
+  database on titan CT 119 (PG 16) via `TEST_DATABASE_URL`; every new storepg test runs in a throwaway database.
+- Branch `lookout/7b-surface-exposure`, from `b910939` (slices 5 and 7a merged; migration 025 is the next free number).
+  Reference: [EXPOSURE.md](EXPOSURE.md#external-surface-findings-slice-7b), [SURFACE.md](SURFACE.md#evidence-export).
+
+### What changed
+
+- `internal/exposure`: surface findings join the ranking: critical and high right after KEV, medium and low like a
+  vulnerability with no EPSS and a CVSS-equivalent of their severity, info never. `internal/storepg/exposure.go`: one
+  `UNION ALL` list with six keyset keys; `surface_exposure.go`: summary, drawer, trend series, evidence export.
+- Migration `025_surface_history.sql`: `surface_finding_intervals`, `surface_scans.changes`, one index. A reopened surface
+  finding now restarts `first_seen` and keeps the interval that ended (it used to keep the first `first_seen`).
+- Every recorded scan appends a `surface_scan_recorded` chain entry with the scan's SHA-256 digest in the same transaction
+  (`auditInTx` split out of `Audit`). `internal/evidence/surface.go`: the bundle's `surface` section and its verification;
+  `defendsec-verify` prints it.
+- Console: surface rows in Fix this week and the Exposure list, the surface drawer, the "Seen from outside" Fleet card, a
+  second trend chart on its own scale. Seed `scripts/seed-exposure-demo.sql` extended; five screenshots in `docs/screenshots/`.
+- **A change to slice 5's code:** the trend's day boundaries followed the database session's time zone
+  (`LEAST(d + interval '1 day', …)` read a timestamp as local time). With the server on America/Denver a finding first seen at
+  03:00 UTC on the 22nd was counted on the 21st. Now UTC days; `TestTrendDayBoundariesIgnoreSessionTimezone` fails without it.
+
+### Commands and results
+
+| # | Command | Result |
+| --- | --- | --- |
+| 1 | `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./...` | exit 0, clean |
+| 2 | `TMPDIR=/tmp go test -count=1 -json ./...` with `TEST_DATABASE_URL` unset | exit 0: 977 tests pass, 167 skip (database tests); 54 packages pass |
+| 3 | the same with `TEST_DATABASE_URL` set (`-p 1`) | exit 0: **1,148 tests pass, 0 fail, 5 skip** (root/eBPF, pwsh, as before); 54 packages pass (slice 5 reported 1,121) |
+| 4 | CI integration command: `go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/...` | all four `ok` |
+| 5 | `go test -race -p 1 -count=1 ./internal/evidence ./internal/exposure ./internal/storepg ./internal/control ./internal/surface` | all `ok`, no race |
+| 6 | `govulncheck ./...` | "Your code is affected by 0 vulnerabilities" (one vulnerability in a required module that the code does not call, as before) |
+| 7 | `scripts/check-reproducible.sh` | green |
+| 8 | `npm test` | `# tests 142 / # pass 142 / # fail 0` (121 before; new: 7 in `lib/exposure-model.test.ts`, 14 in `lib/surface-exposure.test.ts`) |
+| 9 | `npm run lint`, `npx tsc --noEmit -p .`, `npm run build` | clean, clean, green |
+
+### Tests added
+
+- `internal/exposure` (4): the mixed order, a surface row ignoring KEV/EPSS/CVSS it was handed, KEV above an exposed port, the
+  score table.
+- `internal/storepg/surface_exposure_test.go` (10, throwaway databases): the mixed list in the order the rule gives
+  (a KEV vulnerability, critical and high ports and SPF, then EPSS, then DMARC `p=none` between the CVSS-6 and CVSS-4
+  vulnerabilities, then the low CAA finding; info never listed); the SQL order equals `exposure.Compare` and paging by keyset
+  at limits 1, 2, 4 and 200 returns every row once; surface never in the watch list or `kevOnly`; resolved findings move to the
+  Resolved list and a removed asset's findings leave every list and count while the rows stay; **missing evidence never ranks**
+  (a check that could not run produces no row; a finding whose latest check could not run stays, marked unconfirmed, with its
+  old `last_seen`); the summary counts (assets, unauthorised, scanned, by severity, info, affected, last scan, checks not
+  assessed); the drawer with its raw observation and refused keys; the trend series (own series, unknown before the first
+  scan, a closed gap not counted as open, no leak into the vulnerability series); the evidence export verifying on a real
+  database and failing on an edited observation and on a moved open date; unattested scans named, not failed; and day
+  boundaries under a `America/Denver` session.
+- `internal/evidence/surface_test.go` (12): attested scans and recomputed intervals; five ways to alter a finding's dates and
+  eight ways to alter an observation, a change or a scan, each failing; reformatted JSON hashing the same; a withheld scan; an
+  unattested scan; an edited provenance sentence; no surface check without a section; a failed scan not cascading into its
+  asset's findings.
+- `internal/control/exposure_surface_pg_test.go` (1, through apid's handlers on a fake resolver): scan, list (critical SPF `+all`
+  above medium DMARC), drawer with the raw observation, 400/404 for bad keys, summary and trend, fix the zone and scan again
+  (the finding leaves the list and appears in Resolved), signed export, `Verify` on the bundle.
+- `lib/exposure-model.test.ts` / `lib/surface-exposure.test.ts`: the same order as the Go test (`compareRank` mixed order,
+  `isRanked`), the reason text, the card text ("External surface: 5 findings (1 high) across 3 assets, last scanned 2 hours
+  ago", never "0 findings" for an unscanned surface), the Fix this week description and empty text, intervals, the observation
+  text, the separate trend chart.
+
+**Mutation checks** (each applied to the working tree, tests run, then reverted): Go ranking SQL: urgent band to 2, medium
+scored 8.0, info not excluded, surface rows in the watch bucket, removed assets still listed, reopened finding keeping its
+`first_seen`, attestation written under another action name: each made at least one test fail. Verifier: digest comparison
+skipped, closed date ignored, chain entry without a scan not flagged, change type not in the digest (needed one more test,
+now present), unattested counted as attested: each made at least one test fail.
+
+### Real runs
+
+- **Seeded console** (database `defendsec_demo_7b`, `scripts/seed-exposure-demo.sql`: 24 invented hosts, `CVE-2099-*`, five
+  invented assets on `example.com`/`example.net` and 192.0.2.10 / 198.51.100.7; a built console on `next start` against a real
+  `defendsec-apid`): the Fix this week list mixes the two kinds in the order the rule gives (3 KEV vulnerabilities; SMB 445,
+  RDP 3389 and a certificate expiring in 4 days; then medium vulnerabilities; DMARC `p=none` after the CVSS-6.5 and 5.3
+  ones; the low CAA and MTA-STS findings; the low vulnerability last). The Fleet card reads "External surface: 6 findings
+  (1 critical, 2 high) across 4 assets, last scanned 2 hours ago", with the check that could not run and the unconfirmed
+  asset named. Screenshots: `docs/screenshots/exposure-ranked-mixed.png`, `exposure-surface-drawer-smb.png`,
+  `exposure-surface-drawer-dmarc-reopened.png` (two intervals: closed 28 days, open 20 days),
+  `exposure-resolved-mixed.png`, `fleet-surface-card-and-trend.png` (the surface bar chart on its own scale beside the
+  vulnerability chart). They contain only seeded data.
+- **Evidence export through `defendsec-verify`.** The control test's bundle (`DEFENDSEC_TEST_BUNDLE_OUT=…`, never set in
+  CI) was run through the built binary. On the shared test database the output was: `ok surface scans 166 scans: 2 attested …,
+  164 unattested …`, `ok surface findings 258 findings: 6 with open and closed dates recomputed from attested scans and
+  matched, 252 unattested …`, "VERIFIED — every check passed." plus the note that 164 scans carry no chained entry (they
+  were stored before this slice, or their ledger entries were cleared by other tests). Then three edits to the JSON, each run
+  again: an observation of an attested scan edited, **exit 1** ("scan 165 does not match its chained digest"); a finding's
+  closed date moved to 2099, **exit 1** ("the bundle claims … to 2099-01-01T00:00:00Z, the attested scans give …"); the
+  asset's scans removed from the bundle, **exit 1** ("scan 165 is recorded in the chain but missing from the bundle").
+
+### Not verified
+
+- **No real domain was scanned in this slice** and the scanner is unchanged, so the 7a real run is not repeated. The lab VM
+  port check from 7a is still pending (needs the VMs started).
+- **The ranking rule is a judgement, not a measurement.** Critical and high surface findings above every non-KEV
+  vulnerability (so a non-KEV CVE with EPSS 0.9 ranks below an exposed RDP port) and the CVSS-equivalents (medium 5.0, low
+  2.0) were chosen to match the examples in the card and the principle of slice 5; nobody has compared them with a real
+  client's list. They are in one place per language and easy to change.
+- **Screenshots are seeded data.** The seeded scans have no chained entry, so an evidence export of that database would list
+  them as unattested. The surface trend in the screenshot is synthetic.
+- **Attestation starts with this slice.** Scans stored by 7a (and any earlier real run) are exported and named unattested; the
+  dates of a finding on an asset with such a scan are not proven. Findings reopened before this slice lost their closed days.
+- **Evidence size at scale** is unmeasured: observations are never pruned, so the section grows with every scan (the demo-scale
+  test bundle with 166 scans is 0.6 MB). The digest is defined by the code in `internal/evidence/surface.go` (length-prefixed
+  fields, JSON re-encoded by Go's `encoding/json`); there is no independent implementation of the verifier.
+- **Surface findings and `acknowledged`.** The console's acknowledge action exists for host findings only; a surface row has
+  none.
+- **Hotspots.** `internal/storepg/exposure.go` (list SQL, summary, trend), `lib/exposure-model.ts` (ranking, types) and
+  `components/fix-this-week.tsx` were all edited, and slice 8 (Datto RMM) and slice 12 (M365 identity findings) will want rows in
+  the same list; a generic "finding source" would be a cleaner seam than a third `UNION ALL` member.
+
+## Feature × platform × evidence matrix — additions from slice 7b
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Surface findings in the ranked list (`internal/exposure`, SQL, `compareRank`) | any | Go + npm tests, 12 mutation checks | see handoff | seeded data in a browser; not a real client |
+| Surface summary card, trend series | linux, Postgres 16 | storepg + control integration, npm | see handoff | seeded data in a browser |
+| Surface drawer with raw observation | linux, Postgres 16 | storepg + control integration | see handoff | seeded data in a browser |
+| Reopened finding keeps its closed gap (migration 025) | linux, Postgres 16 | integration test | see handoff | not observed on a real domain |
+| Scan digest chained in the audit log; surface section verified by `defendsec-verify` | linux, Postgres 16 | evidence unit tests (12) + storepg/control integration | see handoff | exported by a real apid handler (fake resolver); verifier binary run on it, intact and three tampered ways |
