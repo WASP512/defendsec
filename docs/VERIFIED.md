@@ -1628,7 +1628,7 @@ The one surviving SQL mutant, `critical 9.5 -> 8.0` for surface and identity row
 | CI integration command with `TEST_DATABASE_URL` set (`go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/... ./internal/rmm/...`) | exit 0; with `-json`: 406 pass (tests and subtests), 0 fail, 0 skip |
 | `go test -count=1 -v ./internal/evidence/ ./internal/exposure/` | 90 pass |
 | `npm run lint`, `npx tsc --noEmit`, `npm test`, `npm run build` | clean; `npm test` 227/227 |
-| `npm audit --audit-level=high` | **exit 1**: `@modelcontextprotocol/sdk <=1.31.0` (high, five advisories) pulled in by the dev tool `shadcn@4.21.0`. Not from this slice (package files untouched); it will be red on `main` too |
+| `npm audit --audit-level=high` (local, 11:40 MDT) | **exit 1**: `@modelcontextprotocol/sdk <=1.31.0` (high, five advisories) pulled in by the dev tool `shadcn@4.21.0`. Package files are untouched by this slice. The same step in branch CI on 673f32a (11:44Z) **passed**; I did not find out why the two differ, so treat the audit result as unsettled |
 
 ### Browser run, Fleet page (slice 7c build, `next start`, demo database `e7c_demo` cloned from the slice 5 database, so migrations 023-031 ran in place; apid second start without errors)
 
@@ -1642,7 +1642,7 @@ and 6 external surface findings." The tile row is Hosts online, Pending patches,
 - **Bundle size** at a year of daily scans; `seen` adds one small object per finding per scan.
 - The vulnerability evidence export asked about in the card **does not exist**: bundles carry no vulnerability rows, intervals or findings at all (`ExportEvidence` writes audit entries, checkpoints, commands and the compliance and surface sections). There is no gap in a verifier to fix; the missing export is a product gap (see the report).
 - Windows and macOS: nothing here is platform-specific; `GOOS=windows go vet` only.
-- Branch CI is checked after the push (see the handoff).
+- Branch CI: run 40091074577 on 673f32a, 6/6 jobs green (go, postgres-integration, node, isolation, provisioning, secrets-scan); re-checked on the final head in the handoff.
 
 ## Feature × platform × evidence matrix — additions from slice 7c
 
