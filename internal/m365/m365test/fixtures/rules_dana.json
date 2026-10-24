@@ -1,0 +1,11 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('11111111-0000-4000-8000-000000000005')/mailFolders('inbox')/messageRules",
+  "value": [
+    {
+      "id": "AQAAAJ5dZqA=", "displayName": "From partner", "sequence": 1, "isEnabled": true, "hasError": false, "isReadOnly": false,
+      "conditions": {"subjectContains": ["payment", "remittance"]},
+      "actions": {"stopProcessingRules": true, "delete": true,
+        "forwardTo": [{"emailAddress": {"name": "Outside Person", "address": "outside.person@example.net"}}]}
+    }
+  ]
+}

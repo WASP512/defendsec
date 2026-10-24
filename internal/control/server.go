@@ -108,6 +108,9 @@ type Server struct {
 	repoStaleAfter time.Duration
 	// rmmr is the Datto RMM collector's state (rmm.go).
 	rmmr rmmRunner
+
+	// m365r is the Microsoft 365 identity collector's state (m365.go).
+	m365r m365Runner
 }
 
 // SetRepoStaleAfter sets the repository-index staleness threshold.

@@ -117,6 +117,22 @@ const (
 	// SignalSurfacePorts — which risky TCP ports on a declared IP accept a
 	// connection.
 	SignalSurfacePorts Signal = "surface.ports"
+
+	// The Microsoft 365 identity posture collector (slice 12). Each is what a
+	// tenant's own configuration was read to say, through Microsoft Graph with
+	// read-only application permissions.
+
+	// SignalM365MFA — which users of the tenant have registered multi-factor
+	// authentication (the authentication methods registration report).
+	SignalM365MFA Signal = "m365.mfa"
+	// SignalM365Roles — how many accounts hold which administrator role.
+	SignalM365Roles Signal = "m365.roles"
+	// SignalM365LegacyAuth — whether security defaults or a Conditional Access
+	// policy blocks legacy authentication.
+	SignalM365LegacyAuth Signal = "m365.legacyauth"
+	// SignalM365MailRules — the definitions of users' inbox rules: external
+	// forwarding and rules that hide mail.
+	SignalM365MailRules Signal = "m365.mailrules"
 )
 
 // SignalTitle is the human sentence for a signal, used wherever a control's
@@ -156,6 +172,10 @@ var signalTitles = map[Signal]string{
 	SignalSurfaceDNS:        "External DNS hygiene check",
 	SignalSurfaceTLS:        "External TLS check",
 	SignalSurfacePorts:      "External exposed-port check",
+	SignalM365MFA:           "Microsoft 365 MFA registration check",
+	SignalM365Roles:         "Microsoft 365 administrator role check",
+	SignalM365LegacyAuth:    "Microsoft 365 legacy authentication check",
+	SignalM365MailRules:     "Microsoft 365 inbox rule check",
 }
 
 // SignalTitle returns the human name, falling back to the raw signal so an

@@ -342,6 +342,39 @@ var native = []Control{
 		Note:     "SPF, DKIM, DMARC, MTA-STS and TLS-RPT records published for declared domains, judged for whether spoofed mail would be rejected. This is the nearest 800-53 control; inbound spam filtering itself is not assessed.",
 	},
 
+	// --- Microsoft 365 identity posture (slice 12) -------------------------
+	// Read from the client's tenant through Microsoft Graph, read-only. These
+	// speak to the client's own accounts, not to DefendSec's console accounts
+	// (which IA-2(1), cis-v8:5.4, 6.3 and 6.5 above already cover).
+	{
+		ID: MustParseID("nist-800-53:IA-2(2)"), Family: "IA",
+		Title:    "Multi-factor authentication for non-privileged accounts",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalM365MFA},
+		Note:     "Whether each user of a Microsoft 365 tenant has registered a second factor, from the authentication methods registration report. Registered is not enforced: whether a sign-in is actually required to use it depends on Conditional Access or per-user settings DefendSec does not read.",
+	},
+	{
+		ID: MustParseID("nist-800-53:AC-6(5)"), Family: "AC",
+		Title:    "Least privilege: privileged accounts",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalM365Roles, SignalM365MFA},
+		Note:     "How many accounts hold Global Administrator in a Microsoft 365 tenant, and whether administrators have registered MFA. Roles held through a group, or eligible through Privileged Identity Management, are not read.",
+	},
+	{
+		ID: MustParseID("nist-800-53:AC-17"), Family: "AC",
+		Title:    "Remote access — legacy sign-in protocols that bypass MFA",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalM365LegacyAuth},
+		Note:     "Whether security defaults or an enabled Conditional Access policy blocks legacy authentication for a Microsoft 365 tenant. What Exchange Online itself allows (SMTP AUTH, authentication policies) is not read.",
+	},
+	{
+		ID: MustParseID("nist-800-53:AC-4"), Family: "AC",
+		Title:    "Information flow enforcement — mail forwarded or hidden by inbox rules",
+		Coverage: CoveragePartial,
+		Signals:  []Signal{SignalM365MailRules},
+		Note:     "Inbox rules that forward or redirect mail outside the organisation, or hide it, read from each mailbox's rule definitions. Mailbox-level forwarding addresses and transport rules are Exchange Online settings Microsoft Graph does not expose, so they are not assessed.",
+	},
+
 	// --- Controls DefendSec deliberately cannot evidence ------------------
 	{
 		ID: MustParseID("nist-800-53:AT-2"), Family: "AT",

@@ -12,6 +12,7 @@ import {
   fixedLabel,
   hostsLabel,
   isRanked,
+  isIdentityRow,
   isSurfaceRow,
   nextHref,
   pageNumber,
@@ -23,6 +24,7 @@ import {
   type Rankable,
 } from "@/lib/exposure-model";
 import { surfaceWhere, unconfirmedNote } from "@/lib/surface-exposure";
+import { identityUnconfirmedNote, identityWhere } from "@/lib/identity-model";
 import { cn } from "@/lib/utils";
 
 /** The ranking line: why this row is where it is. KEV rows are marked red. */
@@ -117,7 +119,39 @@ export function ExposureList({ query, page }: { query: ExposureListQuery; page: 
       ) : (
         <ol className="space-y-2">
           {page.findings.map((g, i) =>
-            isSurfaceRow(g) ? (
+            isIdentityRow(g) ? (
+              <li
+                key={g.advisoryId}
+                data-advisory={g.advisoryId}
+                data-source="identity"
+                className="flex gap-4 rounded-xl border bg-card p-4"
+              >
+                <div className="w-8 shrink-0 pt-0.5 text-right text-sm font-medium tabular-nums text-muted-foreground">
+                  {first + i + 1}
+                </div>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      href={drawerHref(query, g.advisoryId)}
+                      scroll={false}
+                      className="font-medium underline-offset-2 hover:underline"
+                    >
+                      {g.summary}
+                    </Link>
+                    <SeverityBadge severity={g.severity} />
+                    <Badge variant="outline">identity</Badge>
+                    <Badge variant="outline">{resolved ? "resolved" : "open"}</Badge>
+                  </div>
+                  <WhyRanksHere group={g} />
+                  <p className="text-sm">{identityWhere(g)}</p>
+                  {g.identity?.detail ? <p className="text-sm text-muted-foreground">{g.identity.detail}</p> : null}
+                  {!resolved && identityUnconfirmedNote(g) ? (
+                    <p className="text-xs text-amber-700 dark:text-amber-400">{identityUnconfirmedNote(g)}</p>
+                  ) : null}
+                  <p className="text-xs text-muted-foreground">{ageLabel(g.firstSeen, resolved ? g.resolvedAt : null)}</p>
+                </div>
+              </li>
+            ) : isSurfaceRow(g) ? (
               <li
                 key={g.advisoryId}
                 data-advisory={g.advisoryId}
