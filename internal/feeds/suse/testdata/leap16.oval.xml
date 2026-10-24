@@ -1,0 +1,310 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<oval_definitions
+		xsi:schemaLocation="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux linux-definitions-schema.xsd http://oval.mitre.org/XMLSchema/oval-definitions-5#unix unix-definitions-schema.xsd http://oval.mitre.org/XMLSchema/oval-definitions-5 oval-definitions-schema.xsd http://oval.mitre.org/XMLSchema/oval-common-5 oval-common-schema.xsd"
+		xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5"
+		xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		xmlns:oval="http://oval.mitre.org/XMLSchema/oval-common-5"
+		xmlns:oval-def="http://oval.mitre.org/XMLSchema/oval-definitions-5">
+<generator>
+	      <oval:product_name>Marcus Updateinfo to OVAL Converter</oval:product_name>
+	      <oval:schema_version>5.5</oval:schema_version>
+	      <oval:timestamp>2026-10-23T05:24:57</oval:timestamp>
+	  </generator>
+<definitions>
+<definition id="oval:org.opensuse.security:def:20213521" version="1" class="vulnerability">
+ <metadata>
+ <title>CVE-2021-3521</title>
+    <affected family="unix">
+            <platform>openSUSE Leap 16.0</platform>
+    </affected>
+    <reference ref_id="Mitre CVE-2021-3521" ref_url="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2021-3521" source="CVE"/>
+    <reference ref_id="SUSE CVE-2021-3521" ref_url="https://www.suse.com/security/cve/CVE-2021-3521" source="SUSE CVE"/>
+		<reference ref_id="SUSE-SU-2024:1557-1" ref_url="https://lists.suse.com/pipermail/sle-security-updates/2024-May/018482.html" source="SUSE-SU"/>
+		<reference ref_id="SUSE-SU-2024:1557-2" ref_url="https://lists.suse.com/pipermail/sle-updates/2024-May/035426.html" source="SUSE-SU"/>
+		<reference ref_id="SUSE-SU-2024:1557-3" ref_url="https://lists.suse.com/pipermail/sle-security-updates/2024-July/019071.html" source="SUSE-SU"/>
+    <description>
+    There is a flaw in RPM's signature functionality. OpenPGP subkeys are associated with a primary key via a "binding signature." RPM does not check the binding signature of subkeys prior to importing them. If an attacker is able to add or socially engineer another party to add a malicious subkey to a legitimate public key, RPM could wrongly trust a malicious signature. The greatest impact of th</description>
+<advisory from="security@suse.de">
+	<issued date="2026-05-22"/>
+	<updated date="2026-05-22"/>
+	<severity>Moderate</severity>
+	<cve impact="medium" cvss3="4.4/CVSS:3.1/AV:L/AC:H/PR:L/UI:R/S:U/C:N/I:H/A:N" href="https://www.suse.com/security/cve/CVE-2021-3521/">CVE-2021-3521 at SUSE</cve>
+	<cve impact="medium" cvss3="4.7/CVSS:3.1/AV:L/AC:H/PR:N/UI:R/S:U/C:N/I:H/A:N" href="https://nvd.nist.gov/vuln/detail/CVE-2021-3521">CVE-2021-3521 at NVD</cve>
+	
+</advisory>
+ </metadata>
+		<criteria operator="AND">
+			<criterion test_ref="oval:org.opensuse.security:tst:2010063062" comment="openSUSE Leap 16.0 is installed"/>
+				<criterion test_ref="oval:org.opensuse.security:tst:2009334528" comment="rpm is affected"/>
+		</criteria>
+</definition>
+<definition id="oval:org.opensuse.security:def:200610002" version="1" class="vulnerability">
+ <metadata>
+ <title>CVE-2006-10002</title>
+    <affected family="unix">
+            <platform>openSUSE Leap 16.0</platform>
+    </affected>
+    <reference ref_id="Mitre CVE-2006-10002" ref_url="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2006-10002" source="CVE"/>
+    <reference ref_id="SUSE CVE-2006-10002" ref_url="https://www.suse.com/security/cve/CVE-2006-10002" source="SUSE CVE"/>
+		<reference ref_id="RHSA-2026:7679" ref_url="https://lists.suse.com/pipermail/suse-liberty-linux-updates/2026-April/003300.html" source="SUSE-SU"/>
+		<reference ref_id="RHSA-2026:7680" ref_url="https://lists.suse.com/pipermail/suse-liberty-linux-updates/2026-April/005148.html" source="SUSE-SU"/>
+		<reference ref_id="RHSA-2026:7681" ref_url="https://lists.suse.com/pipermail/suse-liberty-linux-updates/2026-April/003296.html" source="SUSE-SU"/>
+		<reference ref_id="RHSA-2026:8578" ref_url="https://lists.suse.com/pipermail/suse-liberty-linux-updates/2026-August/007282.html" source="SUSE-SU"/>
+		<reference ref_id="RHSA-2026:9605" ref_url="https://lists.suse.com/pipermail/suse-liberty-linux-updates/2026-July/007146.html" source="SUSE-SU"/>
+		<reference ref_id="SUSE-SU-2026:1152-1" ref_url="https://lists.suse.com/pipermail/sle-updates/2026-March/045201.html" source="SUSE-SU"/>
+		<reference ref_id="SUSE-SU-2026:1153-1" ref_url="https://lists.suse.com/pipermail/sle-updates/2026-March/045200.html" source="SUSE-SU"/>
+		<reference ref_id="SUSE-SU-2026:20993-1" ref_url="https://lists.suse.com/pipermail/sle-updates/2026-April/045338.html" source="SUSE-SU"/>
+    <description>
+    XML::Parser versions through 2.45 for Perl could overflow the pre-allocated buffer size cause a heap corruption (double free or corruption) and crashes.
+
+A :utf8 PerlIO layer, parse_stream() in Expat.xs could overflow the XML input buffer because Perl's read() returns decoded characters while SvPV() gives back multi-byte UTF-8 bytes that can exceed the pre-allocated buffer size. This can caus</description>
+<advisory from="security@suse.de">
+	<issued date="2026-04-05"/>
+	<updated date="2026-08-19"/>
+	<severity>Important</severity>
+	<cve impact="high" cvss3="8.6/CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:H" cvss4="8.8/CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:H/SC:N/SI:N/SA:N" href="https://www.suse.com/security/cve/CVE-2006-10002/">CVE-2006-10002 at SUSE</cve>
+	<cve impact="high" cvss3="7.5/CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H" href="https://nvd.nist.gov/vuln/detail/CVE-2006-10002">CVE-2006-10002 at NVD</cve>
+	
+	
+	
+	
+</advisory>
+ </metadata>
+		<criteria operator="AND">
+			<criterion test_ref="oval:org.opensuse.security:tst:2010063062" comment="openSUSE Leap 16.0 is installed"/>
+				<criteria operator="AND">
+	<criterion test_ref="oval:org.opensuse.security:tst:2010052811" comment="perl-XML-Parser-2.470.0-160000.3.1 is installed"/>
+	<criterion test_ref="oval:org.opensuse.security:tst:2010052337" comment="perl-XML-Parser is signed with openSUSE key"/>
+</criteria>
+		</criteria>
+</definition>
+<definition id="oval:org.opensuse.security:def:20054886" version="1" class="vulnerability">
+ <metadata>
+ <title>CVE-2005-4886</title>
+    <affected family="unix">
+            <platform>openSUSE Leap 16.0</platform>
+    </affected>
+    <reference ref_id="Mitre CVE-2005-4886" ref_url="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2005-4886" source="CVE"/>
+    <reference ref_id="SUSE CVE-2005-4886" ref_url="https://www.suse.com/security/cve/CVE-2005-4886" source="SUSE CVE"/>
+    <description>
+    The selinux_parse_skb_ipv6 function in security/selinux/hooks.c in the Linux kernel before 2.6.12-rc4 allows remote attackers to cause a denial of service (OOPS) via vectors associated with an incorrect call to the ipv6_skip_exthdr function.
+    </description>
+<advisory from="security@suse.de">
+	<issued date="2026-07-22"/>
+	<updated date="2026-07-22"/>
+	<severity>Moderate</severity>
+	<cve href="https://www.suse.com/security/cve/CVE-2005-4886/">CVE-2005-4886 at SUSE</cve>
+	<cve href="https://nvd.nist.gov/vuln/detail/CVE-2005-4886">CVE-2005-4886 at NVD</cve>
+	
+</advisory>
+ </metadata>
+		<criteria operator="AND">
+			<criterion test_ref="oval:org.opensuse.security:tst:2010063062" comment="openSUSE Leap 16.0 is installed"/>
+				<criterion test_ref="oval:org.opensuse.security:tst:2009333928" comment="kernel-source is not affected"/>
+		</criteria>
+</definition>
+<definition id="oval:org.opensuse.security:def:202339327" version="1" class="vulnerability">
+ <metadata>
+ <title>CVE-2023-39327</title>
+    <affected family="unix">
+            <platform>openSUSE Leap 16.0</platform>
+    </affected>
+    <reference ref_id="Mitre CVE-2023-39327" ref_url="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-39327" source="CVE"/>
+    <reference ref_id="SUSE CVE-2023-39327" ref_url="https://www.suse.com/security/cve/CVE-2023-39327" source="SUSE CVE"/>
+		<reference ref_id="SUSE-SU-2025:3946-1" ref_url="https://lists.suse.com/pipermail/sle-security-updates/2025-November/023156.html" source="SUSE-SU"/>
+		<reference ref_id="SUSE-SU-2026:0320-1" ref_url="https://lists.suse.com/pipermail/sle-security-updates/2026-January/023977.html" source="SUSE-SU"/>
+		<reference ref_id="SUSE-SU-2026:0330-1" ref_url="https://lists.suse.com/pipermail/sle-security-updates/2026-January/023982.html" source="SUSE-SU"/>
+		<reference ref_id="SUSE-SU-2026:20422-1" ref_url="https://lists.suse.com/pipermail/sle-security-updates/2026-February/024348.html" source="SUSE-SU"/>
+    <description>
+    A flaw was found in OpenJPEG. Maliciously constructed pictures can cause the program to enter a large loop and continuously print warning messages on the terminal.
+    </description>
+<advisory from="security@suse.de">
+	<issued date="2026-02-15"/>
+	<updated date="2026-05-22"/>
+	<severity>Low</severity>
+	<cve impact="low" cvss3="3.3/CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:L" cvss4="4.8/CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:P/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N" href="https://www.suse.com/security/cve/CVE-2023-39327/">CVE-2023-39327 at SUSE</cve>
+	<cve href="https://nvd.nist.gov/vuln/detail/CVE-2023-39327">CVE-2023-39327 at NVD</cve>
+	
+</advisory>
+ </metadata>
+		<criteria operator="AND">
+			<criterion test_ref="oval:org.opensuse.security:tst:2010063062" comment="openSUSE Leap 16.0 is installed"/>
+			<criteria operator="OR">
+				<criteria operator="AND">
+	<criterion test_ref="oval:org.opensuse.security:tst:2010043889" comment="libopenjp2-7-2.5.3-160000.3.1 is installed"/>
+	<criterion test_ref="oval:org.opensuse.security:tst:2009153807" comment="libopenjp2-7 is signed with openSUSE key"/>
+</criteria>
+				<criteria operator="AND">
+	<criterion test_ref="oval:org.opensuse.security:tst:2010043890" comment="libopenjp2-7-x86-64-v3-2.5.3-160000.3.1 is installed"/>
+	<criterion test_ref="oval:org.opensuse.security:tst:2010043905" comment="libopenjp2-7-x86-64-v3 is signed with openSUSE key"/>
+</criteria>
+				<criteria operator="AND">
+	<criterion test_ref="oval:org.opensuse.security:tst:2010043891" comment="openjpeg2-2.5.3-160000.3.1 is installed"/>
+	<criterion test_ref="oval:org.opensuse.security:tst:2009153813" comment="openjpeg2 is signed with openSUSE key"/>
+</criteria>
+				<criteria operator="AND">
+	<criterion test_ref="oval:org.opensuse.security:tst:2010043892" comment="openjpeg2-devel-2.5.3-160000.3.1 is installed"/>
+	<criterion test_ref="oval:org.opensuse.security:tst:2009153814" comment="openjpeg2-devel is signed with openSUSE key"/>
+</criteria>
+				<criteria operator="AND">
+	<criterion test_ref="oval:org.opensuse.security:tst:2010043893" comment="openjpeg2-devel-doc-2.5.3-160000.3.1 is installed"/>
+	<criterion test_ref="oval:org.opensuse.security:tst:2010043906" comment="openjpeg2-devel-doc is signed with openSUSE key"/>
+</criteria>
+				<criterion test_ref="oval:org.opensuse.security:tst:2009334003" comment="ghostscript is not affected"/>
+			</criteria>
+		</criteria>
+</definition>
+<definition id="oval:org.opensuse.security:def:19990512" version="1" class="vulnerability">
+ <metadata>
+ <title>CVE-1999-0512</title>
+    <affected family="unix">
+            <platform>openSUSE Leap 16.0</platform>
+    </affected>
+    <reference ref_id="Mitre CVE-1999-0512" ref_url="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-1999-0512" source="CVE"/>
+    <reference ref_id="SUSE CVE-1999-0512" ref_url="https://www.suse.com/security/cve/CVE-1999-0512" source="SUSE CVE"/>
+    <description>
+    A mail server is explicitly configured to allow SMTP mail relay, which allows abuse by spammers.
+    </description>
+<advisory from="security@suse.de">
+	<issued date="2026-07-22"/>
+	<updated date="2026-08-04"/>
+	<severity>Moderate</severity>
+	<cve impact="medium" cvss3="6.5/CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:L" cvss4="6.9/CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:L/VA:L/SC:N/SI:N/SA:N" href="https://www.suse.com/security/cve/CVE-1999-0512/">CVE-1999-0512 at SUSE</cve>
+	<cve href="https://nvd.nist.gov/vuln/detail/CVE-1999-0512">CVE-1999-0512 at NVD</cve>
+	
+</advisory>
+ </metadata>
+</definition>
+</definitions>
+<tests>
+<rpminfo_test id="oval:org.opensuse.security:tst:2009333928" version="1" comment="kernel-source is ==0" check="at least one" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009030418"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009079458"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2010063062" version="1" comment="Leap-release is ==16.0" check="at least one" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009072405"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009243663"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2010052811" version="1" comment="perl-XML-Parser is &lt;2.470.0-160000.3.1 for aarch64,ppc64le,s390x,x86_64" check="at least one" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009071961"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009249624"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2010052337" version="1" comment="perl-XML-Parser is signed with openSUSE key" check="all" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009071961"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009051526"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2010043889" version="1" comment="libopenjp2-7 is &lt;2.5.3-160000.3.1 for aarch64,ppc64le,s390x,x86_64" check="at least one" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009041303"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009247629"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2009153807" version="1" comment="libopenjp2-7 is signed with openSUSE key" check="all" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009041303"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009051526"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2010043890" version="1" comment="libopenjp2-7-x86-64-v3 is &lt;2.5.3-160000.3.1 for x86_64" check="at least one" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009064363"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009247630"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2010043905" version="1" comment="libopenjp2-7-x86-64-v3 is signed with openSUSE key" check="all" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009064363"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009051526"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2010043891" version="1" comment="openjpeg2 is &lt;2.5.3-160000.3.1 for aarch64,ppc64le,s390x,x86_64" check="at least one" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009041304"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009247629"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2009153813" version="1" comment="openjpeg2 is signed with openSUSE key" check="all" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009041304"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009051526"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2010043892" version="1" comment="openjpeg2-devel is &lt;2.5.3-160000.3.1 for aarch64,ppc64le,s390x,x86_64" check="at least one" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009041386"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009247629"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2009153814" version="1" comment="openjpeg2-devel is signed with openSUSE key" check="all" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009041386"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009051526"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2010043893" version="1" comment="openjpeg2-devel-doc is &lt;2.5.3-160000.3.1 for noarch" check="at least one" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009053305"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009247631"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2010043906" version="1" comment="openjpeg2-devel-doc is signed with openSUSE key" check="all" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009053305"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009051526"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2009334003" version="1" comment="ghostscript is ==0" check="at least one" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009038878"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009079458"/>
+	</rpminfo_test>
+<rpminfo_test id="oval:org.opensuse.security:tst:2009334528" version="1" comment="rpm is &gt;0" check="at least one" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<object object_ref="oval:org.opensuse.security:obj:2009032541"/>
+		<state state_ref="oval:org.opensuse.security:ste:2009079459"/>
+	</rpminfo_test>
+</tests>
+<objects>
+<rpminfo_object id="oval:org.opensuse.security:obj:2009030418" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<name>kernel-source</name>
+	</rpminfo_object>
+<rpminfo_object id="oval:org.opensuse.security:obj:2009072405" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<name>Leap-release</name>
+	</rpminfo_object>
+<rpminfo_object id="oval:org.opensuse.security:obj:2009071961" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<name>perl-XML-Parser</name>
+	</rpminfo_object>
+<rpminfo_object id="oval:org.opensuse.security:obj:2009041303" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<name>libopenjp2-7</name>
+	</rpminfo_object>
+<rpminfo_object id="oval:org.opensuse.security:obj:2009064363" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<name>libopenjp2-7-x86-64-v3</name>
+	</rpminfo_object>
+<rpminfo_object id="oval:org.opensuse.security:obj:2009041304" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<name>openjpeg2</name>
+	</rpminfo_object>
+<rpminfo_object id="oval:org.opensuse.security:obj:2009041386" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<name>openjpeg2-devel</name>
+	</rpminfo_object>
+<rpminfo_object id="oval:org.opensuse.security:obj:2009053305" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<name>openjpeg2-devel-doc</name>
+	</rpminfo_object>
+<rpminfo_object id="oval:org.opensuse.security:obj:2009038878" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<name>ghostscript</name>
+	</rpminfo_object>
+<rpminfo_object id="oval:org.opensuse.security:obj:2009032541" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+		<name>rpm</name>
+	</rpminfo_object>
+</objects>
+<states>
+<rpminfo_state id="oval:org.opensuse.security:ste:2009079458" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+   <version operation="equals">0</version>
+  </rpminfo_state>
+<rpminfo_state id="oval:org.opensuse.security:ste:2009243663" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+   <version operation="equals">16.0</version>
+  </rpminfo_state>
+<rpminfo_state id="oval:org.opensuse.security:ste:2009249624" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+   <arch datatype="string" operation="pattern match">(aarch64|ppc64le|s390x|x86_64)</arch>
+   <evr datatype="evr_string" operation="less than">0:2.470.0-160000.3.1</evr>
+  </rpminfo_state>
+<rpminfo_state id="oval:org.opensuse.security:ste:2009051526" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+   <signature_keyid operation="equals">b88b2fd43dbdc284</signature_keyid>
+  </rpminfo_state>
+<rpminfo_state id="oval:org.opensuse.security:ste:2009247629" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+   <arch datatype="string" operation="pattern match">(aarch64|ppc64le|s390x|x86_64)</arch>
+   <evr datatype="evr_string" operation="less than">0:2.5.3-160000.3.1</evr>
+  </rpminfo_state>
+<rpminfo_state id="oval:org.opensuse.security:ste:2009247630" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+   <arch datatype="string" operation="pattern match">(x86_64)</arch>
+   <evr datatype="evr_string" operation="less than">0:2.5.3-160000.3.1</evr>
+  </rpminfo_state>
+<rpminfo_state id="oval:org.opensuse.security:ste:2009247631" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+   <arch datatype="string" operation="pattern match">(noarch)</arch>
+   <evr datatype="evr_string" operation="less than">0:2.5.3-160000.3.1</evr>
+  </rpminfo_state>
+<rpminfo_state id="oval:org.opensuse.security:ste:2009079459" version="1" xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux">
+   <evr datatype="evr_string" operation="greater than">0:0-0</evr>
+  </rpminfo_state>
+</states>
+<variables>
+
+</variables>
+</oval_definitions>

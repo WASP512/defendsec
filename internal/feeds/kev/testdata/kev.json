@@ -1,0 +1,60 @@
+{
+    "title": "CISA Catalog of Known Exploited Vulnerabilities",
+    "catalogVersion": "2026.10.23",
+    "dateReleased": "2026-10-23T19:30:18.9209Z",
+    "count": 4,
+    "vulnerabilities": [
+        {
+            "cveID": "CVE-2021-44228",
+            "vendorProject": "Apache",
+            "product": "Log4j2",
+            "vulnerabilityName": "Apache Log4j2 Remote Code Execution Vulnerability",
+            "dateAdded": "2021-12-10",
+            "shortDescription": "Apache Log4j2 contains a vulnerability where JNDI features do not protect against attacker-controlled LDAP.",
+            "requiredAction": "For all affected software assets for which updates exist, the National Vulnerability Database (NVD) entry...",
+            "dueDate": "2021-12-24",
+            "knownRansomwareCampaignUse": "Known",
+            "notes": "https://logging.apache.org/log4j/2.x/security.html",
+            "cwes": ["CWE-20", "CWE-400", "CWE-502"]
+        },
+        {
+            "cveID": "CVE-2014-0160",
+            "vendorProject": "OpenSSL",
+            "product": "OpenSSL",
+            "vulnerabilityName": "OpenSSL Information Disclosure Vulnerability",
+            "dateAdded": "2022-05-04",
+            "shortDescription": "OpenSSL contains an out-of-bounds read vulnerability in the TLS heartbeat extension.",
+            "requiredAction": "Apply updates per vendor instructions.",
+            "dueDate": "2022-05-25",
+            "knownRansomwareCampaignUse": "Unknown",
+            "notes": "",
+            "cwes": ["CWE-119"]
+        },
+        {
+            "cveID": "CVE-2024-3094",
+            "vendorProject": "XZ",
+            "product": "XZ Utils",
+            "vulnerabilityName": "XZ Utils Embedded Malicious Code Vulnerability",
+            "dateAdded": "2024-04-17",
+            "shortDescription": "XZ Utils contains an embedded malicious code vulnerability.",
+            "requiredAction": "Apply mitigations per vendor instructions.",
+            "dueDate": "2024-05-08",
+            "knownRansomwareCampaignUse": "Unknown",
+            "notes": "",
+            "cwes": []
+        },
+        {
+            "cveID": "not-a-cve",
+            "vendorProject": "Broken",
+            "product": "Broken",
+            "vulnerabilityName": "Row with a malformed identifier",
+            "dateAdded": "2024-01-01",
+            "shortDescription": "",
+            "requiredAction": "",
+            "dueDate": "2024-01-22",
+            "knownRansomwareCampaignUse": "Unknown",
+            "notes": "",
+            "cwes": []
+        }
+    ]
+}

@@ -1,0 +1,478 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<oval_definitions xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5" xmlns:oval="http://oval.mitre.org/XMLSchema/oval-common-5" xmlns:unix-def="http://oval.mitre.org/XMLSchema/oval-definitions-5#unix" xmlns:red-def="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux" xmlns:ind-def="http://oval.mitre.org/XMLSchema/oval-definitions-5#independent" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://oval.mitre.org/XMLSchema/oval-common-5 oval-common-schema.xsd http://oval.mitre.org/XMLSchema/oval-definitions-5 oval-definitions-schema.xsd http://oval.mitre.org/XMLSchema/oval-definitions-5#unix unix-definitions-schema.xsd http://oval.mitre.org/XMLSchema/oval-definitions-5#linux linux-definitions-schema.xsd">
+<generator>
+<oval:product_name>Red Hat OVAL Patch Definition Merger</oval:product_name>
+<oval:product_version>3</oval:product_version>
+<oval:schema_version>5.10</oval:schema_version>
+<oval:timestamp>2026-10-23T21:43:59</oval:timestamp>
+<oval:content_version>1792791839</oval:content_version>
+</generator>
+<definitions>
+<definition class="patch" id="oval:com.redhat.rhsa:def:20227288" version="645">
+ <metadata>
+  <title>RHSA-2022:7288: openssl security update (Important)</title>
+  <affected family="unix">
+   <platform>Red Hat Enterprise Linux 9</platform>
+  </affected>
+  <reference ref_id="RHSA-2022:7288" ref_url="https://access.redhat.com/errata/RHSA-2022:7288" source="RHSA"/>
+  <reference ref_id="CVE-2022-3602" ref_url="https://access.redhat.com/security/cve/CVE-2022-3602" source="CVE"/>
+  <reference ref_id="CVE-2022-3786" ref_url="https://access.redhat.com/security/cve/CVE-2022-3786" source="CVE"/>
+  <description>OpenSSL is a toolkit that implements the Secure Sockets Layer (SSL) and Transport Layer Security (TLS) protocols, as well as a full strength general purpose cryptography library.
+
+Security Fix(es):
+
+* OpenSSL: X.509 Email Address Buffer Overflow (CVE-2022-3602)
+
+* OpenSSL: X.509 Email Address Variable Length Buffer Overflow (CVE-2022-3786)
+
+For more details about the security issue(s), including t</description>
+  <advisory from="secalert@redhat.com">
+   <severity>Important</severity>
+   <rights>Copyright 2022 Red Hat, Inc.</rights>
+   <issued date="2022-11-01"/>
+   <updated date="2022-11-01"/>
+   <cve cvss3="7.5/CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H" cwe="CWE-805" href="https://access.redhat.com/security/cve/CVE-2022-3602" impact="important" public="20221101">CVE-2022-3602</cve>
+   <cve cvss3="7.5/CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H" cwe="CWE-805" href="https://access.redhat.com/security/cve/CVE-2022-3786" impact="important" public="20221101">CVE-2022-3786</cve>
+   
+   
+   
+  </advisory>
+ </metadata>
+ <criteria operator="OR">
+  <criterion comment="Red Hat Enterprise Linux must be installed" test_ref="oval:com.redhat.rhba:tst:20223893008"/>
+  <criteria operator="AND">
+   <criterion comment="Red Hat Enterprise Linux 9 is installed" test_ref="oval:com.redhat.rhba:tst:20223893007"/>
+   <criteria operator="OR">
+    <criteria operator="AND">
+     <criterion comment="openssl is earlier than 1:3.0.1-43.el9_0" test_ref="oval:com.redhat.rhsa:tst:20227288001"/>
+     <criterion comment="openssl is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhsa:tst:20226224002"/>
+    </criteria>
+    <criteria operator="AND">
+     <criterion comment="openssl-devel is earlier than 1:3.0.1-43.el9_0" test_ref="oval:com.redhat.rhsa:tst:20227288003"/>
+     <criterion comment="openssl-devel is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhsa:tst:20226224004"/>
+    </criteria>
+    <criteria operator="AND">
+     <criterion comment="openssl-libs is earlier than 1:3.0.1-43.el9_0" test_ref="oval:com.redhat.rhsa:tst:20227288005"/>
+     <criterion comment="openssl-libs is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhsa:tst:20226224006"/>
+    </criteria>
+    <criteria operator="AND">
+     <criterion comment="openssl-perl is earlier than 1:3.0.1-43.el9_0" test_ref="oval:com.redhat.rhsa:tst:20227288007"/>
+     <criterion comment="openssl-perl is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhsa:tst:20226224008"/>
+    </criteria>
+   </criteria>
+  </criteria>
+ </criteria>
+</definition>
+<definition class="patch" id="oval:com.redhat.rhsa:def:20228832" version="638">
+ <metadata>
+  <title>RHSA-2022:8832: nodejs:18 security, bug fix, and enhancement update (Moderate)</title>
+  <affected family="unix">
+   <platform>Red Hat Enterprise Linux 9</platform>
+  </affected>
+  <reference ref_id="RHSA-2022:8832" ref_url="https://access.redhat.com/errata/RHSA-2022:8832" source="RHSA"/>
+  <reference ref_id="CVE-2022-3517" ref_url="https://access.redhat.com/security/cve/CVE-2022-3517" source="CVE"/>
+  <reference ref_id="CVE-2022-43548" ref_url="https://access.redhat.com/security/cve/CVE-2022-43548" source="CVE"/>
+  <description>Node.js is a software development platform for building fast and scalable network applications in the JavaScript programming language. 
+
+The following packages have been upgraded to a later upstream version: nodejs (18.12.1). (BZ#2142809, BZ#2142830, BZ#2142834, BZ#2142856)
+
+Security Fix(es):
+
+* nodejs-minimatch: ReDoS via the braceExpand function (CVE-2022-3517)
+
+* nodejs: DNS rebinding in inspec</description>
+  <advisory from="secalert@redhat.com">
+   <severity>Moderate</severity>
+   <rights>Copyright 2022 Red Hat, Inc.</rights>
+   <issued date="2022-12-06"/>
+   <updated date="2022-12-06"/>
+   <cve cvss3="7.5/CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H" cwe="CWE-1333" href="https://access.redhat.com/security/cve/CVE-2022-3517" impact="moderate" public="20220206">CVE-2022-3517</cve>
+   <cve cvss3="7.5/CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N" cwe="CWE-350" href="https://access.redhat.com/security/cve/CVE-2022-43548" impact="moderate" public="20221104">CVE-2022-43548</cve>
+   
+   
+   
+  </advisory>
+ </metadata>
+ <criteria operator="OR">
+  <criterion comment="Red Hat Enterprise Linux must be installed" test_ref="oval:com.redhat.rhba:tst:20223893008"/>
+  <criteria operator="AND">
+   <criterion comment="Red Hat Enterprise Linux 9 is installed" test_ref="oval:com.redhat.rhba:tst:20223893007"/>
+   <criteria operator="OR">
+    <criteria operator="AND">
+     <criterion comment="Module nodejs:18 is enabled" test_ref="oval:com.redhat.rhsa:tst:20228832017"/>
+     <criteria operator="OR">
+      <criteria operator="AND">
+       <criterion comment="nodejs is earlier than 1:18.12.1-1.module+el9.1.0.z+17326+318294bb" test_ref="oval:com.redhat.rhsa:tst:20228832001"/>
+       <criterion comment="nodejs is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhea:tst:20236529002"/>
+      </criteria>
+      <criteria operator="AND">
+       <criterion comment="nodejs-devel is earlier than 1:18.12.1-1.module+el9.1.0.z+17326+318294bb" test_ref="oval:com.redhat.rhsa:tst:20228832003"/>
+       <criterion comment="nodejs-devel is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhea:tst:20236529004"/>
+      </criteria>
+      <criteria operator="AND">
+       <criterion comment="nodejs-docs is earlier than 1:18.12.1-1.module+el9.1.0.z+17326+318294bb" test_ref="oval:com.redhat.rhsa:tst:20228832005"/>
+       <criterion comment="nodejs-docs is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhea:tst:20236529006"/>
+      </criteria>
+      <criteria operator="AND">
+       <criterion comment="nodejs-full-i18n is earlier than 1:18.12.1-1.module+el9.1.0.z+17326+318294bb" test_ref="oval:com.redhat.rhsa:tst:20228832007"/>
+       <criterion comment="nodejs-full-i18n is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhea:tst:20236529008"/>
+      </criteria>
+      <criteria operator="AND">
+       <criterion comment="nodejs-nodemon is earlier than 0:2.0.20-1.module+el9.1.0.z+17326+318294bb" test_ref="oval:com.redhat.rhsa:tst:20228832009"/>
+       <criterion comment="nodejs-nodemon is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhea:tst:20236529010"/>
+      </criteria>
+      <criteria operator="AND">
+       <criterion comment="nodejs-packaging is earlier than 0:2021.06-4.module+el9.1.0+15718+e52ec601" test_ref="oval:com.redhat.rhsa:tst:20228832011"/>
+       <criterion comment="nodejs-packaging is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhea:tst:20236529012"/>
+      </criteria>
+      <criteria operator="AND">
+       <criterion comment="nodejs-packaging-bundler is earlier than 0:2021.06-4.module+el9.1.0+15718+e52ec601" test_ref="oval:com.redhat.rhsa:tst:20228832013"/>
+       <criterion comment="nodejs-packaging-bundler is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhea:tst:20236529014"/>
+      </criteria>
+      <criteria operator="AND">
+       <criterion comment="npm is earlier than 1:8.19.2-1.18.12.1.1.module+el9.1.0.z+17326+318294bb" test_ref="oval:com.redhat.rhsa:tst:20228832015"/>
+       <criterion comment="npm is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhea:tst:20236529016"/>
+      </criteria>
+     </criteria>
+    </criteria>
+   </criteria>
+  </criteria>
+ </criteria>
+</definition>
+<definition class="patch" id="oval:com.redhat.rhsa:def:20225245" version="638">
+ <metadata>
+  <title>RHSA-2022:5245: curl security update (Moderate)</title>
+  <affected family="unix">
+   <platform>Red Hat Enterprise Linux 9</platform>
+  </affected>
+  <reference ref_id="RHSA-2022:5245" ref_url="https://access.redhat.com/errata/RHSA-2022:5245" source="RHSA"/>
+  <reference ref_id="CVE-2022-22576" ref_url="https://access.redhat.com/security/cve/CVE-2022-22576" source="CVE"/>
+  <reference ref_id="CVE-2022-27774" ref_url="https://access.redhat.com/security/cve/CVE-2022-27774" source="CVE"/>
+  <reference ref_id="CVE-2022-27776" ref_url="https://access.redhat.com/security/cve/CVE-2022-27776" source="CVE"/>
+  <reference ref_id="CVE-2022-27782" ref_url="https://access.redhat.com/security/cve/CVE-2022-27782" source="CVE"/>
+  <description>The curl packages provide the libcurl library and the curl utility for downloading files from servers using various protocols, including HTTP, FTP, and LDAP.
+
+Security Fix(es):
+
+* curl: OAUTH2 bearer bypass in connection re-use (CVE-2022-22576)
+
+* curl: credential leak on redirect (CVE-2022-27774)
+
+* curl: auth/cookie leak on redirect (CVE-2022-27776)
+
+* curl: TLS and SSH connection too eager reus</description>
+  <advisory from="secalert@redhat.com">
+   <severity>Moderate</severity>
+   <rights>Copyright 2022 Red Hat, Inc.</rights>
+   <issued date="2022-07-01"/>
+   <updated date="2022-07-01"/>
+   <cve cvss3="8.1/CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N" cwe="CWE-306" href="https://access.redhat.com/security/cve/CVE-2022-22576" impact="moderate" public="20220427:0600">CVE-2022-22576</cve>
+   <cve cvss3="5.0/CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:L/A:L" cwe="CWE-522" href="https://access.redhat.com/security/cve/CVE-2022-27774" impact="moderate" public="20220427:0600">CVE-2022-27774</cve>
+   <cve cvss3="4.3/CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N" cwe="CWE-522" href="https://access.redhat.com/security/cve/CVE-2022-27776" impact="moderate" public="20220427">CVE-2022-27776</cve>
+   <cve cvss3="7.5/CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N" cwe="CWE-295" href="https://access.redhat.com/security/cve/CVE-2022-27782" impact="moderate" public="20220511">CVE-2022-27782</cve>
+   
+   
+   
+   
+   
+  </advisory>
+ </metadata>
+ <criteria operator="OR">
+  <criterion comment="Red Hat Enterprise Linux must be installed" test_ref="oval:com.redhat.rhba:tst:20223893008"/>
+  <criteria operator="AND">
+   <criterion comment="Red Hat Enterprise Linux 9 is installed" test_ref="oval:com.redhat.rhba:tst:20223893007"/>
+   <criteria operator="OR">
+    <criteria operator="AND">
+     <criterion comment="curl is earlier than 0:7.76.1-14.el9_0.4" test_ref="oval:com.redhat.rhsa:tst:20225245001"/>
+     <criterion comment="curl is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhsa:tst:20225245002"/>
+    </criteria>
+    <criteria operator="AND">
+     <criterion comment="curl-minimal is earlier than 0:7.76.1-14.el9_0.4" test_ref="oval:com.redhat.rhsa:tst:20225245003"/>
+     <criterion comment="curl-minimal is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhsa:tst:20225245004"/>
+    </criteria>
+    <criteria operator="AND">
+     <criterion comment="libcurl is earlier than 0:7.76.1-14.el9_0.4" test_ref="oval:com.redhat.rhsa:tst:20225245005"/>
+     <criterion comment="libcurl is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhsa:tst:20225245006"/>
+    </criteria>
+    <criteria operator="AND">
+     <criterion comment="libcurl-devel is earlier than 0:7.76.1-14.el9_0.4" test_ref="oval:com.redhat.rhsa:tst:20225245007"/>
+     <criterion comment="libcurl-devel is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhsa:tst:20225245008"/>
+    </criteria>
+    <criteria operator="AND">
+     <criterion comment="libcurl-minimal is earlier than 0:7.76.1-14.el9_0.4" test_ref="oval:com.redhat.rhsa:tst:20225245009"/>
+     <criterion comment="libcurl-minimal is signed with Red Hat redhatrelease2 key" test_ref="oval:com.redhat.rhsa:tst:20225245010"/>
+    </criteria>
+   </criteria>
+  </criteria>
+ </criteria>
+</definition>
+</definitions>
+<tests>
+<red-def:rpmverifyfile_test check="at least one" comment="Red Hat Enterprise Linux 9 is installed" id="oval:com.redhat.rhba:tst:20223893007" version="635">
+ <red-def:object object_ref="oval:com.redhat.rhba:obj:20223893004"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893004"/>
+</red-def:rpmverifyfile_test>
+<red-def:rpmverifyfile_test check="none satisfy" comment="Red Hat Enterprise Linux must be installed" id="oval:com.redhat.rhba:tst:20223893008" version="635">
+ <red-def:object object_ref="oval:com.redhat.rhba:obj:20223893004"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893005"/>
+</red-def:rpmverifyfile_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhea:tst:20236529002" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529001"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-devel is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhea:tst:20236529004" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529002"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-docs is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhea:tst:20236529006" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529003"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-full-i18n is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhea:tst:20236529008" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529004"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-nodemon is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhea:tst:20236529010" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529005"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-packaging is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhea:tst:20236529012" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529006"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-packaging-bundler is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhea:tst:20236529014" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529007"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="npm is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhea:tst:20236529016" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529008"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="curl is earlier than 0:7.76.1-14.el9_0.4" id="oval:com.redhat.rhsa:tst:20225245001" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20225245001"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20225245001"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="curl is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhsa:tst:20225245002" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20225245001"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="curl-minimal is earlier than 0:7.76.1-14.el9_0.4" id="oval:com.redhat.rhsa:tst:20225245003" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20225245002"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20225245001"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="curl-minimal is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhsa:tst:20225245004" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20225245002"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="libcurl is earlier than 0:7.76.1-14.el9_0.4" id="oval:com.redhat.rhsa:tst:20225245005" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20225245003"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20225245003"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="libcurl is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhsa:tst:20225245006" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20225245003"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="libcurl-devel is earlier than 0:7.76.1-14.el9_0.4" id="oval:com.redhat.rhsa:tst:20225245007" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20225245004"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20225245003"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="libcurl-devel is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhsa:tst:20225245008" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20225245004"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="libcurl-minimal is earlier than 0:7.76.1-14.el9_0.4" id="oval:com.redhat.rhsa:tst:20225245009" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20225245005"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20225245003"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="libcurl-minimal is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhsa:tst:20225245010" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20225245005"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="openssl is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhsa:tst:20226224002" version="639">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20226224001"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="openssl-devel is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhsa:tst:20226224004" version="639">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20226224002"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="openssl-libs is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhsa:tst:20226224006" version="639">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20226224003"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="openssl-perl is signed with Red Hat redhatrelease2 key" id="oval:com.redhat.rhsa:tst:20226224008" version="639">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20226224004"/>
+ <red-def:state state_ref="oval:com.redhat.rhba:ste:20223893002"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="openssl is earlier than 1:3.0.1-43.el9_0" id="oval:com.redhat.rhsa:tst:20227288001" version="645">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20226224001"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20227288001"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="openssl-devel is earlier than 1:3.0.1-43.el9_0" id="oval:com.redhat.rhsa:tst:20227288003" version="645">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20226224002"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20227288003"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="openssl-libs is earlier than 1:3.0.1-43.el9_0" id="oval:com.redhat.rhsa:tst:20227288005" version="645">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20226224003"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20227288003"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="openssl-perl is earlier than 1:3.0.1-43.el9_0" id="oval:com.redhat.rhsa:tst:20227288007" version="645">
+ <red-def:object object_ref="oval:com.redhat.rhsa:obj:20226224004"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20227288001"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs is earlier than 1:18.12.1-1.module+el9.1.0.z+17326+318294bb" id="oval:com.redhat.rhsa:tst:20228832001" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529001"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20228832001"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-devel is earlier than 1:18.12.1-1.module+el9.1.0.z+17326+318294bb" id="oval:com.redhat.rhsa:tst:20228832003" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529002"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20228832001"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-docs is earlier than 1:18.12.1-1.module+el9.1.0.z+17326+318294bb" id="oval:com.redhat.rhsa:tst:20228832005" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529003"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20228832003"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-full-i18n is earlier than 1:18.12.1-1.module+el9.1.0.z+17326+318294bb" id="oval:com.redhat.rhsa:tst:20228832007" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529004"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20228832001"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-nodemon is earlier than 0:2.0.20-1.module+el9.1.0.z+17326+318294bb" id="oval:com.redhat.rhsa:tst:20228832009" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529005"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20228832004"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-packaging is earlier than 0:2021.06-4.module+el9.1.0+15718+e52ec601" id="oval:com.redhat.rhsa:tst:20228832011" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529006"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20228832005"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="nodejs-packaging-bundler is earlier than 0:2021.06-4.module+el9.1.0+15718+e52ec601" id="oval:com.redhat.rhsa:tst:20228832013" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529007"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20228832005"/>
+</red-def:rpminfo_test>
+<red-def:rpminfo_test check="at least one" comment="npm is earlier than 1:8.19.2-1.18.12.1.1.module+el9.1.0.z+17326+318294bb" id="oval:com.redhat.rhsa:tst:20228832015" version="638">
+ <red-def:object object_ref="oval:com.redhat.rhea:obj:20236529008"/>
+ <red-def:state state_ref="oval:com.redhat.rhsa:ste:20228832006"/>
+</red-def:rpminfo_test>
+<ind-def:textfilecontent54_test check="all" comment="Module nodejs:18 is enabled" id="oval:com.redhat.rhsa:tst:20228832017" version="638">
+ <ind-def:object object_ref="oval:com.redhat.rhea:obj:20236529009"/>
+ <ind-def:state state_ref="oval:com.redhat.rhsa:ste:20228832007"/>
+</ind-def:textfilecontent54_test>
+</tests>
+<objects>
+<red-def:rpmverifyfile_object id="oval:com.redhat.rhba:obj:20223893004" version="635">
+ <red-def:behaviors noconfigfiles="true" noghostfiles="true" nogroup="true" nolinkto="true" nomd5="true" nomode="true" nomtime="true" nordev="true" nosize="true" nouser="true"/>
+ <red-def:name operation="pattern match"/>
+ <red-def:epoch operation="pattern match"/>
+ <red-def:version operation="pattern match"/>
+ <red-def:release operation="pattern match"/>
+ <red-def:arch operation="pattern match"/>
+ <red-def:filepath>/etc/redhat-release</red-def:filepath>
+</red-def:rpmverifyfile_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhea:obj:20236529001" version="638">
+ <red-def:name>nodejs</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhea:obj:20236529002" version="638">
+ <red-def:name>nodejs-devel</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhea:obj:20236529003" version="638">
+ <red-def:name>nodejs-docs</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhea:obj:20236529004" version="638">
+ <red-def:name>nodejs-full-i18n</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhea:obj:20236529005" version="638">
+ <red-def:name>nodejs-nodemon</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhea:obj:20236529006" version="638">
+ <red-def:name>nodejs-packaging</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhea:obj:20236529007" version="638">
+ <red-def:name>nodejs-packaging-bundler</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhea:obj:20236529008" version="638">
+ <red-def:name>npm</red-def:name>
+</red-def:rpminfo_object>
+<ind-def:textfilecontent54_object id="oval:com.redhat.rhea:obj:20236529009" version="638">
+ <ind-def:filepath datatype="string">/etc/dnf/modules.d/nodejs.module</ind-def:filepath>
+ <ind-def:pattern operation="pattern match">\[nodejs\][\w\W]*</ind-def:pattern>
+ <ind-def:instance datatype="int">1</ind-def:instance>
+</ind-def:textfilecontent54_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhsa:obj:20225245001" version="638">
+ <red-def:name>curl</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhsa:obj:20225245002" version="638">
+ <red-def:name>curl-minimal</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhsa:obj:20225245003" version="638">
+ <red-def:name>libcurl</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhsa:obj:20225245004" version="638">
+ <red-def:name>libcurl-devel</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhsa:obj:20225245005" version="638">
+ <red-def:name>libcurl-minimal</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhsa:obj:20226224001" version="639">
+ <red-def:name>openssl</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhsa:obj:20226224002" version="639">
+ <red-def:name>openssl-devel</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhsa:obj:20226224003" version="639">
+ <red-def:name>openssl-libs</red-def:name>
+</red-def:rpminfo_object>
+<red-def:rpminfo_object id="oval:com.redhat.rhsa:obj:20226224004" version="639">
+ <red-def:name>openssl-perl</red-def:name>
+</red-def:rpminfo_object>
+</objects>
+<states>
+<red-def:rpminfo_state id="oval:com.redhat.rhba:ste:20223893002" version="635">
+ <red-def:signature_keyid operation="equals">199e2f91fd431d51</red-def:signature_keyid>
+</red-def:rpminfo_state>
+<red-def:rpmverifyfile_state id="oval:com.redhat.rhba:ste:20223893004" version="635">
+ <red-def:name operation="pattern match">^redhat-release</red-def:name>
+ <red-def:version operation="pattern match">^9[^\d]</red-def:version>
+</red-def:rpmverifyfile_state>
+<red-def:rpmverifyfile_state id="oval:com.redhat.rhba:ste:20223893005" version="635">
+ <red-def:name operation="pattern match">^redhat-release</red-def:name>
+</red-def:rpmverifyfile_state>
+<red-def:rpminfo_state id="oval:com.redhat.rhsa:ste:20225245001" version="638">
+ <red-def:arch datatype="string" operation="pattern match">aarch64|ppc64le|s390x|x86_64</red-def:arch>
+ <red-def:evr datatype="evr_string" operation="less than">0:7.76.1-14.el9_0.4</red-def:evr>
+</red-def:rpminfo_state>
+<red-def:rpminfo_state id="oval:com.redhat.rhsa:ste:20225245003" version="638">
+ <red-def:arch datatype="string" operation="pattern match">aarch64|i686|ppc64le|s390x|x86_64</red-def:arch>
+ <red-def:evr datatype="evr_string" operation="less than">0:7.76.1-14.el9_0.4</red-def:evr>
+</red-def:rpminfo_state>
+<red-def:rpminfo_state id="oval:com.redhat.rhsa:ste:20227288001" version="645">
+ <red-def:arch datatype="string" operation="pattern match">aarch64|ppc64le|s390x|x86_64</red-def:arch>
+ <red-def:evr datatype="evr_string" operation="less than">1:3.0.1-43.el9_0</red-def:evr>
+</red-def:rpminfo_state>
+<red-def:rpminfo_state id="oval:com.redhat.rhsa:ste:20227288003" version="645">
+ <red-def:arch datatype="string" operation="pattern match">aarch64|i686|ppc64le|s390x|x86_64</red-def:arch>
+ <red-def:evr datatype="evr_string" operation="less than">1:3.0.1-43.el9_0</red-def:evr>
+</red-def:rpminfo_state>
+<red-def:rpminfo_state id="oval:com.redhat.rhsa:ste:20228832001" version="638">
+ <red-def:arch datatype="string" operation="pattern match">aarch64|ppc64le|s390x|x86_64</red-def:arch>
+ <red-def:evr datatype="evr_string" operation="less than">1:18.12.1-1.module+el9.1.0.z+17326+318294bb</red-def:evr>
+</red-def:rpminfo_state>
+<red-def:rpminfo_state id="oval:com.redhat.rhsa:ste:20228832003" version="638">
+ <red-def:evr datatype="evr_string" operation="less than">1:18.12.1-1.module+el9.1.0.z+17326+318294bb</red-def:evr>
+</red-def:rpminfo_state>
+<red-def:rpminfo_state id="oval:com.redhat.rhsa:ste:20228832004" version="638">
+ <red-def:evr datatype="evr_string" operation="less than">0:2.0.20-1.module+el9.1.0.z+17326+318294bb</red-def:evr>
+</red-def:rpminfo_state>
+<red-def:rpminfo_state id="oval:com.redhat.rhsa:ste:20228832005" version="638">
+ <red-def:evr datatype="evr_string" operation="less than">0:2021.06-4.module+el9.1.0+15718+e52ec601</red-def:evr>
+</red-def:rpminfo_state>
+<red-def:rpminfo_state id="oval:com.redhat.rhsa:ste:20228832006" version="638">
+ <red-def:arch datatype="string" operation="pattern match">aarch64|ppc64le|s390x|x86_64</red-def:arch>
+ <red-def:evr datatype="evr_string" operation="less than">1:8.19.2-1.18.12.1.1.module+el9.1.0.z+17326+318294bb</red-def:evr>
+</red-def:rpminfo_state>
+<ind-def:textfilecontent54_state id="oval:com.redhat.rhsa:ste:20228832007" version="638">
+ <ind-def:text operation="pattern match">\nstream\s*=\s*18\b[\w\W]*\nstate\s*=\s*(enabled|1|true)|\nstate\s*=\s*(enabled|1|true)[\w\W]*\nstream\s*=\s*18\b</ind-def:text>
+</ind-def:textfilecontent54_state>
+</states>
+<variables>
+
+</variables>
+</oval_definitions>
