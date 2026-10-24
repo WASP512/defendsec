@@ -132,7 +132,13 @@ jobs:
       - name: Ansible role
         working-directory: packaging/ansible
         run: |
-          pip install ansible-core ansible-lint
+          # Pinned so tool releases cannot change the result unannounced.
+          # The `ansible` package bundles ansible.windows, so the galaxy step
+          # below finds requirements.yml already satisfied and needs no network
+          # (galaxy.ansible.com artifact downloads returned HTTP 500 on
+          # 2026-10-24, which failed this step). Bump both pins together and
+          # rerun the lint.
+          pip install ansible==14.5.0 ansible-lint==26.10.1
           ansible-galaxy collection install -r requirements.yml
           printf '[defendsec_agents]\nh1\n' > /tmp/inventory
           ansible-playbook -i /tmp/inventory playbooks/agents.yml --syntax-check
