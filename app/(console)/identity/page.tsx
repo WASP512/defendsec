@@ -109,7 +109,11 @@ export default async function IdentityPage() {
                       {status.credentials.thumbprint ? (
                         <>
                           {" "}
-                          (SHA-256 thumbprint <code className="break-all">{status.credentials.thumbprint}</code>
+                          (SHA-1 thumbprint, as the Entra portal lists it:{" "}
+                          <code className="break-all" data-identity-thumbprint-sha1>
+                            {status.credentials.thumbprintSha1}
+                          </code>
+                          ; SHA-256 <code className="break-all">{status.credentials.thumbprint}</code>
                           {cert !== null ? `, ${cert} days left` : ""})
                         </>
                       ) : null}

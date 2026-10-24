@@ -96,6 +96,7 @@ export type IdentityCredentials = {
   configured: boolean;
   method?: "certificate" | "secret";
   thumbprint?: string;
+  thumbprintSha1?: string;
   notAfter?: string;
   problem?: string;
   warnings: string[];
