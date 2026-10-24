@@ -1167,3 +1167,100 @@ Branch head after merging `origin/main` (`7bc5b19`, slice 7b) into `scout/10-app
 | Agent and RMM dedupe (serial, host name) | Windows | unit + integration | see handoff | not run on a real machine |
 | Microsoft Security Update Guide feed (`msrc`) | any | 7 + 2 runner tests | see handoff | **real API**, 12 months |
 | Credentials from files (`internal/secret`) | linux | 2 tests | see handoff | not run with a real key |
+
+## Slice 12 — Microsoft 365 identity posture (migration 028)
+
+- Date: 2026-10-24 (MDT). Host: `hermesagent`, go1.26.10, node 22, Postgres 16 on titan CT 119 (own database).
+- Branch `lookout/12-m365-identity`, merged with `origin/main` (0 commits behind at the last check). What is in it: `internal/m365` (collector, checks,
+  inbox-rule analysis), `internal/m365/graph` (read-only Graph client), `internal/m365/m365test` (fake Graph server and fixtures), `internal/secret/pem.go`,
+  migration 028 (provider-generic identity tables, which slice 13 reuses), identity ranking in `internal/exposure/rank.go`, `internal/storepg/identity.go`,
+  `internal/control/m365.go`, the controls catalog entries, and the console (Identity page, Fleet card, Fix this week rows, drawer). Design and the
+  Microsoft facts it rests on, with doc URLs and the date they were checked: [M365.md](M365.md).
+
+### Commands run
+
+| # | Command | Result |
+| --- | --- | --- |
+| 1 | `gofmt -l cmd internal db`, `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./...` | no output, exit 0 |
+| 2 | `unset TEST_DATABASE_URL; TMPDIR=/tmp go test -count=1 ./...` | 62 packages `ok`, 0 failed (database tests skip) |
+| 3 | `TEST_DATABASE_URL=… TMPDIR=/tmp go test -count=1 -p 1 -v <pkg>`, `--- PASS` lines (tests and subtests) | m365 + m365/graph 42, secret 3, exposure 15, controls 12, storepg 132, db/migrations 5, control 171; **0 fail** (1 skip in `control`: a local demo seeder kept out of git, absent in CI) |
+| 4 | the CI integration command (`./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/...`), `govulncheck ./...`, `scripts/check-reproducible.sh` | all exit 0 |
+| 5 | `npx tsc --noEmit`, `npm run lint`, `npm test`, `npm run build` | tsc and lint clean; **201 pass, 0 fail**; `next build` green |
+
+### What each claim rests on
+
+- **Graph client** (`internal/m365/graph`, `client_test.go` against the fixture token and Graph server): client-secret and certificate flows (the test
+  verifies the assertion's PS256 signature, `x5t#S256` thumbprint and claims, and the fake token endpoint rejects a replayed `jti`), token cache and
+  one refresh on a 401, 403 never retried, 429 waits `Retry-After` and gives up after the attempt limit, 5xx retried, a `nextLink` on another host
+  refused and redirects not followed, tenant aliases (`common`, `organizations`, `consumers`) refused, and no error text contains a secret, a token or a
+  response body. **No method but GET** exists, apart from the token request.
+- **Rule analysis** (`rules_test.go`): an AMP-like rule (QuickBooks/Intuit sender, marks as read, moves to RSS Feeds) is **critical**; a forward to an outside
+  address is high, and critical with finance words or a hidden original; trusted domains and the tenant's own domains are not outside; a disabled rule is
+  capped at low; a move to a folder DefendSec could not name is not called hidden without finance words; whole-word matching (`ach` is not `reach`,
+  `wire` is not `wireless`); a rule with no condition that deletes everything is high.
+- **Checks** (`checks_test.go`): MFA severity by role (Global Administrator critical, other administrator high, member medium; guests and disabled accounts left
+  out); legacy authentication satisfied by security defaults or an *enabled* policy covering both client types for everyone and every application, **not**
+  by a report-only policy (named instead), partial coverage is low; Global Administrator count against the configured limit.
+- **Collector** (`collect_test.go`, fixture tenant): a full read of the fixture tenant makes 17 requests (the number the Identity page shows) and the test asserts **every request of a read is a GET** to an allow-listed path (no `/messages`, no
+  `/$value`, no `/attachments`: `TestCollectOnlyReadsDefinitionsAndMetadata`); registration report 403 makes MFA *not assessed* and not clean; refused
+  credentials read nothing and say why; every mailbox forbidden is *not assessed*; one unreadable mailbox leaves the rest assessed and is counted; a
+  throttled user list leaves the other checks running; a 429 that clears on retry succeeds; a missing role-assignment permission makes admin MFA findings
+  high instead of critical and says so; the mailbox limit is counted as skipped; a cancelled context stops the read.
+- **Store and ranking** (`storepg/identity_test.go`, `exposure/rank_test.go`, Postgres): a finding keeps its first-seen date across reads; one that is gone
+  gets `resolved_at` and one that returns reopens (spans are listed); **a check group that was not assessed resolves nothing and its findings show as
+  "not confirmed lately"**; findings join the exposure list, summary and trend; critical and high rank after KEV and before every other vulnerability, medium and
+  low among the vulnerabilities with no EPSS; the SQL ordering and the Go ordering agree.
+- **API and audit** (`control/m365_test.go`, Postgres): auth per route (401 without a token, 403 for a viewer on a write), a pasted secret is a `400`
+  (unknown field), `common` as tenant is a `400`, refused settings write nothing to the ledger, a read with no tenant is a `400`, `409` while one runs,
+  settings changes, manual reads and recorded runs are in the hash-chained audit log, and a run and its ledger entry commit together.
+- **Console** (`lib/identity-model.test.ts`, 18 tests): the Fleet card says "not connected", "not read yet" and "could not assess anything" apart from
+  "0 findings", never "good" unless every check was assessed; the Fix this week text names identity findings; the ranking mirror in `lib/exposure-model.ts`
+  agrees with the Go ranking; the drawer's response type; the settings form's checks.
+- **Mutations** (my own, on `internal/m365`): 5 of 5 killed: whole-word match widened to substring, Global Administrator without MFA lowered to high,
+  a report-only Conditional Access policy counted as blocking, a guest's address counted as an internal domain, the disabled-rule cap removed. (A first
+  attempt at the report-only mutant was a no-op because of letter case and survived; the corrected mutant is the one counted.)
+
+### Real runs
+
+- **Console and API in a browser against the fixture tenant.** A real `defendsec-apid` and the production console build on a scratch database seeded by one
+  read of the fixture Graph server (the m365test fixtures: example.com users, fake GUIDs, a dummy secret file). Page text read through the browser:
+  Identity shows "6 findings (3 critical, 1 high)", the four checks assessed with their counts, the five standing *not assessed* items, the permission list,
+  and six findings; Fix this week lists them as 1 to 6 (Global Administrator without MFA, the `Intuit stuff` rule, the forwarding rule, the helpdesk
+  administrator, then medium) with "In effect now in the client's tenant … no exploit"; the Fleet card reads "Identity (Microsoft 365): 6 findings
+  (3 critical, 1 high), last read just now"; the rule drawer shows the rule's name, conditions and actions as evidence and the "no message is here"
+  line. API: 401 without a token on every route, 400 for a pasted secret and for a malformed row key, 404 for a missing row, 0 `level=ERROR` lines in the
+  apid log. **Seeded fixture data, not a client; the demo apid never contacted Microsoft** (the source was injected only in the seeding test; the running apid
+  had a dummy secret file so that the page shows a credential, and no read was started from it).
+- **No screenshots.** The browser tool's `Page.captureScreenshot` timed out repeatedly in this session, so there are no images; the page text above is what was
+  read.
+- **Not run: a read of a real Microsoft 365 tenant.** It needs the app registration Mason creates himself; the click-by-click setup is in M365.md and in the
+  console, and the card is waiting on it.
+
+### Not verified
+
+- **Any real Microsoft Graph response.** Field names, page sizes, how many requests a real tenant costs, whether the registration report returns `isAdmin`
+  and `methodsRegistered` as the fixtures (taken from Microsoft's documented shapes) show, whether `messageRules` on a real mailbox returns `moveToFolder` as an
+  id only (which is why `Mail.ReadBasic.All` is optional), and how a real tenant answers without Entra ID P1 or P2 are all unobserved.
+- **The certificate flow against Microsoft's real token endpoint.** The assertion follows Microsoft's published format and the fake endpoint verifies it,
+  but Microsoft has never been asked to accept it.
+- **Role recognition by display name** for administrator roles other than Global Administrator: a renamed or localised role falls back to the
+  registration report's `isAdmin`, and that fallback is untested against a real tenant.
+- **Ranking thresholds** (critical and high above every non-KEV vulnerability, medium 5.0, low 2.0) are a judgement, not measured against a real client list.
+- **The signed evidence export does not carry identity findings** (the ledger chains each run, not the findings); that belongs with slice 7c.
+- **Not assessed by design, and said on every screen:** mailbox-level forwarding and transport rules (Exchange Online), roles held through groups or PIM,
+  whether MFA is *enforced*, Exchange authentication policies, client-side-only rules.
+- **Not run:** a tenant with thousands of mailboxes (the 2,000-mailbox limit and the 4-way concurrency are unit-tested only), an Entra tenant without P1 or P2,
+  a US Government or China cloud, the optional `Mail.ReadBasic.All` path against a real mailbox, screenshots.
+- A malformed query on `GET /v1/identity/findings` that contains a `;` is ignored by Go's query parser rather than refused (the filter is then not
+  applied); an unknown `check` value is a `400`.
+
+## Feature × platform × evidence matrix — additions from slice 12
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Graph client (certificate and secret auth, paging, 401/403/429, GET only) | any | tests against a fake Graph server | see handoff | **not run** against Microsoft |
+| MFA registration, admin MFA severity, admin count, legacy authentication checks | Microsoft 365 | unit + collector tests on fixtures | see handoff | **not run** against a real tenant |
+| Inbox rule analysis: hiding and external forwarding, finance words (AMP-like rule is critical) | Microsoft 365 | rule table tests (hiding ladder, forwarding, disabled cap, AMP-like rule) | see handoff | **not run** against a real mailbox |
+| A check that could not run is *not assessed*, never clean, and resolves nothing | Microsoft 365 | collector + store tests | see handoff | fixture tenant, in a browser |
+| Identity findings in Fix this week, summary, trend, drawer | any | Go + TS tests, SQL vs Go ordering | see handoff | fixture data, in a browser |
+| Credentials from PEM or secret files (`internal/secret`) | linux | 3 tests | see handoff | not run with a real certificate |
