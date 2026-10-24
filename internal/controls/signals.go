@@ -60,6 +60,10 @@ const (
 	SignalVulnAssessment Signal = "vuln.assessment"
 	// SignalPatchAction — the signed action that remediates a finding.
 	SignalPatchAction Signal = "patch.action"
+	// SignalSoftwareSupported — installed software from outside the
+	// distribution is checked against its upstream support lifecycle, so
+	// software that no longer receives security fixes is found.
+	SignalSoftwareSupported Signal = "software.supported"
 
 	// SignalFIM — file integrity monitoring against a baseline.
 	SignalFIM Signal = "fim.integrity"
@@ -130,6 +134,7 @@ var signalTitles = map[Signal]string{
 	SignalInventorySoftware: "Installed software inventory",
 	SignalVulnAssessment:    "Vulnerability assessment",
 	SignalPatchAction:       "Remediation actions",
+	SignalSoftwareSupported: "Software support lifecycle",
 	SignalFIM:               "File integrity monitoring",
 	SignalSCA:               "Configuration baseline checks",
 	SignalTransportMTLS:     "Mutually authenticated agent transport",

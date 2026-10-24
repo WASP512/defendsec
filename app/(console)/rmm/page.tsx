@@ -11,11 +11,13 @@ import { getRmmDevices, getRmmStatus, getRmmSyncs } from "@/lib/rmm";
 import { ago, coverageText, osSupportLine, plural } from "@/lib/rmm-model";
 import { isReadOnlySession } from "@/lib/auth";
 import { supportedOs } from "@/lib/supported-os";
+import { warmOsCalendar } from "@/lib/os-calendar";
 
 export const dynamic = "force-dynamic";
 
 export default async function RmmPage() {
   const [status, devices, syncs, readOnly] = await Promise.all([getRmmStatus(), getRmmDevices(), getRmmSyncs(10), isReadOnlySession()]);
+  await warmOsCalendar();
   const now = new Date();
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -124,7 +126,7 @@ export default async function RmmPage() {
               <TableBody>
                 {devices.map((d) => {
                   const cov = coverageText(d.coverage);
-                  const unsupported = supportedOs({ platform: "windows", osName: d.osCaption, osVersion: d.osVersion }, undefined, now) === false;
+                  const unsupported = supportedOs({ platform: "windows", osName: d.osCaption, osVersion: d.osVersion }, undefined, undefined, now) === false;
                   return (
                     <TableRow key={d.id}>
                       <TableCell className="min-w-40">

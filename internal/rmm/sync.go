@@ -405,6 +405,15 @@ func (s *Syncer) device(ctx context.Context, siteUID string, d datto.Device, age
 	}
 	s.dedupe(ctx, id, row, agents, &out)
 
+	// Empty update lists are only a clean result when RMM is actually watching
+	// the device's patches. NoData and NoPolicy (and a missing status) say it
+	// is not, so the device is not assessed and its stored findings stay.
+	if reason, none := noPatchEvidence(d.PatchStatus, len(rows)); none {
+		out.state = "no_data"
+		out.note = reason
+		return out, coverage(storepg.PatchNoData, reason, ptr(d.LastAuditDate.Time))
+	}
+
 	res, err := vuln.MatchWindows(ctx, s.Store, missing)
 	if err != nil {
 		return out, err
@@ -431,11 +440,38 @@ func (s *Syncer) device(ctx context.Context, siteUID string, d datto.Device, age
 	if swErr != nil {
 		reason = strings.TrimSpace(reason + " software list not read")
 	}
+	if d.PatchStatus == PatchStatusNoPolicy {
+		reason = strings.TrimSpace(reason + " RMM has no patch policy for this device: the listed updates stand, but a missing one may not be listed")
+	}
 	out.state = "covered"
 	return out, s.Store.RecordPatchFindings(ctx, id, res, snapID, inv, storepg.HostPatchState{
 		DeviceID: id, Coverage: storepg.PatchCovered, Reason: reason, EvidenceAt: evidence,
 		KBsMissing: res.Stats.Packages, KBsMapped: res.Stats.DistroMapped,
 	})
+}
+
+// Datto's patchStatus values that decide whether empty update lists mean
+// anything (see docs/DATTO-RMM.md). The others (FullyPatched, ApprovedPending,
+// RebootRequired, InstallError) come from a device RMM is patch-managing.
+const (
+	PatchStatusNoData   = "NoData"
+	PatchStatusNoPolicy = "NoPolicy"
+)
+
+// noPatchEvidence says whether RMM gave no patch evidence for a device that was
+// audited recently: it reports no patch data at all, or it does not manage the
+// device's patches and lists nothing. Listed updates are evidence even without
+// a policy. listed is the number of missing updates RMM returned.
+func noPatchEvidence(status string, listed int) (string, bool) {
+	switch {
+	case status == PatchStatusNoData:
+		return "RMM reports no patch data for this device (patchStatus NoData): missing evidence, not a clean result", true
+	case status == PatchStatusNoPolicy && listed == 0:
+		return "RMM does not manage this device's patches (patchStatus NoPolicy) and lists no updates: missing evidence, not a clean result", true
+	case status == "" && listed == 0:
+		return "RMM did not report a patch status for this device and lists no updates: missing evidence, not a clean result", true
+	}
+	return "", false
 }
 
 // inventory builds what the store needs to say why a finding closed. Only a KB

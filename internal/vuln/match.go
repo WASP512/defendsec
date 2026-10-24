@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"defendsec/internal/lifecycle"
 )
 
 // Distro-aware matching.
@@ -48,6 +50,13 @@ const (
 	// exposure to watch, not work to schedule: it counts with the no-fix
 	// bucket, never as fixable. A KEV entry here is still urgent.
 	KindAwaitingVendor Kind = "awaiting_vendor"
+	// KindEOL: software from a third-party repository (or installed outside a
+	// package manager) whose upstream has stopped issuing security fixes, or
+	// has stopped active support. No distro tracker covers it, so nobody is
+	// patching it; the remedy is to upgrade to a supported release. It belongs
+	// to the fix bucket beside KindFinding. Software from the host's own
+	// distribution never gets one: it follows the distribution's lifecycle.
+	KindEOL Kind = "eol"
 )
 
 // Basis says which kind of range produced a finding.
@@ -56,6 +65,9 @@ type Basis string
 const (
 	BasisDistro   Basis = "distro"
 	BasisUpstream Basis = "upstream"
+	// BasisLifecycle: the finding comes from a release calendar
+	// (endoflife.date), not from an advisory range.
+	BasisLifecycle Basis = "lifecycle"
 )
 
 // Coverage says whether the feeds could have said anything about this host. A
@@ -79,6 +91,13 @@ type Package struct {
 	Version       string `json:"version"`
 	SourcePackage string `json:"source_package,omitempty"`
 	SourceVersion string `json:"source_version,omitempty"`
+	// Origin is where the package came from, as the agent read it: the apt
+	// Origin: of the repository that carries the installed version, or the rpm
+	// Vendor. OriginRepo is the repository itself. Both are empty for agents
+	// older than origin reporting, and application end-of-life then does not
+	// judge the package (see internal/lifecycle).
+	Origin     string `json:"origin,omitempty"`
+	OriginRepo string `json:"origin_repo,omitempty"`
 }
 
 // ecosystemUbuntuPro marks Ubuntu ranges whose fix ships only through Ubuntu
@@ -93,6 +112,9 @@ type Host struct {
 	Release        string
 	PackageManager string // "dpkg", "rpm" or ""
 	Packages       []Package
+	// AsOf is the calendar day application end-of-life is judged on; the zero
+	// value means today. It exists so a run can be reproduced.
+	AsOf time.Time
 }
 
 // Candidate is one advisory range with the advisory and feed context a finding
@@ -160,6 +182,31 @@ type Finding struct {
 	// UpstreamFixedOn is, for an awaiting_vendor finding, the date (YYYY-MM-DD)
 	// Red Hat published the fix the host's own distribution has not released.
 	UpstreamFixedOn string
+	// EOL is set on findings of kind KindEOL.
+	EOL *EOLDetail
+}
+
+// EOLDetail is what an end-of-life finding says beyond the fields every
+// finding has.
+type EOLDetail struct {
+	Product      string   `json:"product"`
+	ProductLabel string   `json:"productLabel"`
+	Cycle        string   `json:"cycle"`
+	Stage        string   `json:"stage"` // "eol" or "eoas"
+	StageFrom    string   `json:"stageFrom"`
+	EolFrom      string   `json:"eolFrom,omitempty"`
+	EoasFrom     string   `json:"eoasFrom,omitempty"`
+	EoesFrom     string   `json:"eoesFrom,omitempty"`
+	Packages     []string `json:"packages"`
+	Origin       string   `json:"origin"`
+	OriginRepo   string   `json:"originRepo,omitempty"`
+	// UpgradeTo is the release to move to (empty when no newer supported
+	// release exists); UpgradeToSupportedUntil is when it stops getting
+	// security fixes.
+	UpgradeTo               string `json:"upgradeTo,omitempty"`
+	UpgradeToSupportedUntil string `json:"upgradeToSupportedUntil,omitempty"`
+	Latest                  string `json:"latest,omitempty"`
+	Link                    string `json:"link,omitempty"`
 }
 
 // Key identifies a finding across runs: one per advisory per package family.
@@ -181,6 +228,17 @@ type Stats struct {
 	// AwaitingVendor counts findings of kind KindAwaitingVendor: fixed by Red
 	// Hat, not yet released by the rebuild distribution the host runs.
 	AwaitingVendor int
+	// Application end-of-life (see internal/lifecycle). Of EOLMapped packages
+	// the mapping table knows, EOLDistroOrigin are the distribution's own (not
+	// judged: they follow its lifecycle) and EOLOriginUnknown had no readable
+	// origin (not assessed, never clean). EOLNoRelease are third-party packages
+	// of a release the calendar does not list; EOLSupported are on a supported
+	// release.
+	EOLMapped        int
+	EOLDistroOrigin  int
+	EOLOriginUnknown int
+	EOLNoRelease     int
+	EOLSupported     int
 }
 
 // Result is the outcome for one host.
@@ -471,6 +529,15 @@ func Match(ctx context.Context, src RangeSource, h Host) (Result, error) {
 		}
 	}
 
+	// Application end-of-life: software from outside the distribution, judged
+	// against the upstream release calendar. Only a source that carries the
+	// calendar (the Postgres store does) is asked.
+	if ls, ok := src.(lifecycle.Source); ok {
+		if err := assessEOL(ctx, ls, h, &res); err != nil {
+			return res, err
+		}
+	}
+
 	res.Stats.Advisories = len(advSeen)
 	for _, f := range merged {
 		res.Findings = append(res.Findings, f)
@@ -532,12 +599,14 @@ func kindRank(k Kind) int {
 	switch k {
 	case KindFinding:
 		return 0
-	case KindAwaitingVendor:
+	case KindEOL:
 		return 1
-	case KindUnfixed:
+	case KindAwaitingVendor:
 		return 2
+	case KindUnfixed:
+		return 3
 	}
-	return 3
+	return 4
 }
 
 // addFinding keeps one finding per key. A fix to install outranks "fixed

@@ -296,7 +296,7 @@ func (s *Store) LoadDevices(ctx context.Context) ([]presence.Device, error) {
 		       disk_encryption, firewall, ip_addresses, username, uptime_seconds, software, pending_updates,
 		       COALESCE(patch_inventory,''), fim, fim_baseline, last_seen, connected, isolated,
 		       cert_fingerprint, transport, agent_version, agent_public_key_pem,
-		       distro, distro_release, package_manager
+		       distro, distro_release, package_manager, os_edition
 		FROM devices WHERE NOT revoked AND NOT sample AND source = 'agent'`)
 	if err != nil {
 		return nil, err
@@ -311,7 +311,7 @@ func (s *Store) LoadDevices(ctx context.Context) ([]presence.Device, error) {
 			&d.HardwareModel, &d.CPU, &d.MemoryMb, &d.DiskEncryption, &d.Firewall, &ips, &d.Username,
 			&d.UptimeSeconds, &sw, &pend, &d.PatchInventory, &fim, &base, &lastSeen, &d.Connected,
 			&d.Isolated, &d.CertFingerprint, &d.Transport, &d.AgentVersion, &d.AgentPublicKeyPEM,
-			&d.Distro, &d.DistroRelease, &d.PackageManager); err != nil {
+			&d.Distro, &d.DistroRelease, &d.PackageManager, &d.OSEdition); err != nil {
 			return nil, err
 		}
 		for _, pair := range []struct {

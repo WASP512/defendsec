@@ -58,7 +58,10 @@ const dpkgQueryFormat = "${Package}\t${Version}\t${Source}\t${db:Status-Abbrev}\
 // rpmQueryFormat carries the epoch explicitly. It is part of an EVR: openssl on
 // RHEL 9 is 1:3.0.7-x, and an installed "3.0.7-x" without it sorts below the
 // advisory's "1:3.0.7-y", which would flag every patched host.
-const rpmQueryFormat = "%{NAME}\t%|EPOCH?{%{EPOCH}:}|%{VERSION}-%{RELEASE}\t%{SOURCERPM}\n"
+//
+// VENDOR and PACKAGER say who built the package, which is how a Rocky package is
+// told from a Remi or PGDG one (see origin.go).
+const rpmQueryFormat = "%{NAME}\t%|EPOCH?{%{EPOCH}:}|%{VERSION}-%{RELEASE}\t%{SOURCERPM}\t%{VENDOR}\t%{PACKAGER}\n"
 
 // ParseDpkgQuery reads `dpkg-query -W -f=dpkgQueryFormat` output. Only packages
 // in state "ii" (installed) count: dpkg also lists removed packages whose
@@ -139,6 +142,9 @@ func ParseRPMQuery(out string) []Software {
 		if len(f) >= 3 {
 			sw.SourcePackage, sw.SourceVersion = ParseSourceRPM(f[2])
 		}
+		if len(f) >= 5 {
+			sw.Origin, sw.OriginRepo = rpmOrigin(f[3], f[4])
+		}
 		if prev, ok := best[sw.Name]; ok && vuln.CompareRPM(prev.Version, sw.Version) >= 0 {
 			continue
 		}
@@ -159,6 +165,8 @@ func collectPackages(manager string) []Software {
 		items = ParseRPMQuery(run("rpm", "-qa", "--queryformat", rpmQueryFormat))
 	case PackageManagerDPKG:
 		items = ParseDpkgQuery(run("dpkg-query", "-W", "-f="+dpkgQueryFormat))
+		distro, _ := osReleaseIdentity()
+		annotateDpkgOrigins(items, distro)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
 	if len(items) > maxSoftware {

@@ -1,0 +1,695 @@
+{
+ "feedDate": "2026-10-24T00:08:55Z",
+ "releases": [
+  {
+   "product": "windows-server",
+   "cycle": "2025",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2029-11-13",
+   "eolFrom": "2034-11-14",
+   "eoesFrom": "",
+   "isLts": true,
+   "latest": "10.0.26100"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "23h2-ac",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2026-05-12",
+   "eolFrom": "2026-05-12",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.25398"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2022",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2026-10-13",
+   "eolFrom": "2031-10-14",
+   "eoesFrom": "",
+   "isLts": true,
+   "latest": "10.0.20348"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "20h2-sac",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2022-08-09",
+   "eolFrom": "2022-08-09",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.19042"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2004-sac",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2021-12-14",
+   "eolFrom": "2021-12-14",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.19041"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "1909-sac",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2021-05-11",
+   "eolFrom": "2021-05-11",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.18363"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "1903-sac",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2020-12-08",
+   "eolFrom": "2020-12-08",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.18362"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "1809-sac",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2020-11-10",
+   "eolFrom": "2020-11-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.17763"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2019",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2024-01-09",
+   "eolFrom": "2029-01-09",
+   "eoesFrom": "",
+   "isLts": true,
+   "latest": "10.0.17763"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "1803-sac",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2019-11-12",
+   "eolFrom": "2019-11-12",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.17134"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "1709-sac",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2019-04-09",
+   "eolFrom": "2019-04-09",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.16299"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2016",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2022-01-11",
+   "eolFrom": "2027-01-12",
+   "eoesFrom": "2030-01-12",
+   "isLts": true,
+   "latest": "10.0.14393"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2012-r2",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2018-10-09",
+   "eolFrom": "2023-10-10",
+   "eoesFrom": "2026-10-13",
+   "isLts": true,
+   "latest": "6.3.9600"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2012",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2018-10-09",
+   "eolFrom": "2023-10-10",
+   "eoesFrom": "2026-10-13",
+   "isLts": true,
+   "latest": "6.2.9200"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2008-r2-sp1",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2015-01-13",
+   "eolFrom": "2020-01-14",
+   "eoesFrom": "2023-01-10",
+   "isLts": true,
+   "latest": "6.1.7601"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2008-sp2",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2015-01-13",
+   "eolFrom": "2020-01-14",
+   "eoesFrom": "2023-01-10",
+   "isLts": true,
+   "latest": "6.0.6003"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2003-sp2",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2010-07-13",
+   "eolFrom": "2015-07-14",
+   "eoesFrom": "",
+   "isLts": true,
+   "latest": "5.2.3790"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2003-sp1",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2009-04-14",
+   "eolFrom": "2009-04-14",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "5.2.3790"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2003",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2007-04-10",
+   "eolFrom": "2007-04-10",
+   "eoesFrom": "",
+   "isLts": true,
+   "latest": "5.2.3790"
+  },
+  {
+   "product": "windows-server",
+   "cycle": "2000",
+   "label": "Microsoft Windows Server",
+   "eoasFrom": "2005-06-30",
+   "eolFrom": "2010-07-13",
+   "eoesFrom": "",
+   "isLts": true,
+   "latest": "5.0.2195"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-26h2-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2029-10-09",
+   "eolFrom": "2029-10-09",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.26300"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-26h2-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2028-10-10",
+   "eolFrom": "2028-10-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.26300"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-26h1-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2029-03-13",
+   "eolFrom": "2029-03-13",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.28000"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-26h1-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2028-03-14",
+   "eolFrom": "2028-03-14",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.28000"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-25h2-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2028-10-10",
+   "eolFrom": "2028-10-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.26200"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-25h2-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2027-10-12",
+   "eolFrom": "2027-10-12",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.26200"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-24h2-iot-lts",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2029-10-09",
+   "eolFrom": "2034-10-10",
+   "eoesFrom": "",
+   "isLts": true,
+   "latest": "10.0.26100"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-24h2-e-lts",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2029-10-09",
+   "eolFrom": "2029-10-09",
+   "eoesFrom": "",
+   "isLts": true,
+   "latest": "10.0.26100"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-24h2-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2027-10-12",
+   "eolFrom": "2027-10-12",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.26100"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-24h2-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2026-10-13",
+   "eolFrom": "2026-10-13",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.26100"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-23h2-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2026-11-10",
+   "eolFrom": "2026-11-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.22631"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-23h2-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2025-11-11",
+   "eolFrom": "2025-11-11",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.22631"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-22h2",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2025-10-14",
+   "eolFrom": "2025-10-14",
+   "eoesFrom": "2028-10-10",
+   "isLts": false,
+   "latest": "10.0.19045"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-22h2-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2025-10-14",
+   "eolFrom": "2025-10-14",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.22621"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-22h2-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2024-10-08",
+   "eolFrom": "2024-10-08",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.22621"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-21h2-iot-lts",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2027-01-12",
+   "eolFrom": "2032-01-13",
+   "eoesFrom": "",
+   "isLts": true,
+   "latest": "10.0.19044"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-21h2-e-lts",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2027-01-12",
+   "eolFrom": "2027-01-12",
+   "eoesFrom": "2030-01-12",
+   "isLts": true,
+   "latest": "10.0.19044"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-21h2-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2024-06-11",
+   "eolFrom": "2024-06-11",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.19044"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-21h2-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2023-06-13",
+   "eolFrom": "2023-06-13",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.19044"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-21h2-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2024-10-08",
+   "eolFrom": "2024-10-08",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.22000"
+  },
+  {
+   "product": "windows",
+   "cycle": "11-21h2-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2023-10-10",
+   "eolFrom": "2023-10-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.22000"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-21h1",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2022-12-13",
+   "eolFrom": "2022-12-13",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.19043"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-20h2-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2023-05-09",
+   "eolFrom": "2023-05-09",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.19042"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-20h2-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2022-05-10",
+   "eolFrom": "2022-05-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.19042"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-2004",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2021-12-14",
+   "eolFrom": "2021-12-14",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.19041"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1909-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2022-05-10",
+   "eolFrom": "2022-05-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.18363"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1909-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2021-05-11",
+   "eolFrom": "2021-05-11",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.18363"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1903",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2020-12-08",
+   "eolFrom": "2020-12-08",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.18362"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1809-e-lts",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2024-01-09",
+   "eolFrom": "2029-01-09",
+   "eoesFrom": "",
+   "isLts": true,
+   "latest": "10.0.17763"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1809-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2021-05-11",
+   "eolFrom": "2021-05-11",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.17763"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1809-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2020-11-10",
+   "eolFrom": "2020-11-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.17763"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1803-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2020-05-11",
+   "eolFrom": "2021-05-11",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.17134"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1803-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2019-11-12",
+   "eolFrom": "2019-11-12",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.17134"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1709-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2020-10-13",
+   "eolFrom": "2020-10-13",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.16299"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1709-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2019-04-09",
+   "eolFrom": "2019-04-09",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.16299"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1703-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2019-10-08",
+   "eolFrom": "2019-10-08",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.15063"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1703-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2018-10-09",
+   "eolFrom": "2018-10-09",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.15063"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1607-e-lts",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2021-10-12",
+   "eolFrom": "2026-10-13",
+   "eoesFrom": "2029-10-13",
+   "isLts": true,
+   "latest": "10.0.14393"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1607-e",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2019-04-09",
+   "eolFrom": "2019-04-09",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.14393"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1607-w",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2018-04-10",
+   "eolFrom": "2018-04-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.14393"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1511",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2017-10-10",
+   "eolFrom": "2017-10-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.10586"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1507-e-lts",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2020-10-13",
+   "eolFrom": "2025-10-14",
+   "eoesFrom": "",
+   "isLts": true,
+   "latest": "10.0.10240"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1507",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2017-05-09",
+   "eolFrom": "2017-05-09",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.10240"
+  },
+  {
+   "product": "windows",
+   "cycle": "10-1507-iot",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2020-11-10",
+   "eolFrom": "2020-11-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "10.0.10240"
+  },
+  {
+   "product": "windows",
+   "cycle": "8.1",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2018-01-09",
+   "eolFrom": "2023-01-10",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "6.3.9600"
+  },
+  {
+   "product": "windows",
+   "cycle": "8",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2016-01-12",
+   "eolFrom": "2016-01-12",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "6.2.9200"
+  },
+  {
+   "product": "windows",
+   "cycle": "7-sp1",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2015-01-13",
+   "eolFrom": "2020-01-14",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "6.1.7601"
+  },
+  {
+   "product": "windows",
+   "cycle": "6-sp2",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2012-04-10",
+   "eolFrom": "2017-04-11",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "6.0.6002"
+  },
+  {
+   "product": "windows",
+   "cycle": "5-sp3",
+   "label": "Microsoft Windows",
+   "eoasFrom": "2009-04-14",
+   "eolFrom": "2014-04-08",
+   "eoesFrom": "",
+   "isLts": false,
+   "latest": "5.1.2600"
+  }
+ ]
+}

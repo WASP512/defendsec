@@ -13,7 +13,7 @@ import (
 	"defendsec/internal/vuln"
 )
 
-// Datto RMM collector storage (migration 026). Devices read from the RMM are rows
+// Datto RMM collector storage (migration 027). Devices read from the RMM are rows
 // of `devices` with source 'rmm', held in Postgres only (LoadDevices skips them,
 // so no agent code path sees one); what RMM said about them is in rmm_devices
 // and rmm_patches; their findings are ordinary vuln_findings rows whose feed is

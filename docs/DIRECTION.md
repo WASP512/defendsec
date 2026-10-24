@@ -32,7 +32,7 @@ One DefendSec instance per client (or per small fleet). It answers five question
 | # | Question | How it is answered |
 | --- | --- | --- |
 | 1 | **What is exploitable right now?** | Installed software matched against advisories, ranked **CISA KEV → EPSS → CVSS**, with the **distro's own fixed version** (a package patched by the distro is not a finding) |
-| 2 | **What is end-of-life or unpatched?** | Supported-OS policy, pending patches by age, hosts that have stopped reporting |
+| 2 | **What is end-of-life or unpatched?** | Supported-OS policy, pending patches by age, hosts that have stopped reporting, and application software from third-party repositories that its upstream no longer patches ([EOL.md](EOL.md)) |
 | 3 | **What is misconfigured?** | The SCA engine and its control-tagged check packs |
 | 4 | **What is exposed from the outside?** | DNS, MX, SPF, DKIM, DMARC, MTA-STS, certificate expiry and open ports, scanned from outside |
 | 5 | **Is it getting better?** | Audit periods, a hash-chained ledger and evidence exports that verify offline |
@@ -110,6 +110,7 @@ snapshot it was derived from. That reference is what makes a finding reproducibl
 | OSV bulk | `https://osv-vulnerabilities.storage.googleapis.com/<ECOSYSTEM>/all.zip` |
 | CISA KEV | `https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json` |
 | EPSS | `https://epss.cyentia.com/epss_scores-current.csv.gz` |
+| endoflife.date (application release calendar, API v1) | `https://endoflife.date/api/v1/products/full` |
 
 ## Rules of engagement
 
@@ -148,6 +149,24 @@ what is **not** verified, and what is needed next.
 
 Slices 2 through 4 are **Phase 0**. Until slice 4 is done, DefendSec does not have a trustworthy
 vulnerability answer, and the README says so.
+
+## Approved additions (2026-10-23)
+
+Mason approved five slices after the plan above was written. They keep the product's shape (agentless or read-only,
+one instance per client, findings that rank into "Fix this week" and close with evidence) and none of them is
+detection or response. Slice 8 (the Datto RMM collector) is already in the plan.
+
+| Slice | Content | Owner | Done when |
+| ---: | --- | --- | --- |
+| 10 | **Application end-of-life.** Software from third-party repositories (Sury PHP, PGDG, NodeSource, ...) checked against endoflife.date through the feed pipeline. The distribution's own packages are never judged: they follow the distribution's lifecycle. See [EOL.md](EOL.md) | scout | A third-party PHP 8.0 host gives one finding naming PHP 8.0 and 2023-11-26; patched Ubuntu and Rocky hosts give none |
+| 11 | **Repository health.** Expired repository keys and stale package indexes, which hide pending updates. "Pending updates" are marked unreliable until the indexes are fresh | scout | A host with a stale index or an expired key is flagged and its pending-update count says it cannot be trusted |
+| 12 | **Microsoft 365 identity posture.** MFA coverage, legacy authentication, admin roles, hiding and forwarding inbox rules (the business-email-compromise lesson) | lookout | A real read-only run against a tenant Mason creates the credentials for |
+| 13 | **Google Workspace identity posture.** The same questions for Google Workspace | lookout | A real read-only run against a test domain |
+| 14 | **Autotask tickets.** "Fix this week" items opened as tickets in the MSP's Autotask | lookout | A real ticket created from a real finding in a test queue |
+
+Slices 12 to 14 need credentials the client or Mason creates; the engineer stops with click-by-click setup steps and the
+run happens when the credentials exist. The order is 10, 11, EDR removal (6), release (9) for scout, and 7, 8, 12, 14,
+13 for lookout.
 
 ## Open questions
 

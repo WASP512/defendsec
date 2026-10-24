@@ -32,6 +32,10 @@ const (
 	KindAlma   Kind = "almalinux"
 	KindSUSE   Kind = "suse"
 	KindOSV    Kind = "osv"
+	// KindEOL is the endoflife.date release calendar. Like KEV and EPSS it owns
+	// no advisory ranges: it feeds application end-of-life findings.
+	KindEOL Kind = "endoflife"
+
 	// KindMSRC is Microsoft's Security Update Guide: which Windows update (KB)
 	// fixes which CVE. It is opt-in (add "msrc" to DEFENDSEC_FEEDS_ENABLED): a
 	// client with no Windows devices read through an RMM has no use for it.
@@ -55,8 +59,9 @@ type Spec struct {
 	Releases map[string]string
 }
 
-// Scopes lists the advisory_ranges sets this feed owns. KEV and EPSS own none:
-// they only annotate advisories.
+// Scopes lists the advisory_ranges sets this feed owns. KEV, EPSS and the
+// end-of-life calendar own none: the first two only annotate advisories, the
+// last has a table of its own.
 func (s Spec) Scopes() []storepg.RangeScope {
 	switch s.Kind {
 	case KindUbuntu, KindRHEL, KindRocky, KindAlma, KindSUSE, KindMSRC:
@@ -74,7 +79,7 @@ func (s Spec) Scopes() []storepg.RangeScope {
 }
 
 // HasRanges reports whether the feed produces ranges (as opposed to annotating).
-func (s Spec) HasRanges() bool { return s.Kind != KindKEV && s.Kind != KindEPSS }
+func (s Spec) HasRanges() bool { return s.Kind != KindKEV && s.Kind != KindEPSS && s.Kind != KindEOL }
 
 func sortedValues(m map[string]string) []string {
 	out := make([]string, 0, len(m))
@@ -88,7 +93,7 @@ func sortedValues(m map[string]string) []string {
 // DefaultEnabled is the feed set used when DEFENDSEC_FEEDS_ENABLED is unset.
 // OSV is never in it: it is opt-in per ecosystem.
 var DefaultEnabled = []string{
-	"kev", "epss",
+	"kev", "epss", "endoflife",
 	"ubuntu-jammy", "ubuntu-noble",
 	"debian",
 	"rhel-8", "rhel-9",
@@ -218,6 +223,9 @@ func Catalog(c Config) []Spec {
 	}
 	add(Spec{Name: "kev", Kind: KindKEV, URL: "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"})
 	add(Spec{Name: "epss", Kind: KindEPSS, URL: "https://epss.cyentia.com/epss_scores-current.csv.gz"})
+	// API v1's bulk document: every product with every release cycle (about
+	// 3 MB). Only the products the lifecycle mapping table can produce are kept.
+	add(Spec{Name: "endoflife", Kind: KindEOL, URL: "https://endoflife.date/api/v1/products/full"})
 
 	codenames := make([]string, 0, len(ubuntu.Releases))
 	for cn := range ubuntu.Releases {

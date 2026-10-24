@@ -7,7 +7,8 @@
 // compareRank below states the same rule so the console can check that a page
 // it was handed is in rank order and say why each row sits where it does.
 
-import type { FindingKind, FindingSeverity } from "./findings-model.ts";
+import { upgradeLabel } from "./findings-model.ts";
+import type { EolDetail, FindingKind, FindingSeverity } from "./findings-model.ts";
 import type { FindingTriage } from "./types.ts";
 
 /**
@@ -58,12 +59,28 @@ export type ExposureGroup = {
   resolvedAt: string | null;
   /** YYYY-MM-DD Red Hat shipped the fix an awaiting_vendor finding is waiting for. */
   awaitingSince: string | null;
+  /** Set on an end-of-life row (advisory id "EOL:<product>:<cycle>"). */
+  eol?: ExposureEol | null;
   source?: ExposureSource;
   /**
    * Set on a surface row. Its advisoryId is the row key ("surface:<12 digits>"),
    * its summary the finding's title; it has no hosts, KEV, EPSS or CVSS.
    */
   surface?: SurfaceRow;
+};
+
+/** The release an end-of-life row is about. */
+export type ExposureEol = {
+  product: string;
+  productLabel: string;
+  cycle: string;
+  /** "eol": security support ended. "eoas": active support ended. */
+  stage: "eol" | "eoas";
+  /** YYYY-MM-DD the stage began. */
+  date: string;
+  upgradeTo: string;
+  /** The repositories or vendors the packages came from. */
+  origins: string[];
 };
 
 export type ExposureBucket = "fix" | "watch";
@@ -101,6 +118,11 @@ export type ExposureHostRow = {
   resolvedAt: string | null;
   resolution: "" | "fixed" | "package_removed" | "no_longer_affected";
   resolvedInstalled: string;
+  /** End-of-life rows: where the packages came from, the release, the control tags. */
+  origin?: string;
+  originRepo?: string;
+  eol?: EolDetail | null;
+  controls?: string[];
 };
 
 export type ExposureAdvisoryResponse = {
@@ -142,11 +164,16 @@ export type ExposureSummary = {
     silent: number;
     silentList: { deviceId: string; hostname: string; lastSeen: string }[];
   };
+  /**
+   * findings, advisories and hosts count patches to install and software to upgrade; eol is the
+   * upgrade part (software past end of life from outside the distribution).
+   */
   fixable: {
     findings: number;
     advisories: number;
     hosts: number;
     kev: ExposureCount;
+    eol?: ExposureCount;
     /** Open external surface findings that rank (critical, high, medium, low). Absent from an older control plane. */
     surface?: number;
     /** advisories + surface: the length of the Fix this week list. */
@@ -210,6 +237,7 @@ export type ExposureTrend = {
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
 export type Rankable = Pick<ExposureGroup, "advisoryId" | "severity" | "kev" | "kevAdded" | "epss" | "cvss"> & {
+  eol?: ExposureEol | null;
   source?: ExposureSource;
 };
 
@@ -226,18 +254,27 @@ export function isSurfaceRow(g: Pick<Rankable, "source">): boolean {
 export const SURFACE_SCORE: Record<string, number> = { critical: 9.5, high: 8.0, medium: 5.0, low: 2.0 };
 
 /**
- * 0: a KEV vulnerability. 1: a critical or high surface finding. 2: everything
- * else. Mirrors exposure.Band.
+ * The CVSS-equivalent an end-of-life row ranks by: that of a high vulnerability
+ * past end of security support, of a low one past end of active support. Never
+ * shown. Mirrors exposure.EOLScore.
+ */
+export const EOL_SCORE: Record<string, number> = { eol: 8.0, eoas: 2.0 };
+
+/**
+ * 0: a KEV vulnerability. 1: a critical or high surface finding, or software
+ * past end of security support. 2: everything else. Mirrors exposure.Band.
  */
 export function rankBand(g: Rankable): 0 | 1 | 2 {
   if (isSurfaceRow(g)) return g.severity === "critical" || g.severity === "high" ? 1 : 2;
+  if (g.eol && g.eol.stage in EOL_SCORE) return g.eol.stage === "eol" ? 1 : 2;
   return g.kev ? 0 : 2;
 }
 
-// A surface finding has no exploitation signal, and the CVSS-equivalent of its severity.
+// A surface or end-of-life row has no exploitation signal, and the CVSS-equivalent of its severity or stage.
 function effective(g: Rankable): Rankable {
-  if (!isSurfaceRow(g)) return g;
-  return { ...g, kev: false, kevAdded: null, epss: null, cvss: SURFACE_SCORE[g.severity] ?? null };
+  if (isSurfaceRow(g)) return { ...g, kev: false, kevAdded: null, epss: null, cvss: SURFACE_SCORE[g.severity] ?? null };
+  if (g.eol && g.eol.stage in EOL_SCORE) return { ...g, kev: false, kevAdded: null, epss: null, cvss: EOL_SCORE[g.eol.stage] };
+  return g;
 }
 
 // Higher first; a missing score goes last (and is not the same as zero).
@@ -257,6 +294,13 @@ function byScoreDesc(a: number | null, b: number | null): number {
  * missing score ranks after any score, including 0. A medium or low surface
  * finding has no EPSS and the CVSS-equivalent of its severity, so it sits with
  * the vulnerabilities that have no EPSS score. Mirrors internal/exposure.Compare.
+ *
+ * An end-of-life row (slice 10) has no CVE and no score either. Software past
+ * end of security support is in the same urgent band as a high surface finding,
+ * the CVSS-equivalent of a high vulnerability (8.0): after KEV and before every
+ * other vulnerability, whatever its EPSS, because nothing will ever patch it.
+ * Past end of active support only, it ranks with the low CVSS-only
+ * vulnerabilities (2.0), below every vulnerability that has an EPSS score.
  */
 export function compareRank(a0: Rankable, b0: Rankable): number {
   const band = rankBand(a0) - rankBand(b0);
@@ -315,7 +359,25 @@ export type RankReason = {
 export function rankReason(g: Rankable): RankReason {
   let headline: string;
   const details: string[] = [];
-  if (isSurfaceRow(g)) {
+  if (g.eol) {
+    // No CVE and no score: the release calendar is the signal, and saying so
+    // is better than printing "no exploitation signal" as if it were missing.
+    const e = g.eol;
+    const since = e.date ? ` since ${e.date}` : "";
+    headline = e.stage === "eol" ? `Past end of security support${since}` : `Past end of active support${since}`;
+    details.push(
+      e.stage === "eol"
+        ? "no one patches it any more, so every future flaw stays open"
+        : "security fixes continue until its end of life",
+    );
+    details.push("no exploitation score applies");
+    if (e.origins.length > 0) details.push(`installed from ${e.origins.join(", ")}, not the distribution`);
+    details.push(
+      e.stage === "eol"
+        ? "ranks after exploited vulnerabilities and before every other vulnerability, as no fix will ever come"
+        : "ranks with the low-scored vulnerabilities, below every vulnerability that has an EPSS score",
+    );
+  } else if (isSurfaceRow(g)) {
     // No KEV, EPSS or CVSS exists for a DNS or TLS finding; say what its place does rest on.
     if (rankBand(g) === 1) {
       headline = "Live for anyone on the internet: no foothold or exploit needed";
@@ -413,6 +475,19 @@ export function watchLabel(g: Pick<ExposureGroup, "kinds" | "awaitingSince">): s
   return parts.join(" · ");
 }
 
+/**
+ * The release an opened end-of-life row is about, read from its host findings:
+ * the drawer can be opened on a link, without the list row that carries it.
+ * Null when none of the rows is an end-of-life finding.
+ */
+export function eolOfHosts(hosts: Pick<ExposureHostRow, "eol" | "origin">[]): ExposureEol | null {
+  const first = hosts.find((h) => h.eol);
+  if (!first?.eol) return null;
+  const e = first.eol;
+  const origins = [...new Set(hosts.map((h) => h.eol?.origin ?? h.origin ?? "").filter(Boolean))].sort();
+  return { product: e.product, productLabel: e.productLabel, cycle: e.cycle, stage: e.stage, date: e.stageFrom, upgradeTo: e.upgradeTo ?? "", origins };
+}
+
 /** "3 hosts: alpha, bravo, charlie" or "12 hosts: alpha, bravo, charlie and 9 more". */
 export function hostsLabel(g: Pick<ExposureGroup, "hostCount" | "hosts">): string {
   const n = g.hostCount;
@@ -422,7 +497,8 @@ export function hostsLabel(g: Pick<ExposureGroup, "hostCount" | "hosts">): strin
 }
 
 /** What the fixed versions of a group say, one or several. */
-export function fixedLabel(g: Pick<ExposureGroup, "fixed">): string {
+export function fixedLabel(g: Pick<ExposureGroup, "fixed"> & { eol?: ExposureEol | null }): string {
+  if (g.eol) return upgradeLabel({ productLabel: g.eol.productLabel, upgradeTo: g.eol.upgradeTo });
   if (g.fixed.length === 0) return "no fix recorded";
   return `fixed in ${g.fixed.join(", ")}`;
 }

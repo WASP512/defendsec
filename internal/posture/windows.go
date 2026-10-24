@@ -40,10 +40,12 @@ try {
   $os = Get-CimInstance Win32_OperatingSystem
   $r.os = [ordered]@{
     caption = [string]$os.Caption; version = [string]$os.Version; build = [string]$os.BuildNumber
+    productType = [int]$os.ProductType
     totalMemoryKb = [int64]$os.TotalVisibleMemorySize
     uptimeSeconds = [int64]((Get-Date) - $os.LastBootUpTime).TotalSeconds
   }
 } catch { $r.osError = $_.Exception.Message }
+try { $r.edition = [string](Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion').EditionID } catch {}
 try { $r.serial = [string](Get-CimInstance Win32_BIOS).SerialNumber } catch {}
 try { $cs = Get-CimInstance Win32_ComputerSystem; $r.model = ([string]$cs.Manufacturer + ' ' + [string]$cs.Model).Trim() } catch {}
 try {
@@ -79,11 +81,13 @@ type windowsDoc struct {
 		Caption       string `json:"caption"`
 		Version       string `json:"version"`
 		Build         string `json:"build"`
+		ProductType   int    `json:"productType"`
 		TotalMemoryKb int64  `json:"totalMemoryKb"`
 		UptimeSeconds int64  `json:"uptimeSeconds"`
 	} `json:"os"`
 	Serial    string `json:"serial"`
 	Model     string `json:"model"`
+	Edition   string `json:"edition"`
 	BitLocker *struct {
 		ProtectionStatus     string  `json:"protectionStatus"`
 		VolumeStatus         string  `json:"volumeStatus"`
@@ -156,6 +160,7 @@ func ParseWindows(raw []byte) (Report, Facts, error) {
 		facts.MemoryMb = doc.OS.TotalMemoryKb / 1024
 		facts.UptimeSeconds = doc.OS.UptimeSeconds
 	}
+	facts.OSEdition = strings.TrimSpace(doc.Edition)
 	facts.Serial = strings.TrimSpace(doc.Serial)
 	facts.HardwareModel = strings.TrimSpace(doc.Model)
 

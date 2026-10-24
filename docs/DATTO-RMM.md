@@ -39,7 +39,14 @@ trendline and the exposure summary unchanged. `approved_pending` (the site's pol
 is waiting to install) is preferred over `not_approved` when RMM lists a KB twice. When a KB RMM listed
 as missing is no longer listed, the collector reads the device's installed updates once more: if the KB
 is there the finding closes as **fixed** (with that reason), if not it closes as no longer affected. Coverage per device is one of `covered`, `stale`, `no_data`, `no_feed`
-(the Microsoft feed is not loaded: *not assessed*, never clean). The software list and the pending-update list of an audited device
+(the Microsoft feed is not loaded: *not assessed*, never clean).
+
+`no_data` also covers a device RMM audited recently but has **no patch evidence for**: `patchStatus` `NoData` (always, even if
+a list came back), `NoPolicy` with both update lists empty (RMM is not patch-managing it, so an empty list says nothing), or no
+patch status at all with empty lists. Such a device is counted as *not assessed* on the RMM page and the Fleet card, never as
+"no missing updates", and the findings it already had stay open. `NoPolicy` with a listed KB is evidence and stands (the reason
+says RMM has no patch policy for it). `FullyPatched`, `ApprovedPending`, `RebootRequired` and `InstallError` are read as a
+patch-managed device; with empty lists they are `covered`. The software list and the pending-update list of an audited device
 are stored on the device's `rmm_devices` row and shown as inventory.
 
 `defendsec-feeds` with `msrc` in `DEFENDSEC_FEEDS_ENABLED` (it is opt-in because the first sync is a few
@@ -89,6 +96,12 @@ quick jobs, alerts, variables, UDFs, warranty, moving a device or resetting keys
   fixture-proven only.
 - Whether a security level limited to one site's device visibility can still call `/v2/account/sites`.
 - Whether `NOT_APPROVED` lists every update Windows offers or only those RMM has catalogued.
+- **Which `patchStatus` values really return update lists on a live account.** The enum (`NoPolicy`, `NoData`, `RebootRequired`,
+  `InstallError`, `ApprovedPending`, `FullyPatched`) is from Datto's help page; that `NoData` and `NoPolicy` devices return empty lists
+  (so empty is no evidence), and that the other values return complete ones, has not been observed.
+- **Slice 10's application end-of-life mapping is not applied to RMM software.** It keys on package names and the repository a package
+  came from (Debian/RPM family). RMM gives a display name and a version only, with no publisher or origin, so mapping "Node.js" or
+  "PHP" would be a guess. Follow-up, once a real site shows what the names look like: a name-to-product table for Windows installers.
 - The mapping from `operatingSystem` captions to a Windows build uses the audit's build number; captions
   RMM writes differently from the fixtures fall back to "build unknown" (the console says so).
 
@@ -128,12 +141,14 @@ account's 600 a minute. The count of each read is stored (`rmm_syncs.requests`) 
 
 `GET /v1/rmm/status`, `GET /v1/rmm/sites`, `PUT /v1/rmm/settings` (admin; the site must be in the live
 list), `POST /v1/rmm/sync` (admin; `{"wait":true}` to wait), `GET /v1/rmm/syncs`, `GET /v1/rmm/devices`,
-`GET /v1/rmm/devices/{id}`. Choosing a site and asking for a read are written to the audit chain
-(`rmm_site_select`, `rmm_sync`). The console proxies them at `/api/rmm/*`.
+`GET /v1/rmm/devices/{id}`. Every site choice is written to the audit chain once, by the
+store inside the settings transaction (`rmm_site_selected`); every read, scheduled or manual, is recorded as `rmm_sync_recorded`
+(counts and what was not assessed, never a response body), and a **manual** request additionally records who asked (`rmm_sync`).
+A scheduled read has no `rmm_sync` entry because nobody asked. The console proxies them at `/api/rmm/*`.
 
 ## Data kept
 
-Migration 026: `devices.source`, `devices.merged_into`, `rmm_settings` (one row), `rmm_devices` (what RMM
+Migration 027: `devices.source`, `devices.merged_into`, `rmm_settings` (one row), `rmm_devices` (what RMM
 said at the last read, with the software and pending-update lists), `rmm_patches` (the KB list),
 `host_patch_state` (coverage per host and why), `rmm_syncs` (one row per read, with counts
 and the reason for anything not assessed). No credential, no response body and no RMM token is stored. The

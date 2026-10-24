@@ -161,6 +161,9 @@ func TestSurfaceOrderMatchesRankingRuleAndPagesByKeyset(t *testing.T) {
 	byID := map[string]ExposureGroup{}
 	for _, g := range full.Findings {
 		it := exposure.Item{AdvisoryID: g.AdvisoryID, Severity: g.Severity, KEV: g.KEV, EPSS: g.EPSS, CVSS: g.CVSS, Surface: g.Source == SourceSurface}
+		if g.EOL != nil {
+			it.EOLStage = g.EOL.Stage
+		}
 		if g.KEVAdded != nil {
 			it.KEVAdded = day(*g.KEVAdded)
 		}

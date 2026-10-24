@@ -19,6 +19,7 @@ It replaces `scripts/ingest-osv.py`, which sent the fleet's package names to `ap
 | `rocky-8`, `rocky-9` | Rocky Linux errata service (Apollo), `/v2/advisories`, walked page by page | ranges, `distro=rocky`, `release=8`/`9` | What **Rocky has released**, as opposed to what Red Hat has. See "Rebuild distributions" below. |
 | `almalinux-8`, `almalinux-9` | AlmaLinux `errata.full.json` (`https://errata.almalinux.org/N/errata.full.json`, 30-45 MB) | ranges, `distro=almalinux`, `release=8`/`9` | What **Alma has released**. Same section. |
 | `suse-leap-16.0`, `suse-tumbleweed` (`suse-leap-15.6` available) | SUSE per-CVE OVAL, `-affected` variant | ranges, `distro=opensuse-leap`/`opensuse-tumbleweed` | `fixed`, `affected` (no fix yet) and `not_affected`. |
+| `endoflife` | endoflife.date API v1 bulk document (`/api/v1/products/full`, ~3 MB) | `eol_releases` (release cycle, end of active support, end of life, latest release), not `advisory_ranges` | The release calendar behind application end-of-life findings; only the 15 products the mapping table can produce are kept. See [EOL.md](EOL.md). |
 | `osv-<ecosystem>` | OSV bulk `<ECOSYSTEM>/all.zip` | ranges with no distro, `ecosystem=PyPI` … | **Off by default.** For software the fleet runs outside the package manager. |
 
 NVD is deliberately not a source: it does not carry distro fixed versions.

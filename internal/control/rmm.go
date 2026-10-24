@@ -369,7 +369,7 @@ func (s *Server) rmmSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not save the settings", http.StatusInternalServerError)
 		return
 	}
-	s.audit(s.actorIdentity(r), "rmm_site_select", "", map[string]any{"siteUid": req.SiteUID, "siteName": name, "staleAfterDays": days})
+	// The ledger entry (rmm_site_selected) is written by SetRMMSettings in the same transaction.
 	got, _ := s.pg.GetRMMSettings(r.Context())
 	writeJSON(w, http.StatusOK, got)
 }

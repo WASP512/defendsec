@@ -8,6 +8,7 @@ import { CoverageBanner } from "@/components/finding-summary";
 import { getRmmDevice } from "@/lib/rmm";
 import { ago, coverageText, isRmmDeviceId, osSupportLine, plural } from "@/lib/rmm-model";
 import { supportedOs } from "@/lib/supported-os";
+import { warmOsCalendar } from "@/lib/os-calendar";
 
 export const dynamic = "force-dynamic";
 
@@ -20,9 +21,10 @@ export default async function RmmDevicePage({ params }: { params: Promise<{ id: 
   if (!isRmmDeviceId(id)) notFound();
   const d = await getRmmDevice(id);
   if (!d) notFound();
+  await warmOsCalendar();
   const now = new Date();
   const cov = coverageText(d.coverage);
-  const unsupported = supportedOs({ platform: "windows", osName: d.osCaption, osVersion: d.osVersion }, undefined, now) === false;
+  const unsupported = supportedOs({ platform: "windows", osName: d.osCaption, osVersion: d.osVersion }, undefined, undefined, now) === false;
   const SRC = "Datto RMM";
   const facts: [string, string, string][] = [
     ["Operating system", `${d.osCaption || "—"} ${d.osVersion}`.trim() + (d.osDisplay ? ` (${d.osDisplay})` : ""), `${SRC} audit`],

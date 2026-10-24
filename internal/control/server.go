@@ -311,6 +311,7 @@ func (s *Server) Heartbeat(ctx context.Context, req *defendsecv1.HeartbeatReques
 		Platform:        req.GetPlatform(),
 		OSName:          req.GetOsName(),
 		OSVersion:       req.GetOsVersion(),
+		OSEdition:       req.GetOsEdition(),
 		Arch:            req.GetArch(),
 		UptimeSeconds:   req.GetUptimeSeconds(),
 		LastSeen:        time.Now().UTC().Format(time.RFC3339),
@@ -342,6 +343,7 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 		Platform:        host.GetPlatform(),
 		OSName:          host.GetOsName(),
 		OSVersion:       host.GetOsVersion(),
+		OSEdition:       host.GetOsEdition(),
 		Arch:            host.GetArch(),
 		UptimeSeconds:   host.GetUptimeSeconds(),
 		LastSeen:        time.Now().UTC().Format(time.RFC3339),
@@ -366,6 +368,7 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 		dev.Software = append(dev.Software, presence.Software{
 			Name: item.GetName(), Version: item.GetVersion(),
 			SourcePackage: item.GetSourcePackage(), SourceVersion: item.GetSourceVersion(),
+			Origin: item.GetOrigin(), OriginRepo: item.GetOriginRepo(),
 		})
 	}
 	for _, item := range req.GetPendingUpdates() {

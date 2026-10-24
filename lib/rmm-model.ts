@@ -2,7 +2,8 @@
 // must never read "clean" for something that was not assessed) is tested rather
 // than assembled inline in a component.
 
-import { supportedOs, windowsEndOfSupport } from "./supported-os.ts";
+import type { OsRelease } from "./os-lifecycle.ts";
+import { supportedOs, windowsSupportOf } from "./supported-os.ts";
 
 export type RmmCredentials = {
   configured: boolean;
@@ -282,31 +283,30 @@ export function rmmCard(status: RmmStatus | null, now: Date = new Date()): RmmCa
   };
 }
 
-/** Windows devices from RMM whose OS is past end of support, for the Fleet "also check" list. */
+/**
+ * Windows devices from RMM whose OS is past end of support, for the Fleet "also check" list.
+ * The verdict is main's edition-aware calendar judgement (os-lifecycle.ts); RMM gives the
+ * caption, not the EditionID, so the edition is read from the caption.
+ */
 export function unsupportedRmm(
   rows: RmmDeviceRow[],
   now: Date = new Date(),
+  calendar?: OsRelease[] | null,
 ): { id: string; hostname: string; os: string }[] {
   return rows
-    .filter((d) => supportedOs({ platform: "windows", osName: d.osCaption, osVersion: d.osVersion }, undefined, now) === false)
+    .filter((d) => supportedOs({ platform: "windows", osName: d.osCaption, osVersion: d.osVersion }, undefined, calendar, now) === false)
     .map((d) => ({ id: d.id, hostname: d.hostname, os: `${d.osCaption} ${d.osVersion}`.trim() }))
     .sort((a, b) => a.hostname.localeCompare(b.hostname));
 }
 
-/** One line about a device's OS support, with the date the vendor stopped shipping updates. */
-export function osSupportLine(d: { osCaption: string; osVersion: string }, now: Date = new Date()): string {
-  const eos = windowsEndOfSupport(d.osCaption, d.osVersion);
-  const verdict = supportedOs({ platform: "windows", osName: d.osCaption, osVersion: d.osVersion }, undefined, now);
-  if (!eos || (eos.date === null && !eos.range)) return "Support status unknown (this build is not in the table).";
-  if (eos.date) {
-    return verdict === false
-      ? `Past end of support: Microsoft stopped shipping security updates on ${eos.date} (${eos.basis}).`
-      : `Supported until ${eos.date} (${eos.basis}).`;
-  }
-  const [a, b] = eos.range as [string, string];
-  return verdict === null
-    ? `Support depends on the edition: ended ${a} for Home/Pro, ends ${b} for Enterprise/Education. The caption does not say which.`
-    : verdict
-      ? `Supported (Home/Pro until ${a}, Enterprise/Education until ${b}).`
-      : `Past end of support (Home/Pro ended ${a}, Enterprise/Education ended ${b}).`;
+/** One line about a device's OS support: the verdict and the calendar cycle it rests on. */
+export function osSupportLine(
+  d: { osCaption: string; osVersion: string },
+  now: Date = new Date(),
+  calendar?: OsRelease[] | null,
+): string {
+  const s = windowsSupportOf({ platform: "windows", osName: d.osCaption, osVersion: d.osVersion }, undefined, calendar, now);
+  if (s.state === false) return `Past end of support. ${s.reason}.`;
+  if (s.state === true) return `Supported. ${s.reason}.`;
+  return `Support status unknown. ${s.reason}.`;
 }

@@ -174,3 +174,94 @@ func TestSurfaceScoreRanksEveryRankedSeverityAndNotInfo(t *testing.T) {
 		t.Fatal("an empty severity must never rank")
 	}
 }
+
+// End-of-life findings (slice 10) join the order next to the high
+// vulnerabilities: software past end of security support is in the urgent band
+// with the critical and high surface findings, after KEV and before every
+// vulnerability that is not on KEV, whatever its EPSS; software past end of
+// active support ranks with the low CVSS-only ones, below every vulnerability
+// that has an EPSS score.
+func TestEOLJoinsTheOrderNextToHighVulnerabilities(t *testing.T) {
+	eol := func(id, stage, sev string) Item {
+		return Item{AdvisoryID: id, Severity: sev, EOLStage: stage}
+	}
+	sf := func(id, sev string) Item {
+		return Item{AdvisoryID: SurfaceKeyPrefix + id, Severity: sev, Surface: true}
+	}
+	want := []Item{
+		{AdvisoryID: "kev", KEV: true, KEVAdded: d("2021-01-01"), EPSS: f(0.001), CVSS: f(1)},
+		sf("000000000002", "critical"),                                            // CVSS-equivalent 9.5: above an EOL release (8.0)
+		eol("EOL:php:8.0", EOLStageEOL, "high"),                                   // 8.0, high: ties with a high surface finding; the id breaks it ("EOL:" < "surface:")
+		eol("EOL:php:8.1", EOLStageEOL, "high"),                                   // and the lower id first among EOL rows
+		sf("000000000001", "high"),                                                // 8.0, high
+		{AdvisoryID: "epss-0.9", EPSS: f(0.9), CVSS: f(2)},                        // a scored CVE ranks below software no one patches
+		{AdvisoryID: "epss-0.0005", EPSS: f(0.0005), CVSS: f(3), Severity: "low"}, // even a tiny EPSS ranks above past-active-support
+		{AdvisoryID: "cvss-only-9.8", CVSS: f(9.8), Severity: "critical"},
+		{AdvisoryID: "cvss-only-4.3", CVSS: f(4.3), Severity: "medium"},
+		eol("EOL:nodejs:22", EOLStageEOAS, "low"), // 2.0 equivalent; ties with the next on severity, the id breaks it
+		{AdvisoryID: "cvss-only-2.0", CVSS: f(2.0), Severity: "low"},
+		{AdvisoryID: "cvss-only-1.0", CVSS: f(1.0), Severity: "low"},
+		{AdvisoryID: "no-scores-critical", Severity: "critical"},
+	}
+	got := append([]Item(nil), want...)
+	for i := range got {
+		j := (i*5 + 3) % len(got)
+		got[i], got[j] = got[j], got[i]
+	}
+	sort.Slice(got, func(i, j int) bool { return Compare(got[i], got[j]) < 0 })
+	for i := range want {
+		if got[i].AdvisoryID != want[i].AdvisoryID {
+			t.Fatalf("position %d = %s, want %s\nfull order: %v", i, got[i].AdvisoryID, want[i].AdvisoryID, ids(got))
+		}
+	}
+}
+
+func TestSecurityEOLRanksAboveActiveSupportEOLWhateverTheLabels(t *testing.T) {
+	// The stage decides, not the severity label a caller put on the row.
+	eol := Item{AdvisoryID: "EOL:php:8.0", Severity: "low", EOLStage: EOLStageEOL}
+	eoas := Item{AdvisoryID: "EOL:php:8.4", Severity: "critical", EOLStage: EOLStageEOAS}
+	if Compare(eol, eoas) >= 0 || Compare(eoas, eol) <= 0 {
+		t.Fatal("past end of security support must rank above past end of active support")
+	}
+	if Band(eol) != BandUrgent || Band(eoas) != BandRest {
+		t.Fatalf("bands: eol %d, eoas %d; want %d and %d", Band(eol), Band(eoas), BandUrgent, BandRest)
+	}
+	scored := Item{AdvisoryID: "cve", EPSS: f(0.5), CVSS: f(9)}
+	if Compare(eoas, scored) <= 0 {
+		t.Fatal("past end of active support ranks below a vulnerability that has an EPSS score")
+	}
+	if Compare(eol, scored) >= 0 {
+		t.Fatal("past end of security support ranks above a vulnerability that is not on KEV")
+	}
+}
+
+func TestEOLIgnoresVulnerabilityFieldsAndKEVStillWins(t *testing.T) {
+	// An eol item never reads KEV, EPSS or CVSS, whatever a caller put in them.
+	odd := Item{AdvisoryID: "EOL:php:8.4", Severity: "low", EOLStage: EOLStageEOAS, KEV: true, EPSS: f(0.99), CVSS: f(10)}
+	vuln := Item{AdvisoryID: "v", EPSS: f(0.01), CVSS: f(1)}
+	if Compare(odd, vuln) <= 0 {
+		t.Fatal("an EOAS item must rank after a vulnerability that has an EPSS score")
+	}
+	kev := Item{AdvisoryID: "z", KEV: true, KEVAdded: d("2019-01-01"), EPSS: f(0.001), CVSS: f(1)}
+	eol := Item{AdvisoryID: "EOL:php:8.0", Severity: "high", EOLStage: EOLStageEOL}
+	if Compare(kev, eol) >= 0 || Compare(eol, kev) <= 0 {
+		t.Fatal("an exploited-in-the-wild vulnerability must rank above end-of-life software")
+	}
+}
+
+func TestEOLScoreRanksOnlyKnownStages(t *testing.T) {
+	hi, ok := EOLScore(EOLStageEOL)
+	lo, ok2 := EOLScore(EOLStageEOAS)
+	if !ok || !ok2 || hi <= lo {
+		t.Fatalf("scores eol %v/%v eoas %v/%v: want eol above eoas", hi, ok, lo, ok2)
+	}
+	if hi != 8.0 {
+		t.Fatalf("security-EOL must sit at the level of a high vulnerability (8.0), got %v", hi)
+	}
+	if _, ok := EOLScore(""); ok {
+		t.Fatal("a row that is not end-of-life has no end-of-life score")
+	}
+	if _, ok := EOLScore("supported"); ok {
+		t.Fatal("an unknown stage must not rank")
+	}
+}

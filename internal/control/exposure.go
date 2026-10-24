@@ -9,6 +9,7 @@ import (
 
 	"defendsec/internal/exposure"
 	"defendsec/internal/storepg"
+	"defendsec/internal/vuln"
 )
 
 // Exposure API (read-only), the data behind the console's exposure view:
@@ -210,6 +211,13 @@ type exposureHostRow struct {
 	// recorded. ResolvedInstalled is the version the host had when it closed.
 	Resolution        string `json:"resolution"`
 	ResolvedInstalled string `json:"resolvedInstalled"`
+	// Origin, OriginRepo, EOL and Controls are set on end-of-life findings:
+	// where the packages came from, which release is past support and what to
+	// upgrade to, and the framework controls the finding is evidence about.
+	Origin     string          `json:"origin"`
+	OriginRepo string          `json:"originRepo"`
+	EOL        *vuln.EOLDetail `json:"eol"`
+	Controls   []string        `json:"controls"`
 }
 
 // exposureSurfaceResponse is the drawer of a surface row of the list: the
@@ -283,6 +291,7 @@ func (s *Server) exposureAdvisory(w http.ResponseWriter, r *http.Request) {
 			Feed: f.Feed, FeedDate: utcPtr(f.FeedDate), SnapshotID: f.SnapshotID, RangeID: f.RangeID,
 			FirstSeen: f.FirstSeen.UTC(), LastSeen: f.LastSeen.UTC(), ResolvedAt: utcPtr(f.ResolvedAt),
 			Resolution: f.Resolution, ResolvedInstalled: f.ResolvedInstalled,
+			Origin: f.Origin, OriginRepo: f.OriginRepo, EOL: f.EOL, Controls: f.Controls,
 		})
 	}
 	for _, sn := range d.Snapshots {
@@ -329,6 +338,7 @@ var exposureTrendCaveats = []string{
 	"Days before the first feed snapshot are marked unknown; their zeros mean no data, not a clean fleet.",
 	"A finding whose kind changed (awaiting vendor, then fixable) counts under its current kind for its whole open interval.",
 	"The surface line counts external surface findings (critical, high, medium, low; never info) open at the end of each day, from the first surface scan; days before it are marked unknown. A surface finding that closed and came back counts as closed in between, except for findings reopened before slice 7b, whose closed days were not recorded. A finding's severity is taken from its record at the time it was last open.",
+	"Software past its upstream end of life counts with the fixable findings: upgrading it is work for this week.",
 }
 
 func (s *Server) exposureTrend(w http.ResponseWriter, r *http.Request) {

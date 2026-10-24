@@ -55,6 +55,10 @@ type kindCounts struct {
 	NoFix int `json:"noFix"`
 	// Informational: will not fix, or under investigation.
 	Informational int `json:"informational"`
+	// EOL: software from outside the distribution that is past upstream
+	// support. The fix is an upgrade; it counts with "fix this week" but is
+	// not a patch, so it is not in Fixable.
+	EOL int `json:"eol"`
 }
 
 // matchCounts tallies all findings, and again only those on the CISA KEV list.
@@ -80,6 +84,8 @@ func countFindings(fs []vuln.Finding) matchCounts {
 				t.NoFix++
 			case vuln.KindInformational:
 				t.Informational++
+			case vuln.KindEOL:
+				t.EOL++
 			}
 		}
 	}
@@ -87,7 +93,7 @@ func countFindings(fs []vuln.Finding) matchCounts {
 }
 
 func (k kindCounts) line() string {
-	return fmt.Sprintf("%d fixable, %d awaiting_vendor, %d no_fix, %d informational", k.Fixable, k.AwaitingVendor, k.NoFix, k.Informational)
+	return fmt.Sprintf("%d fixable, %d awaiting_vendor, %d no_fix, %d informational, %d eol", k.Fixable, k.AwaitingVendor, k.NoFix, k.Informational, k.EOL)
 }
 
 type matchFinding struct {
@@ -108,6 +114,9 @@ type matchFinding struct {
 	KEV           bool       `json:"kev"`
 	EPSS          *float64   `json:"epss"`
 	Reason        string     `json:"reason"`
+	// EOL is set on end-of-life findings: the release, its end date, where the
+	// packages came from and what to upgrade to.
+	EOL *vuln.EOLDetail `json:"eol,omitempty"`
 }
 
 // cmdMatch runs the matcher over a package inventory against the advisory
@@ -121,12 +130,21 @@ func cmdMatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	fs.SetOutput(stderr)
 	dbURL := fs.String("db-url", "", "Postgres URL (default: DEFENDSEC_DATABASE_URL or DATABASE_URL)")
 	asJSON := fs.Bool("json", false, "print the full result as JSON")
-	all := fs.Bool("all", false, "also list entries with no fix at all (no_fix, will_not_fix, under_investigation); awaiting_vendor is always listed")
+	all := fs.Bool("all", false, "also list entries with no fix at all (no_fix, will_not_fix, under_investigation); awaiting_vendor and eol are always listed")
+	asOf := fs.String("as-of", "", "judge application end-of-life on this day, YYYY-MM-DD (default: today), to reproduce a run")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: defendsec-feeds match [--db-url URL] [--json] [--all] <inventory.json>")
+		return errors.New("usage: defendsec-feeds match [--db-url URL] [--json] [--all] [--as-of YYYY-MM-DD] <inventory.json>")
+	}
+	var asOfDay time.Time
+	if *asOf != "" {
+		d, err := time.Parse("2006-01-02", *asOf)
+		if err != nil {
+			return fmt.Errorf("--as-of %q: want YYYY-MM-DD", *asOf)
+		}
+		asOfDay = d
 	}
 	path := fs.Arg(0)
 	raw, err := os.ReadFile(path)
@@ -145,10 +163,11 @@ func cmdMatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer closeDB()
 
-	host := vuln.Host{Distro: inv.Distro, Release: inv.DistroRelease, PackageManager: inv.PackageManager}
+	host := vuln.Host{Distro: inv.Distro, Release: inv.DistroRelease, PackageManager: inv.PackageManager, AsOf: asOfDay}
 	for _, sw := range inv.Software {
 		host.Packages = append(host.Packages, vuln.Package{
 			Name: sw.Name, Version: sw.Version, SourcePackage: sw.SourcePackage, SourceVersion: sw.SourceVersion,
+			Origin: sw.Origin, OriginRepo: sw.OriginRepo,
 		})
 	}
 	res, err := vuln.Match(ctx, store, host)
@@ -174,7 +193,7 @@ func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON
 				AdvisoryID: f.AdvisoryID, CVE: f.CVE, RangeID: f.RangeID, SnapshotID: f.SnapshotID, Feed: f.Feed,
 				FeedDate: f.FeedDate, Kind: string(f.Kind), Basis: string(f.Basis), Package: f.Package,
 				SourcePackage: f.SourcePackage, Installed: f.Installed, Fixed: f.Fixed, FixState: f.FixState,
-				Severity: f.Severity, KEV: f.KEV, EPSS: f.EPSS, Reason: f.Reason,
+				Severity: f.Severity, KEV: f.KEV, EPSS: f.EPSS, Reason: f.Reason, EOL: f.EOL,
 			})
 		}
 		enc := json.NewEncoder(w)
@@ -193,13 +212,15 @@ func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON
 		fmt.Fprintf(w, "coverage:   %s (latest feed snapshot %s)\n", res.Coverage, snap)
 		fmt.Fprintf(w, "examined:   %d distro-mapped, %d against upstream floors, %d undecidable, %d advisories, %d marked not-affected\n",
 			res.Stats.DistroMapped, res.Stats.Upstream, res.Stats.Undecidable, res.Stats.Advisories, res.Stats.NotAffected)
+		fmt.Fprintf(w, "app eol:    %d mapped to a product: %d the distribution's own (not judged), %d origin unknown (not assessed), %d no release data (not assessed), %d supported\n",
+			res.Stats.EOLMapped, res.Stats.EOLDistroOrigin, res.Stats.EOLOriginUnknown, res.Stats.EOLNoRelease, res.Stats.EOLSupported)
 		counts := countFindings(res.Findings)
 		fmt.Fprintf(w, "result:     %s\n", counts.line())
 		fmt.Fprintf(w, "kev:        %s\n", counts.KEV.line())
 		tw := tabwriter.NewWriter(w, 0, 8, 2, ' ', 0)
 		shown := 0
 		for _, f := range res.Findings {
-			if f.Kind != vuln.KindFinding && f.Kind != vuln.KindAwaitingVendor && !all {
+			if f.Kind != vuln.KindFinding && f.Kind != vuln.KindAwaitingVendor && f.Kind != vuln.KindEOL && !all {
 				continue
 			}
 			if shown == 0 {
@@ -210,12 +231,18 @@ func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON
 			if f.KEV {
 				kev = "KEV"
 			}
-			note := ""
+			note, fixed := "", orDash(f.Fixed)
 			if f.Kind == vuln.KindAwaitingVendor {
 				note = f.Reason
 			}
+			if f.Kind == vuln.KindEOL && f.EOL != nil {
+				note = f.Summary + "; origin " + orDash(f.EOL.Origin)
+				if f.EOL.UpgradeTo != "" {
+					fixed = "upgrade to " + f.EOL.UpgradeTo
+				}
+			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", f.Severity, kev, firstNonEmpty(f.CVE, f.AdvisoryID),
-				f.Package, f.Installed, orDash(f.Fixed), kindLabel(f.Kind), f.Feed, note)
+				f.Package, f.Installed, fixed, kindLabel(f.Kind), f.Feed, note)
 		}
 		if err := tw.Flush(); err != nil {
 			return err
@@ -224,8 +251,8 @@ func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON
 	switch {
 	case res.Coverage != vuln.CoverageFull:
 		return exitError{exitUnassessed, fmt.Sprintf("not assessed: no advisory feed covers this host (coverage %s)", res.Coverage)}
-	case len(open) > 0:
-		return exitError{exitFindings, fmt.Sprintf("%d open findings", len(open))}
+	case len(open) > 0 || countFindings(res.Findings).EOL > 0:
+		return exitError{exitFindings, fmt.Sprintf("%d open findings, %d end-of-life", len(open), countFindings(res.Findings).EOL)}
 	}
 	return nil
 }

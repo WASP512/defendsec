@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { ago, coverageText, isRmmDeviceId, osSupportLine, rmmCard, unsupportedRmm, type RmmStatus, type RmmDeviceRow } from "./rmm-model.ts";
 
+import type { OsRelease } from "./os-lifecycle.ts";
+
 const NOW = new Date("2026-10-24T12:00:00Z");
+// The one Windows end-of-support source: the endoflife.date calendar slice 10 loads (a real fetch, 2026-10-24).
+const calendar = (JSON.parse(readFileSync(new URL("./testdata/os-calendar.json", import.meta.url), "utf8")) as { releases: OsRelease[] }).releases;
 
 function status(over: Partial<RmmStatus["summary"]> = {}, creds: Partial<RmmStatus["credentials"]> = {}): RmmStatus {
   return {
@@ -126,26 +131,32 @@ const row = (hostname: string, osCaption: string, osVersion: string): RmmDeviceR
   patchesApprovedPending: 0, patchesNotApproved: 0, softwareCount: 0, coverage: "covered", reason: "", mergedInto: "", dedupeBasis: "", findingsOpen: 0, kevOpen: 0,
 });
 
-test("Windows 10 and old servers are unsupported, Server 2019 is not", () => {
+test("Windows 10 Pro 22H2 and old servers are unsupported; LTSC and Server 2019 are not (main's calendar, by edition)", () => {
   const list = unsupportedRmm(
     [
       row("PC-10", "Microsoft Windows 10 Pro", "10.0.19045"),
+      row("PC-LTSC", "Microsoft Windows 10 Enterprise LTSC 2021", "10.0.19044"),
       row("SRV-2019", "Microsoft Windows Server 2019 Standard", "10.0.17763"),
       row("SRV-2012", "Microsoft Windows Server 2012 R2 Standard", "6.3.9600"),
       row("PC-ODD", "Microsoft Windows 10 Pro", ""),
       row("PC-11", "Microsoft Windows 11 Pro", "10.0.26200"),
     ],
     NOW,
+    calendar,
   );
   assert.deepEqual(list.map((x) => x.hostname), ["PC-10", "SRV-2012"]);
 });
 
-test("OS support line gives the date and what it applies to", () => {
-  assert.equal(
-    osSupportLine({ osCaption: "Microsoft Windows 10 Pro", osVersion: "10.0.19045" }, NOW),
-    "Past end of support: Microsoft stopped shipping security updates on 2025-10-14 (all editions).",
-  );
-  assert.equal(osSupportLine({ osCaption: "Microsoft Windows Server 2019 Standard", osVersion: "10.0.17763" }, NOW), "Supported until 2029-01-09 (Server).");
-  assert.match(osSupportLine({ osCaption: "Windows 11", osVersion: "10.0.22631" }, NOW), /depends on the edition/);
-  assert.match(osSupportLine({ osCaption: "Windows 10", osVersion: "" }, NOW), /unknown/);
+test("without the release calendar a Windows device is unknown, never unsupported", () => {
+  const list = unsupportedRmm([row("PC-10", "Microsoft Windows 10 Pro", "10.0.19045")], NOW, []);
+  assert.deepEqual(list, []);
+  assert.match(osSupportLine({ osCaption: "Microsoft Windows 10 Pro", osVersion: "10.0.19045" }, NOW, []), /^Support status unknown\./);
+});
+
+test("OS support line states the verdict and the calendar cycle it rests on", () => {
+  const line = (osCaption: string, osVersion: string) => osSupportLine({ osCaption, osVersion }, NOW, calendar);
+  assert.match(line("Microsoft Windows 10 Pro", "10.0.19045"), /^Past end of support\. .*2025-10-14/);
+  assert.match(line("Microsoft Windows 10 Enterprise LTSC 2021", "10.0.19044"), /^Supported\. .*2027-01-12/);
+  assert.match(line("Microsoft Windows Server 2019 Standard", "10.0.17763"), /^Supported\. .*2029-01-09/);
+  assert.match(line("Microsoft Windows 10 Pro", ""), /^Support status unknown\. The Windows build number was not reported/);
 });

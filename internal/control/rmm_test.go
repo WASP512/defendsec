@@ -182,7 +182,8 @@ func TestRMMAPIEndToEnd(t *testing.T) {
 	if res.Status != "ok" || res.Windows != 2 || res.Stale != 1 || !strings.HasPrefix(res.TriggeredBy, "manual:") {
 		t.Errorf("sync = %+v", res)
 	}
-	// Choosing the site and asking for a read are in the ledger.
+	// Asking for a read is in the ledger with the account that asked; the site choice
+	// is written once, by the store, in the settings transaction (checked below).
 	{
 		rows, err := s.pg.ListAudit(context.Background(), 200)
 		if err != nil {
@@ -190,12 +191,12 @@ func TestRMMAPIEndToEnd(t *testing.T) {
 		}
 		seen := map[string]bool{}
 		for _, r := range rows {
-			if a, _ := r["action"].(string); a == "rmm_site_select" || a == "rmm_sync" {
+			if a, _ := r["action"].(string); a == "rmm_site_select" || a == "rmm_site_selected" || a == "rmm_sync" {
 				seen[a] = true
 			}
 		}
-		if !seen["rmm_site_select"] || !seen["rmm_sync"] {
-			t.Errorf("ledger actions = %v, want rmm_site_select and rmm_sync", seen)
+		if seen["rmm_site_select"] || !seen["rmm_site_selected"] || !seen["rmm_sync"] {
+			t.Errorf("ledger actions = %v, want rmm_site_selected (once, from the store) and rmm_sync, and no rmm_site_select", seen)
 		}
 	}
 	// The same read is refused while another runs.

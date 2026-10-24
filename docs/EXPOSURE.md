@@ -41,6 +41,26 @@ Most urgent first (`internal/exposure`, mirrored by `lib/exposure-model.ts` `com
 
 A missing EPSS or CVSS score ranks after any score, including 0: unknown is not zero.
 
+**End-of-life software** (slice 10, [EOL.md](EOL.md)) is in the fix bucket beside the patches: upgrading is the fix. It has
+no EPSS or CVSS, and nothing will ever patch it, so it enters the order next to the high vulnerabilities, the way a
+surface finding does (rules in `internal/exposure/rank.go`, "End-of-life findings"):
+
+- **Past end of security support** (stage `eol`, severity `high`): the **urgent band**, right after KEV, with the critical
+  and high surface findings, and before every vulnerability that is not on KEV, whatever its EPSS. Its
+  CVSS-equivalent is 8.0 (`exposure.EOLScore`), so a critical surface finding (9.5) ranks above it; a high surface
+  finding ties on 8.0 and on the severity label, and the row id breaks the tie (`EOL:` sorts before `surface:`).
+- **Past end of active support only** (stage `eoas`, severity `low`): security fixes still arrive. EPSS none, CVSS-equivalent
+  2.0: the rest band, after every vulnerability that has an EPSS score, with the low CVSS-only ones, below every
+  security-EOL row.
+
+The stage decides, not the severity label. The price of the first rule is the one the surface rule already pays: a non-KEV
+CVE with a very high EPSS ranks below an unpatchable release; revisit it with real data. The SQL `ORDER BY` (`k1` band, `k4`
+score), `exposure.Compare` and `compareRank` state this one rule and are tested against each other with eol rows at
+page sizes 1, 2, 3 and 200. The row's reason reads "Past end of security support since 2023-11-26 · no one patches it any
+more, so every future flaw stays open · no exploitation score applies · installed from deb.sury.org, not the distribution
+· ranks after exploited vulnerabilities and before every other vulnerability, as no fix will ever come", and the row
+names the release ("PHP 8.0") and the upgrade target rather than a fixed version.
+
 Every row carries the reason it ranks where it does, and **CVSS is never the headline**:
 
 - KEV: "Exploited in the wild since 2026-09-14 · EPSS 0.71 · CVSS 9.8"

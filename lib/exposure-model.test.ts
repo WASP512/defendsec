@@ -7,6 +7,8 @@ import {
   closeDrawerHref,
   compareRank,
   drawerHref,
+  EOL_SCORE,
+  eolOfHosts,
   exposureApiPath,
   filterHref,
   fixedLabel,
@@ -352,6 +354,100 @@ test("ExposureGroup rows from the wire satisfy Rankable", () => {
     fixed: ["2"], firstSeen: "2026-10-01T00:00:00Z", resolvedAt: null, awaitingSince: null,
   };
   assert.equal(isRanked([g]), true);
+});
+
+// ---- end-of-life rows (slice 10) ----------------------------------------------------------
+
+const eolPhp80 = {
+  product: "php",
+  productLabel: "PHP",
+  cycle: "8.0",
+  stage: "eol" as const,
+  date: "2023-11-26",
+  upgradeTo: "8.4",
+  origins: ["deb.sury.org"],
+};
+
+function eolRow(id: string, stage: "eol" | "eoas", severity: Rankable["severity"]): Rankable {
+  return row(id, { severity, eol: { ...eolPhp80, product: id.split(":")[1], cycle: id.split(":")[2], stage } });
+}
+
+// The same cases as TestEOLJoinsTheOrderNextToHighVulnerabilities in internal/exposure: the console and
+// the control plane must state one rule.
+test("end-of-life rows rank next to high vulnerabilities: security-EOL in the urgent band, active-support-EOL with the low ones", () => {
+  const want: Rankable[] = [
+    row("kev", { kev: true, kevAdded: "2021-01-01", epss: 0.001, cvss: 1 }),
+    surfaceRow("000000000002", "critical"), // 9.5: above an end-of-life release (8.0)
+    eolRow("EOL:php:8.0", "eol", "high"), // 8.0 and high like a high surface finding; the id breaks the tie
+    eolRow("EOL:php:8.1", "eol", "high"),
+    surfaceRow("000000000001", "high"),
+    row("epss-0.9", { epss: 0.9, cvss: 2 }), // a scored CVE ranks below software no one patches
+    row("epss-0.0005", { epss: 0.0005, cvss: 3, severity: "low" }), // even a tiny EPSS ranks above past-active-support
+    row("cvss-only-9.8", { cvss: 9.8, severity: "critical" }),
+    row("cvss-only-4.3", { cvss: 4.3, severity: "medium" }),
+    eolRow("EOL:nodejs:22", "eoas", "low"), // 2.0 equivalent; ties on severity, the id breaks it
+    row("cvss-only-2.0", { cvss: 2.0, severity: "low" }),
+    row("cvss-only-1.0", { cvss: 1.0, severity: "low" }),
+    row("no-scores-critical", { severity: "critical" }),
+  ];
+  const shuffled = want.map((_, i) => want[(i * 5 + 3) % want.length]);
+  assert.equal(new Set(shuffled.map((r) => r.advisoryId)).size, want.length);
+  assert.deepEqual(sorted(shuffled), want.map((r) => r.advisoryId));
+  assert.ok(isRanked(want));
+});
+
+test("security-EOL ranks above active-support-EOL whatever the severity labels say, and ignores KEV, EPSS and CVSS it was handed", () => {
+  const eol = eolRow("EOL:php:8.0", "eol", "low");
+  const eoas = eolRow("EOL:php:8.4", "eoas", "critical");
+  assert.ok(compareRank(eol, eoas) < 0 && compareRank(eoas, eol) > 0);
+  assert.equal(rankBand(eol), 1);
+  assert.equal(rankBand(eoas), 2);
+  assert.ok(compareRank(eol, row("cve", { epss: 0.5, cvss: 9 })) < 0, "above a vulnerability that is not on KEV");
+  assert.ok(compareRank(eoas, row("cve", { epss: 0.5, cvss: 9 })) > 0, "below a vulnerability that has an EPSS score");
+  const odd: Rankable = { ...eoas, kev: true, epss: 0.99, cvss: 10 };
+  assert.equal(rankBand(odd), 2);
+  assert.ok(compareRank(row("z", { kev: true, kevAdded: "2019-01-01" }), eol) < 0, "KEV beats end-of-life");
+});
+
+test("the EOL_SCORE table matches the control plane's", () => {
+  assert.deepEqual(EOL_SCORE, { eol: 8.0, eoas: 2.0 });
+});
+
+test("rankReason for an end-of-life row says what the calendar says, never CVSS or a missing score", () => {
+  const why = rankReason(row("EOL:php:8.0", { severity: "high", eol: eolPhp80 }));
+  assert.equal(why.headline, "Past end of security support since 2023-11-26");
+  assert.match(why.text, /no one patches it any more/);
+  assert.match(why.text, /installed from deb\.sury\.org, not the distribution/);
+  assert.match(why.text, /ranks after exploited vulnerabilities and before every other vulnerability/);
+  assert.doesNotMatch(why.text, /CVSS|EPSS|No exploitation signal/);
+
+  const active = rankReason(row("EOL:php:8.2", { severity: "low", eol: { ...eolPhp80, cycle: "8.2", stage: "eoas", date: "2024-12-31", origins: [] } }));
+  assert.equal(active.headline, "Past end of active support since 2024-12-31");
+  assert.match(active.text, /security fixes continue/);
+  assert.match(active.text, /below every vulnerability that has an EPSS score/);
+  assert.doesNotMatch(active.text, /installed from/);
+
+  // a vulnerability row is unaffected
+  assert.equal(rankReason(row("A", { epss: 0.5 })).headline, "EPSS 0.50");
+});
+
+test("fixedLabel for an end-of-life row is the upgrade, not a fixed version", () => {
+  assert.equal(fixedLabel({ fixed: [], eol: eolPhp80 }), "upgrade to PHP 8.4");
+  assert.equal(fixedLabel({ fixed: [], eol: { ...eolPhp80, upgradeTo: "" } }), "upgrade needed; no newer supported release is listed");
+  assert.equal(fixedLabel({ fixed: ["1.2"] }), "fixed in 1.2");
+});
+
+test("eolOfHosts reads the release from the host findings when the drawer is opened without the list row", () => {
+  const detail = {
+    product: "php", productLabel: "PHP", cycle: "8.0", stage: "eol" as const, stageFrom: "2023-11-26",
+    packages: ["php8.0-cli"], origin: "deb.sury.org", upgradeTo: "8.4",
+  };
+  const got = eolOfHosts([{ eol: detail, origin: "deb.sury.org" }, { eol: { ...detail, origin: "LP-PPA-ondrej-php" }, origin: "LP-PPA-ondrej-php" }]);
+  assert.deepEqual(got, {
+    product: "php", productLabel: "PHP", cycle: "8.0", stage: "eol", date: "2023-11-26", upgradeTo: "8.4",
+    origins: ["LP-PPA-ondrej-php", "deb.sury.org"],
+  });
+  assert.equal(eolOfHosts([{ eol: null }, {}]), null);
 });
 
 // ---- surface findings in the same order (slice 7b) -------------------------------------------------

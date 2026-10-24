@@ -305,6 +305,7 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/meta", svc.HandleMeta)
 	adminMux.HandleFunc("/v1/advisories", svc.HandleAdvisories)
 	adminMux.HandleFunc("/v1/feeds", svc.HandleFeeds)
+	adminMux.HandleFunc("/v1/lifecycle/os", svc.HandleOSCalendar)
 	adminMux.HandleFunc("/v1/findings", svc.HandleFindings)
 	adminMux.HandleFunc("/v1/findings/", svc.HandleFindings)
 	adminMux.HandleFunc("/v1/exposure/", svc.HandleExposure)
