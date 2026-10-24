@@ -165,7 +165,12 @@ func TestAutotaskCredentialsComeFromFilesAndNeverShow(t *testing.T) {
 	if err := os.WriteFile(sec, []byte(secretValue+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(code, []byte(codeValue+"\n"), 0o666); err != nil {
+	if err := os.WriteFile(code, []byte(codeValue+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Chmod, not the WriteFile mode: the umask cuts a create's mode (CI's 022 would
+	// leave 0644, which is not group-writable, and this check would not be tested).
+	if err := os.Chmod(code, 0o662); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("DEFENDSEC_AUTOTASK_SECRET_FILE", sec)
