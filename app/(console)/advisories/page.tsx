@@ -1,5 +1,6 @@
 import { ExposureDetail } from "@/components/exposure-detail";
 import { SurfaceExposureDetail } from "@/components/surface-exposure-detail";
+import { IdentityExposureDetail } from "@/components/identity-exposure-detail";
 import { ExposureDrawer } from "@/components/exposure-drawer";
 import { ExposureList, ExposureTabs } from "@/components/exposure-list";
 import { CoverageBanner } from "@/components/finding-summary";
@@ -12,6 +13,7 @@ import { getFeedStatus } from "@/lib/feeds";
 import { getExposureAdvisory, getExposurePage, getExposureSummary } from "@/lib/exposure";
 import { closeDrawerHref, parseExposureQuery } from "@/lib/exposure-model";
 import { fixTotal, isSurfaceResponse } from "@/lib/surface-exposure";
+import { isIdentityResponse } from "@/lib/identity-model";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +38,8 @@ export default async function AdvisoriesPage({ searchParams }: { searchParams: S
   ]);
   const group = page?.findings.find((g) => g.advisoryId === query.advisory) ?? null;
   const surfaceDetail = isSurfaceResponse(detail) ? detail : null;
-  const vulnDetail = detail && !isSurfaceResponse(detail) ? detail : null;
+  const identityDetail = isIdentityResponse(detail) ? detail : null;
+  const vulnDetail = detail && !isSurfaceResponse(detail) && !isIdentityResponse(detail) ? detail : null;
   const unassessed = summary?.hosts.notAssessed ?? 0;
   const watchTotal = summary ? summary.watch.unfixed.findings + summary.watch.awaitingVendor.findings : 0;
 
@@ -89,15 +92,19 @@ export default async function AdvisoriesPage({ searchParams }: { searchParams: S
 
       {query.advisory ? (
         <ExposureDrawer
-          title={surfaceDetail ? surfaceDetail.detail.finding.title : group?.cve || (group?.eol ? `${group.eol.productLabel} ${group.eol.cycle}` : "") || vulnDetail?.advisory?.cve || query.advisory}
+          title={identityDetail ? identityDetail.detail.finding.title : surfaceDetail ? surfaceDetail.detail.finding.title : group?.cve || (group?.eol ? `${group.eol.productLabel} ${group.eol.cycle}` : "") || vulnDetail?.advisory?.cve || query.advisory}
           description={
-            surfaceDetail
-              ? "What the scan saw, how long it has been open, and how to fix it."
-              : "Where this finding came from and which hosts it is on."
+            identityDetail
+              ? "What the read saw in the tenant, how long it has been open, and how to fix it."
+              : surfaceDetail
+                ? "What the scan saw, how long it has been open, and how to fix it."
+                : "Where this finding came from and which hosts it is on."
           }
           closeHref={closeDrawerHref(query)}
         >
-          {surfaceDetail ? (
+          {identityDetail ? (
+            <IdentityExposureDetail group={group} response={identityDetail} />
+          ) : surfaceDetail ? (
             <SurfaceExposureDetail group={group} response={surfaceDetail} />
           ) : vulnDetail ? (
             <ExposureDetail group={group} detail={vulnDetail} triages={store.triages} readOnly={readOnly} />

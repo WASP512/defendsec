@@ -1,6 +1,7 @@
 import { APID_ADMIN_URL } from "@/lib/commands";
 import { getAdminToken } from "@/lib/auth";
 import type { ExposureSurfaceResponse } from "@/lib/surface-exposure";
+import type { ExposureIdentityResponse } from "@/lib/identity-model";
 import {
   advisoryApiPath,
   exposureApiPath,
@@ -48,9 +49,10 @@ export function getExposureAdvisory(
   id: string,
   bucket: ExposureBucket,
   status: "open" | "resolved",
-): Promise<ExposureAdvisoryResponse | ExposureSurfaceResponse | null> {
-  // A surface row's key ("surface:<12 digits>") answers with the surface drawer's shape.
-  return get<ExposureAdvisoryResponse | ExposureSurfaceResponse>(advisoryApiPath(id, bucket, status));
+): Promise<ExposureAdvisoryResponse | ExposureSurfaceResponse | ExposureIdentityResponse | null> {
+  // A surface row's key ("surface:<12 digits>") answers with the surface drawer's shape,
+  // and an identity row's ("identity:<12 digits>") with the identity drawer's.
+  return get<ExposureAdvisoryResponse | ExposureSurfaceResponse | ExposureIdentityResponse>(advisoryApiPath(id, bucket, status));
 }
 
 export function getExposureTrend(q: TrendQuery): Promise<ExposureTrend | null> {

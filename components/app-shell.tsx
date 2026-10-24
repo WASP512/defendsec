@@ -26,6 +26,7 @@ import {
   Globe,
   Network,
   MonitorCog,
+  KeyRound,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ConsoleTools } from "@/components/console-tools";
@@ -68,6 +69,8 @@ const nav = [
   { href: "/assets", label: "Assets", icon: Network },
   { href: "/surface", label: "Surface", icon: Globe },
   { href: "/rmm", label: "Datto RMM", icon: MonitorCog },
+  // Identity posture (slice 12). Appended: the groups below slice this array by position.
+  { href: "/identity", label: "Identity", icon: KeyRound },
 ];
 
 const navGroups = [

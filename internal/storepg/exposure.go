@@ -135,13 +135,40 @@ type ExposureGroup struct {
 	// are no hosts, and Surface carries the rest.
 	Source  string      `json:"source"`
 	Surface *SurfaceRow `json:"surface,omitempty"`
+	// An identity row is one identity finding (slice 12): AdvisoryID is its list
+	// key ("identity:<12 digits>"), Summary its title, Kinds is ["identity"],
+	// there are no hosts, and Identity carries the rest.
+	Identity *IdentityRow `json:"identity,omitempty"`
 }
 
 // The two kinds of row in the ranked list.
 const (
 	SourceVulnerability = "vulnerability"
 	SourceSurface       = "surface"
+	SourceIdentity      = "identity"
 )
+
+// IdentityRow is what an identity row of the list says about its finding.
+type IdentityRow struct {
+	FindingID int64 `json:"findingId"`
+	// Provider is "m365" (later "google").
+	Provider string `json:"provider"`
+	// Subject is the account, rule or tenant the finding is about (a user
+	// principal name, "<user> · <rule name>", or the tenant): what a person reads.
+	Subject string `json:"subject"`
+	// Check is the check group ("mfa", "inbox-rules"); ID the condition
+	// ("mfa.not_registered"); Key tells apart several of one condition.
+	Check  string `json:"check"`
+	ID     string `json:"id"`
+	Key    string `json:"key"`
+	Detail string `json:"detail"`
+	Fix    string `json:"fix"`
+	// LastSeen is when a run last confirmed the finding.
+	LastSeen time.Time `json:"lastSeen"`
+	// Unconfirmed is true when the latest run could not assess the finding's
+	// check: the finding is shown from its last confirmation.
+	Unconfirmed bool `json:"unconfirmed"`
+}
 
 // SurfaceRow is what a surface row of the list says about its finding.
 type SurfaceRow struct {
@@ -247,10 +274,10 @@ func isNumericText(s string) bool {
 // findings, each with six sort keys, all ascending, so a keyset cursor is a row
 // comparison. It is the SQL form of internal/exposure.Compare:
 //
-//	k1  band: 0 a KEV vulnerability, 1 a critical or high surface finding or software past end of security support, 2 everything else
+//	k1  band: 0 a KEV vulnerability, 1 a critical or high surface or identity finding or software past end of security support, 2 everything else
 //	k2  minus the KEV date as days since 1970 (0 when none, or not a KEV vulnerability): newest first, undated last
 //	k3  minus EPSS (1 when none, which every surface finding is): highest first, unscored last
-//	k4  minus CVSS (1 when none), or for a surface finding minus its severity's CVSS-equivalent, or for an
+//	k4  minus CVSS (1 when none), or for a surface or identity finding minus its severity's CVSS-equivalent, or for an
 //	    end-of-life finding minus 8.0 (security support ended) or 2.0 (active support ended)
 //	k5  severity label rank
 //	k6  the row id: the advisory id, or "surface:<12 digits>" (compared bytewise, as Go does)
@@ -261,13 +288,13 @@ const exposureRankedSQL = `
 	       host_ids, host_names, packages, fixed, first_seen, resolved_at, awaiting_since,
 	       eol_product, eol_cycle, eol_stage, eol_date, eol_label, eol_upgrade, eol_origins,
 	       source, s_id, s_asset_id, s_asset_kind, s_asset, s_check, s_finding, s_subject, s_detail, s_fix, s_last_seen, s_unconfirmed,
-	       CASE WHEN source = 'surface' THEN (CASE WHEN severity IN ('critical', 'high') THEN 1 ELSE 2 END)
+	       CASE WHEN source IN ('surface', 'identity') THEN (CASE WHEN severity IN ('critical', 'high') THEN 1 ELSE 2 END)
 	            WHEN eol_stage = 'eol' THEN 1
 	            WHEN eol_stage = 'eoas' THEN 2
 	            WHEN kev THEN 0 ELSE 2 END AS k1,
 	       (CASE WHEN source = 'vulnerability' AND kev THEN -COALESCE(kev_added - DATE '1970-01-01', 0) ELSE 0 END)::text AS k2,
 	       (-COALESCE(epss, -1))::text AS k3,
-	       (CASE WHEN source = 'surface'
+	       (CASE WHEN source IN ('surface', 'identity')
 	             THEN -(CASE severity WHEN 'critical' THEN 9.5 WHEN 'high' THEN 8.0 WHEN 'medium' THEN 5.0 ELSE 2.0 END)
 	             WHEN eol_stage = 'eol' THEN -8.0
 	             WHEN eol_stage = 'eoas' THEN -2.0
@@ -322,6 +349,18 @@ const exposureRankedSQL = `
 	  FROM surface_findings sf
 	  JOIN surface_assets sa ON sa.id = sf.asset_id AND sa.removed_at IS NULL
 	  WHERE 'finding' = ANY($1) AND NOT $3 AND sf.severity <> 'info' AND (sf.resolved_at IS NOT NULL) = $2
+	  UNION ALL
+	  SELECT '` + exposure.IdentityKeyPrefix + `' || lpad(f.id::text, 12, '0'), '', f.title, f.severity,
+	         false, NULL::date, NULL::numeric, NULL::numeric,
+	         ARRAY['identity']::text[], 0::bigint, 1::bigint,
+	         ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[], ARRAY[]::text[],
+	         f.first_seen, f.resolved_at, NULL::date,
+	         ''::text, ''::text, ''::text, NULL::date, ''::text, ''::text, ARRAY[]::text[],
+	         'identity'::text, f.id, NULL::bigint, f.provider, f.subject_label,
+	         f.check_group, f.finding_id, f.subject, f.detail,
+	         f.fix, f.last_seen, ` + identityUnconfirmedSQL + `
+	  FROM identity_findings f
+	  WHERE 'finding' = ANY($1) AND NOT $3 AND (f.resolved_at IS NOT NULL) = $2
 	) g`
 
 const exposureSample = "5"
@@ -408,6 +447,21 @@ func scanExposureGroup(row pgx.Row) (ExposureGroup, exposureCursor, error) {
 		}
 		if sLastSeen != nil {
 			g.Surface.LastSeen = sLastSeen.UTC()
+		}
+	}
+	if g.Source == SourceIdentity && sID != nil {
+		str := func(p *string) string {
+			if p == nil {
+				return ""
+			}
+			return *p
+		}
+		g.Identity = &IdentityRow{
+			FindingID: *sID, Provider: str(sKind), Subject: str(sAsset), Check: str(sCheck), ID: str(sFinding),
+			Key: str(sSubject), Detail: str(sDetail), Fix: str(sFix), Unconfirmed: sUnconfirmed,
+		}
+		if sLastSeen != nil {
+			g.Identity.LastSeen = sLastSeen.UTC()
 		}
 	}
 	if eolProduct != "" {
@@ -497,6 +551,9 @@ func (s *Store) GetExposureDetail(ctx context.Context, advisoryID, bucket, statu
 	if len(advisoryID) >= len(exposure.SurfaceKeyPrefix) && advisoryID[:len(exposure.SurfaceKeyPrefix)] == exposure.SurfaceKeyPrefix {
 		return ExposureDetail{}, fmt.Errorf("%w: %s is an external surface finding; use GetSurfaceDetail", ErrBadExposureQuery, advisoryID)
 	}
+	if len(advisoryID) >= len(exposure.IdentityKeyPrefix) && advisoryID[:len(exposure.IdentityKeyPrefix)] == exposure.IdentityKeyPrefix {
+		return ExposureDetail{}, fmt.Errorf("%w: %s is an identity finding; use GetIdentityDetail", ErrBadExposureQuery, advisoryID)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+findingColumns+`
 		FROM vuln_findings f JOIN devices d ON d.id = f.device_id AND NOT d.revoked
@@ -581,7 +638,10 @@ type ExposureSummary struct {
 		// high, medium, low): work for this week beside the vulnerabilities.
 		// Total is Advisories plus Surface: the length of the Fix this week list.
 		Surface int `json:"surface"`
-		Total   int `json:"total"`
+		// Identity is the open identity findings (slice 12), all of which rank.
+		// Total is Advisories plus Surface plus Identity.
+		Identity int `json:"identity"`
+		Total    int `json:"total"`
 	} `json:"fixable"`
 	Watch struct {
 		Unfixed        ExposureCount `json:"unfixed"`
@@ -592,6 +652,8 @@ type ExposureSummary struct {
 	} `json:"watch"`
 	// Surface is the external surface card (slice 7b); see SurfaceExposureSummary.
 	Surface SurfaceExposureSummary `json:"surface"`
+	// Identity is the identity posture card (slice 12); see IdentityExposureSummary.
+	Identity IdentityExposureSummary `json:"identity"`
 	// SCA counts the open failed configuration checks by severity.
 	SCA struct {
 		Total    int            `json:"total"`
@@ -677,7 +739,11 @@ func (s *Store) ExposureSummary(ctx context.Context, now time.Time) (ExposureSum
 		return out, err
 	}
 	out.Fixable.Surface = out.Surface.Findings
-	out.Fixable.Total = out.Fixable.Advisories + out.Fixable.Surface
+	if out.Identity, err = s.IdentityExposureSummary(ctx); err != nil {
+		return out, err
+	}
+	out.Fixable.Identity = out.Identity.Findings
+	out.Fixable.Total = out.Fixable.Advisories + out.Fixable.Surface + out.Fixable.Identity
 
 	out.SCA.Severity = map[string]int{}
 	srows, err := s.pool.Query(ctx, `
@@ -732,6 +798,11 @@ type TrendPoint struct {
 	Surface      int  `json:"surface"`
 	SurfaceHigh  int  `json:"surfaceHigh"`
 	SurfaceKnown bool `json:"surfaceKnown"`
+	// Identity, IdentityHigh and IdentityKnown are the same for identity
+	// findings (slice 12): a series of its own, unknown before the first run.
+	Identity      int  `json:"identity"`
+	IdentityHigh  int  `json:"identityHigh"`
+	IdentityKnown bool `json:"identityKnown"`
 }
 
 // ExposureTrend is the daily series for a window.
@@ -745,6 +816,8 @@ type ExposureTrend struct {
 	// SurfaceSince is when the first surface scan started: the earliest moment
 	// a surface finding could have been recorded. Nil if none ever ran.
 	SurfaceSince *time.Time `json:"surfaceSince"`
+	// IdentitySince is when the first identity run started; nil if none ever ran.
+	IdentitySince *time.Time `json:"identitySince"`
 }
 
 // ErrBadTrendWindow is returned for a window the trend cannot answer.
@@ -821,6 +894,9 @@ func (s *Store) ExposureTrend(ctx context.Context, from, to, now time.Time) (Exp
 		return out, err
 	}
 	rows.Close()
-	out.SurfaceSince, err = s.surfaceTrend(ctx, start, end, now, out.Points)
+	if out.SurfaceSince, err = s.surfaceTrend(ctx, start, end, now, out.Points); err != nil {
+		return out, err
+	}
+	out.IdentitySince, err = s.identityTrend(ctx, start, end, now, out.Points)
 	return out, err
 }

@@ -76,7 +76,7 @@ func (s *Server) HandleExposure(w http.ResponseWriter, r *http.Request) {
 // exposureError answers a store error: validation problems are the caller's
 // (400), anything else is ours and is logged.
 func (s *Server) exposureError(w http.ResponseWriter, what string, err error) {
-	if errors.Is(err, storepg.ErrBadExposureQuery) || errors.Is(err, storepg.ErrBadCursor) || errors.Is(err, storepg.ErrBadTrendWindow) || errors.Is(err, storepg.ErrBadSurfaceKey) {
+	if errors.Is(err, storepg.ErrBadExposureQuery) || errors.Is(err, storepg.ErrBadCursor) || errors.Is(err, storepg.ErrBadTrendWindow) || errors.Is(err, storepg.ErrBadSurfaceKey) || errors.Is(err, storepg.ErrBadIdentityKey) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -247,11 +247,46 @@ func (s *Server) exposureSurface(w http.ResponseWriter, r *http.Request, id stri
 	writeJSON(w, http.StatusOK, exposureSurfaceResponse{AdvisoryID: id, Source: storepg.SourceSurface, Status: status, Detail: d})
 }
 
+// exposureIdentityResponse is the drawer of an identity row of the list: the
+// finding, how long it has been open, and what the latest run said of its check.
+type exposureIdentityResponse struct {
+	AdvisoryID string                 `json:"advisoryId"`
+	Source     string                 `json:"source"`
+	Status     string                 `json:"status"`
+	Detail     storepg.IdentityDetail `json:"detail"`
+}
+
+// exposureIdentity serves the drawer of an identity row (id "identity:<12 digits>").
+func (s *Server) exposureIdentity(w http.ResponseWriter, r *http.Request, id string) {
+	d, err := s.pg.GetIdentityDetail(r.Context(), id)
+	if errors.Is(err, storepg.ErrNoIdentityFinding) {
+		http.Error(w, "no such findings", http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, storepg.ErrBadIdentityKey) {
+		http.Error(w, "bad identity finding id", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		s.exposureError(w, "exposure identity finding", err)
+		return
+	}
+	status := storepg.ExposureOpen
+	if d.Finding.ResolvedAt != nil {
+		status = storepg.ExposureResolved
+	}
+	writeJSON(w, http.StatusOK, exposureIdentityResponse{AdvisoryID: id, Source: storepg.SourceIdentity, Status: status, Detail: d})
+}
+
 func (s *Server) exposureAdvisory(w http.ResponseWriter, r *http.Request) {
 	v := r.URL.Query()
 	bucket, status := v.Get("bucket"), v.Get("status")
 	if id := v.Get("id"); strings.HasPrefix(id, exposure.SurfaceKeyPrefix) {
 		s.exposureSurface(w, r, id)
+		return
+	}
+	if id := v.Get("id"); strings.HasPrefix(id, exposure.IdentityKeyPrefix) {
+		s.exposureIdentity(w, r, id)
 		return
 	}
 	d, err := s.pg.GetExposureDetail(r.Context(), v.Get("id"), bucket, status)

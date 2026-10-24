@@ -9,6 +9,7 @@ import { FeedAgeBanner } from "@/components/feed-age-banner";
 import { AlsoCheckCard, FixThisWeekCard, KevWatchCallout } from "@/components/fix-this-week";
 import { ExposureTrendCard } from "@/components/exposure-trend-card";
 import { SurfaceSummaryCard } from "@/components/surface-summary-card";
+import { IdentitySummaryCard } from "@/components/identity-summary-card";
 import { RmmSummaryCard } from "@/components/rmm-summary-card";
 import { getRmmDevices, getRmmStatus } from "@/lib/rmm";
 import { rmmCard, unsupportedRmm } from "@/lib/rmm-model";
@@ -113,6 +114,7 @@ export default async function HomePage({
           </div>
           <div className="space-y-4">
             <SurfaceSummaryCard summary={exposure.surface} />
+            <IdentitySummaryCard summary={exposure.identity} />
             {rmmCard(rmmStatus).state !== "not-configured" ? <RmmSummaryCard status={rmmStatus} /> : null}
             <AlsoCheckCard summary={exposure} unsupported={unsupported.slice(0, 5)} unsupportedTotal={unsupported.length} />
           </div>

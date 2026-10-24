@@ -6,6 +6,7 @@ import { SeverityBadge } from "@/components/status-badge";
 import {
   fixedLabel,
   hostsLabel,
+  isIdentityRow,
   isSurfaceRow,
   kevWatchNotice,
   rankReason,
@@ -14,6 +15,7 @@ import {
   type ExposureSummary,
 } from "@/lib/exposure-model";
 import { fixDescription, fixEmptyText, fixTotal, surfaceWhere, unconfirmedNote } from "@/lib/surface-exposure";
+import { identityUnconfirmedNote, identityWhere } from "@/lib/identity-model";
 import { cn } from "@/lib/utils";
 
 function plural(n: number, one: string, many: string = `${one}s`) {
@@ -64,6 +66,38 @@ export function KevWatchCallout({ summary }: { summary: ExposureSummary }) {
 
 function FixRow({ group, rank }: { group: ExposureGroup; rank: number }) {
   const why = rankReason(group);
+  if (isIdentityRow(group)) {
+    // An identity finding: no CVE, no hosts; the account or rule and the check say where it is.
+    const unconfirmed = identityUnconfirmedNote(group);
+    return (
+      <li className="flex gap-3 py-3 first:pt-0 last:pb-0" data-fix-row={group.advisoryId} data-source="identity">
+        <span className="w-5 shrink-0 pt-0.5 text-right text-sm font-medium tabular-nums text-muted-foreground">{rank}</span>
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/advisories?advisory=${encodeURIComponent(group.advisoryId)}`}
+              className="font-medium underline-offset-2 hover:underline"
+            >
+              {group.summary}
+            </Link>
+            <SeverityBadge severity={group.severity} />
+            <Badge variant="outline">identity</Badge>
+          </div>
+          <p className="text-sm">
+            <span className="font-medium">{why.headline}</span>
+            {why.details.map((d) => (
+              <span key={d} className="text-muted-foreground">
+                {" · "}
+                {d}
+              </span>
+            ))}
+          </p>
+          <p className="text-sm text-muted-foreground">{identityWhere(group)}</p>
+          {unconfirmed ? <p className="text-xs text-amber-700 dark:text-amber-400">{unconfirmed}</p> : null}
+        </div>
+      </li>
+    );
+  }
   if (isSurfaceRow(group)) {
     // An external surface finding: no CVE, no hosts; the asset and the check say where it is.
     const unconfirmed = unconfirmedNote(group);

@@ -206,6 +206,13 @@ func run(log *slog.Logger) error {
 		if strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_SURFACE_SCHEDULE"))) != "off" {
 			go svc.RunSurfaceSchedule(exportCtx, control.SurfaceScheduleCheck)
 		}
+		// Reads of the Microsoft 365 tenant the operator set (every 6 hours): MFA
+		// registration, legacy authentication, administrator roles, inbox rules. With
+		// no tenant, or no credentials, it does nothing; DEFENDSEC_M365_SCHEDULE=off
+		// disables it.
+		if strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_M365_SCHEDULE"))) != "off" {
+			go svc.RunM365Schedule(exportCtx, control.M365ScheduleCheck)
+		}
 		// Reads of the Datto RMM site the operator selected (every 6 hours). With no
 		// site, or no credentials, it does nothing; DEFENDSEC_RMM_SCHEDULE=off disables it.
 		if strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_RMM_SCHEDULE"))) != "off" {
@@ -318,6 +325,9 @@ func run(log *slog.Logger) error {
 	// Datto RMM collector (slice 8): Windows inventory and patch state read through
 	// the RMM's API, with nothing installed on the PCs.
 	adminMux.HandleFunc("/v1/rmm/", svc.HandleRMM)
+	// Identity posture (slice 12): the Microsoft 365 tenant's MFA, legacy
+	// authentication, administrator roles and inbox rules, read-only.
+	adminMux.HandleFunc("/v1/identity/", svc.HandleIdentity)
 	adminMux.HandleFunc("/v1/agent-releases", svc.HandleAgentReleases)
 	adminMux.HandleFunc("/v1/saved-queries", svc.HandleSavedQueries)
 	adminMux.HandleFunc("/v1/alerts", svc.HandleAlerts)

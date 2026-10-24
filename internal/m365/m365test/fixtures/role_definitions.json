@@ -1,0 +1,8 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#roleManagement/directory/roleDefinitions",
+  "value": [
+    {"id": "62e90394-69f5-4237-9190-012177145e10", "displayName": "Global Administrator", "templateId": "62e90394-69f5-4237-9190-012177145e10"},
+    {"id": "729827e3-9c14-49f7-bb1b-9608f156bbb8", "displayName": "Helpdesk Administrator", "templateId": "729827e3-9c14-49f7-bb1b-9608f156bbb8"},
+    {"id": "f2ef992c-3afb-46b9-b7cf-a126ee74c451", "displayName": "Global Reader", "templateId": "f2ef992c-3afb-46b9-b7cf-a126ee74c451"}
+  ]
+}

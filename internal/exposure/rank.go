@@ -9,7 +9,9 @@
 //     last week is newer news than one added in 2021); an entry with no
 //     recorded date goes last.
 //  2. The urgent band, after KEV: external surface findings of critical or
-//     high severity (slice 7b), a reachable SMB port, a certificate that has
+//     high severity (slice 7b), identity findings of critical or high severity
+//     (slice 12: an administrator with no MFA, a rule forwarding a mailbox
+//     outside), a reachable SMB port, a certificate that has
 //     expired, an SPF record that lets anyone send as the domain; and software
 //     past the end of its security support (slice 10), a PHP 8.0 from a third
 //     party repository that no one patches any more. See "Surface findings" and
@@ -50,6 +52,19 @@
 //   - Missing evidence never ranks. A check that could not run produces no
 //     finding, so there is nothing to rank; the store only hands this package
 //     findings that a check actually confirmed.
+//
+// # Identity findings
+//
+// A finding of the identity source (slice 12: Microsoft 365, and Google
+// Workspace after it) is a condition of a client's own tenant: an account with
+// no second factor, an inbox rule that forwards mail outside or hides it. Like a
+// surface finding it has no KEV flag, no EPSS and no CVSS, and it ranks by
+// severity under exactly the surface rules: critical and high are in effect now
+// (an intruder with a password needs no exploit) and rank right after KEV and
+// before every vulnerability that is not on KEV; medium and low rank like a
+// vulnerability with no EPSS and the CVSS-equivalent of their severity
+// (SurfaceScore). Missing evidence never ranks: a check that could not run
+// produces no finding.
 //
 // # End-of-life findings
 //
@@ -96,6 +111,9 @@ type Item struct {
 	// Surface marks an external-surface finding. Its KEV, EPSS and CVSS are
 	// ignored: it ranks by Severity under the surface rules above.
 	Surface bool
+	// Identity marks an identity finding (slice 12). Like Surface, its KEV,
+	// EPSS and CVSS are ignored: it ranks by Severity under the same rules.
+	Identity bool
 	// EOLStage is "eol" or "eoas" on an end-of-life finding and empty on every
 	// other. Its KEV, EPSS and CVSS are ignored: it ranks by stage under the
 	// end-of-life rules above.
@@ -133,6 +151,10 @@ func EOLScore(stage string) (score float64, ranked bool) {
 // of any feed starts with it.
 const SurfaceKeyPrefix = "surface:"
 
+// IdentityKeyPrefix starts the AdvisoryID of every identity row (the zero-padded
+// finding id follows); like SurfaceKeyPrefix, no advisory id starts with it.
+const IdentityKeyPrefix = "identity:"
+
 // SurfaceScore is the CVSS-equivalent a surface finding of this severity ranks
 // by when it is not urgent, and whether the severity ranks at all (info does
 // not). It exists so the surface and vulnerability orders are one order, not to
@@ -153,7 +175,7 @@ func SurfaceScore(severity string) (score float64, ranked bool) {
 
 // Band says which band an item falls into.
 func Band(i Item) int {
-	if i.Surface {
+	if i.Surface || i.Identity {
 		switch strings.ToLower(i.Severity) {
 		case "critical", "high":
 			return BandUrgent
@@ -176,9 +198,9 @@ func Band(i Item) int {
 // finding has no exploitation signal and the CVSS-equivalent of its severity or
 // stage.
 func effective(i Item) Item {
-	if i.Surface {
+	if i.Surface || i.Identity {
 		score, _ := SurfaceScore(i.Severity)
-		return Item{AdvisoryID: i.AdvisoryID, Severity: i.Severity, CVSS: &score, Surface: true}
+		return Item{AdvisoryID: i.AdvisoryID, Severity: i.Severity, CVSS: &score, Surface: i.Surface, Identity: i.Identity}
 	}
 	if score, ok := EOLScore(i.EOLStage); ok {
 		return Item{AdvisoryID: i.AdvisoryID, Severity: i.Severity, CVSS: &score, EOLStage: i.EOLStage}

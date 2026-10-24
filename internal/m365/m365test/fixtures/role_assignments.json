@@ -1,0 +1,15 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#roleManagement/directory/roleAssignments(principal())",
+  "value": [
+    {"id": "a0000000-0000-4000-8000-000000000001", "principalId": "11111111-0000-4000-8000-000000000001", "roleDefinitionId": "62e90394-69f5-4237-9190-012177145e10", "directoryScopeId": "/",
+     "principal": {"@odata.type": "#microsoft.graph.user", "id": "11111111-0000-4000-8000-000000000001", "displayName": "Alex Admin", "userPrincipalName": "alex.admin@example.com"}},
+    {"id": "a0000000-0000-4000-8000-000000000002", "principalId": "11111111-0000-4000-8000-000000000002", "roleDefinitionId": "62e90394-69f5-4237-9190-012177145e10", "directoryScopeId": "/",
+     "principal": {"@odata.type": "#microsoft.graph.user", "id": "11111111-0000-4000-8000-000000000002", "displayName": "Sam Admin", "userPrincipalName": "sam.admin@example.com"}},
+    {"id": "a0000000-0000-4000-8000-000000000003", "principalId": "11111111-0000-4000-8000-000000000003", "roleDefinitionId": "729827e3-9c14-49f7-bb1b-9608f156bbb8", "directoryScopeId": "/",
+     "principal": {"@odata.type": "#microsoft.graph.user", "id": "11111111-0000-4000-8000-000000000003", "displayName": "Pat Helpdesk", "userPrincipalName": "pat.helpdesk@example.com"}},
+    {"id": "a0000000-0000-4000-8000-000000000004", "principalId": "22222222-0000-4000-8000-000000000001", "roleDefinitionId": "62e90394-69f5-4237-9190-012177145e10", "directoryScopeId": "/",
+     "principal": {"@odata.type": "#microsoft.graph.group", "id": "22222222-0000-4000-8000-000000000001", "displayName": "Tenant Owners"}},
+    {"id": "a0000000-0000-4000-8000-000000000005", "principalId": "11111111-0000-4000-8000-000000000004", "roleDefinitionId": "f2ef992c-3afb-46b9-b7cf-a126ee74c451", "directoryScopeId": "/",
+     "principal": {"@odata.type": "#microsoft.graph.user", "id": "11111111-0000-4000-8000-000000000004", "displayName": "Casey Example", "userPrincipalName": "casey@example.com"}}
+  ]
+}

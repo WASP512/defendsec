@@ -1,0 +1,15 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('11111111-0000-4000-8000-000000000004')/mailFolders('inbox')/messageRules",
+  "value": [
+    {
+      "id": "AQAAAJ5dZp8=", "displayName": "Intuit stuff", "sequence": 1, "isEnabled": true, "hasError": false, "isReadOnly": false,
+      "conditions": {"senderContains": ["quickbooks", "intuit.com"]},
+      "actions": {"markAsRead": true, "moveToFolder": "AAMkADRSSFOLDER=", "stopProcessingRules": true}
+    },
+    {
+      "id": "AQAAAJ5dZp9=", "displayName": "Team newsletter", "sequence": 2, "isEnabled": true, "hasError": false, "isReadOnly": false,
+      "conditions": {"senderContains": ["newsletter@example.org"]},
+      "actions": {"moveToFolder": "AAMkADNEWSFOLDER="}
+    }
+  ]
+}

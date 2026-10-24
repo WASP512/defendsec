@@ -16,7 +16,28 @@ import type { FindingTriage } from "./types.ts";
  * hosts it affects) or, since slice 7b, one external surface finding. An older
  * control plane sends no `source`: that is a vulnerability.
  */
-export type ExposureSource = "vulnerability" | "surface";
+export type ExposureSource = "vulnerability" | "surface" | "identity";
+
+/** The part of an identity row (slice 12) the list needs; the drawer fetches the rest. */
+export type IdentityRow = {
+  findingId: number;
+  /** "m365" (later "google"). */
+  provider: string;
+  /** What a person reads: a user principal name, "user · rule name", or the tenant. */
+  subject: string;
+  /** The check group: mfa, legacy-auth, admin-roles, inbox-rules. */
+  check: string;
+  /** The condition: mfa.not_registered, inbox_rule.hides_mail, ... */
+  id: string;
+  /** Tells apart several of one condition (an object id). */
+  key: string;
+  detail: string;
+  fix: string;
+  /** When a run last confirmed the finding. */
+  lastSeen: string;
+  /** The latest run could not assess this finding's check; shown from the last confirmation. */
+  unconfirmed: boolean;
+};
 
 /** The part of a surface row the list needs; the drawer fetches the rest. */
 export type SurfaceRow = {
@@ -67,6 +88,11 @@ export type ExposureGroup = {
    * its summary the finding's title; it has no hosts, KEV, EPSS or CVSS.
    */
   surface?: SurfaceRow;
+  /**
+   * Set on an identity row. Its advisoryId is the row key ("identity:<12 digits>"),
+   * its summary the finding's title; it has no hosts, KEV, EPSS or CVSS.
+   */
+  identity?: IdentityRow;
 };
 
 /** The release an end-of-life row is about. */
@@ -176,13 +202,17 @@ export type ExposureSummary = {
     eol?: ExposureCount;
     /** Open external surface findings that rank (critical, high, medium, low). Absent from an older control plane. */
     surface?: number;
-    /** advisories + surface: the length of the Fix this week list. */
+    /** Open identity findings (slice 12). Absent from an older control plane. */
+    identity?: number;
+    /** advisories + surface + identity: the length of the Fix this week list. */
     total?: number;
   };
   watch: { unfixed: ExposureCount; awaitingVendor: ExposureCount; kev: ExposureCount };
   sca: { total: number; hosts: number; bySeverity: Record<string, number> };
   /** The external surface card. Absent from a control plane older than slice 7b. */
   surface?: SurfaceSummary;
+  /** The identity posture card. Absent from a control plane older than slice 12. */
+  identity?: IdentitySummary;
   fixThisWeek: ExposureGroup[];
   kevWatch: ExposureGroup[];
   latestSnapshotId: number | null;
@@ -206,6 +236,21 @@ export type SurfaceSummary = {
   checksNotAssessed: number;
 };
 
+export type IdentitySummary = {
+  configured: boolean;
+  provider: string;
+  /** Open findings; all of them rank. */
+  findings: number;
+  bySeverity: Record<string, number>;
+  lastRunAt: string | null;
+  /** ok, partial or not_assessed; "" when no run yet. */
+  lastStatus: "" | "ok" | "partial" | "not_assessed";
+  lastReason: string;
+  /** Check groups the latest run could not assess, of checksTotal. */
+  checksNotAssessed: number;
+  checksTotal: number;
+};
+
 export type TrendPoint = {
   day: string;
   known: boolean;
@@ -218,6 +263,12 @@ export type TrendPoint = {
   surfaceHigh?: number;
   /** False before the first surface scan: the zeros mean no data. */
   surfaceKnown?: boolean;
+  /** Identity findings open that day (slice 12); a series of its own. */
+  identity?: number;
+  /** The critical and high part of `identity`. */
+  identityHigh?: number;
+  /** False before the first identity run: the zeros mean no data. */
+  identityKnown?: boolean;
 };
 
 export type ExposureTrend = {
@@ -227,6 +278,8 @@ export type ExposureTrend = {
   historySince: string | null;
   /** When the first surface scan started; null if none ever ran (or an older control plane). */
   surfaceSince?: string | null;
+  /** When the first identity run started; null if none ever ran (or an older control plane). */
+  identitySince?: string | null;
   period: { id: string; name: string; closed: boolean } | null;
   caveats: string[];
   generatedAt: string;
@@ -244,6 +297,16 @@ export type Rankable = Pick<ExposureGroup, "advisoryId" | "severity" | "kev" | "
 /** True for a row that is an external surface finding. */
 export function isSurfaceRow(g: Pick<Rankable, "source">): boolean {
   return g.source === "surface";
+}
+
+/** True for a row that is an identity finding (slice 12). */
+export function isIdentityRow(g: Pick<Rankable, "source">): boolean {
+  return g.source === "identity";
+}
+
+// A surface and an identity finding rank by severity alone, under the same rules.
+function ranksBySeverity(g: Pick<Rankable, "source">): boolean {
+  return isSurfaceRow(g) || isIdentityRow(g);
 }
 
 /**
@@ -265,14 +328,14 @@ export const EOL_SCORE: Record<string, number> = { eol: 8.0, eoas: 2.0 };
  * past end of security support. 2: everything else. Mirrors exposure.Band.
  */
 export function rankBand(g: Rankable): 0 | 1 | 2 {
-  if (isSurfaceRow(g)) return g.severity === "critical" || g.severity === "high" ? 1 : 2;
+  if (ranksBySeverity(g)) return g.severity === "critical" || g.severity === "high" ? 1 : 2;
   if (g.eol && g.eol.stage in EOL_SCORE) return g.eol.stage === "eol" ? 1 : 2;
   return g.kev ? 0 : 2;
 }
 
 // A surface or end-of-life row has no exploitation signal, and the CVSS-equivalent of its severity or stage.
 function effective(g: Rankable): Rankable {
-  if (isSurfaceRow(g)) return { ...g, kev: false, kevAdded: null, epss: null, cvss: SURFACE_SCORE[g.severity] ?? null };
+  if (ranksBySeverity(g)) return { ...g, kev: false, kevAdded: null, epss: null, cvss: SURFACE_SCORE[g.severity] ?? null };
   if (g.eol && g.eol.stage in EOL_SCORE) return { ...g, kev: false, kevAdded: null, epss: null, cvss: EOL_SCORE[g.eol.stage] };
   return g;
 }
@@ -377,6 +440,15 @@ export function rankReason(g: Rankable): RankReason {
         ? "ranks after exploited vulnerabilities and before every other vulnerability, as no fix will ever come"
         : "ranks with the low-scored vulnerabilities, below every vulnerability that has an EPSS score",
     );
+  } else if (isIdentityRow(g)) {
+    // No KEV, EPSS or CVSS exists for an account or a mailbox rule; say what its place does rest on.
+    if (rankBand(g) === 1) {
+      headline = "In effect now in the client's tenant: a password or a rule is all an intruder needs, no exploit";
+      details.push(`${g.severity} severity`, "ranks after exploited vulnerabilities and before every other vulnerability");
+    } else {
+      headline = "No exploitation signal (identity finding)";
+      details.push(`ranked by severity ${g.severity}`, "alongside vulnerabilities with no EPSS score");
+    }
   } else if (isSurfaceRow(g)) {
     // No KEV, EPSS or CVSS exists for a DNS or TLS finding; say what its place does rest on.
     if (rankBand(g) === 1) {
