@@ -98,6 +98,9 @@ type Server struct {
 	// sso is the optional OIDC provider (roadmap 5.4). Nil means SSO is not
 	// configured; local accounts and the admin token work either way.
 	sso *sso.Provider
+
+	// surf is the external surface scanner's state (surface.go).
+	surf surfaceRunner
 }
 
 // SetAnchoring configures checkpoint anchoring. Called at startup rather than

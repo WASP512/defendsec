@@ -201,6 +201,11 @@ func run(log *slog.Logger) error {
 		log.Info("postgres enabled")
 		// Re-match every host when a new feed snapshot lands.
 		go svc.RunFindingsRefresh(exportCtx, control.FindingsRefreshInterval)
+		// Daily external surface scans of declared, confirmed assets. With no
+		// assets this does nothing; DEFENDSEC_SURFACE_SCHEDULE=off disables it.
+		if strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_SURFACE_SCHEDULE"))) != "off" {
+			go svc.RunSurfaceSchedule(exportCtx, control.SurfaceScheduleCheck)
+		}
 
 		// Postgres is the primary device store (roadmap 5.5): apid's memory
 		// is seeded from it, and defendsec-agents.json becomes an export
@@ -297,6 +302,12 @@ func run(log *slog.Logger) error {
 	adminMux.HandleFunc("/v1/feeds", svc.HandleFeeds)
 	adminMux.HandleFunc("/v1/findings", svc.HandleFindings)
 	adminMux.HandleFunc("/v1/findings/", svc.HandleFindings)
+	// External surface scanner (slice 7a): declared assets and what the
+	// internet sees of them.
+	adminMux.HandleFunc("/v1/assets", svc.HandleAssets)
+	adminMux.HandleFunc("/v1/assets/", svc.HandleAssets)
+	adminMux.HandleFunc("/v1/surface/findings", svc.HandleSurfaceFindings)
+	adminMux.HandleFunc("/v1/surface/scan", svc.HandleSurfaceScan)
 	adminMux.HandleFunc("/v1/agent-releases", svc.HandleAgentReleases)
 	adminMux.HandleFunc("/v1/saved-queries", svc.HandleSavedQueries)
 	adminMux.HandleFunc("/v1/alerts", svc.HandleAlerts)
