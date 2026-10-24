@@ -51,8 +51,9 @@ for binary in "$DIST"/defendsec-*; do
   # Skip anything that is not an executable artifact.
   case "$(basename "$binary")" in
     # Not executables: archives, the SBOMs from a previous run in the same
-    # directory, signatures and certificates.
-    *.tar.gz|*.json|*.sig|*.pem) continue ;;
+    # directory, signatures and certificates, and the Windows installer (the
+    # agent inside it has its own SBOM; cyclonedx-gomod cannot read an MSI).
+    *.tar.gz|*.json|*.sig|*.pem|*.msi) continue ;;
   esac
   [[ -f "$binary" ]] || continue
 
@@ -61,7 +62,16 @@ for binary in "$DIST"/defendsec-*; do
   # The VCS warning is expected: release builds switch off Go's automatic VCS
   # stamping so they are reproducible from a source tarball, and the commit is
   # stamped explicitly into main.buildCommit instead.
-  cyclonedx-gomod bin -json -output "$SBOM_DIR/${name}.cdx.json" "$binary" 2>/dev/null
+  # Its stderr is kept and shown on failure only: a real failure (a file that
+  # is not a Go binary, say) must not be swallowed with the expected warning.
+  sbom_err="$(mktemp)"
+  if ! cyclonedx-gomod bin -json -output "$SBOM_DIR/${name}.cdx.json" "$binary" 2>"$sbom_err"; then
+    echo "error: cyclonedx-gomod could not read ${name}:" >&2
+    cat "$sbom_err" >&2
+    rm -f "$sbom_err"
+    exit 1
+  fi
+  rm -f "$sbom_err"
 done
 
 echo "Generating the console SBOM"

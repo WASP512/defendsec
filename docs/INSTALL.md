@@ -25,17 +25,27 @@ Then go to [First login](#first-login) and [Enroll hosts](#enroll-hosts).
 
 ## Path A — Proxmox creates the server container
 
-Run this **on the Proxmox VE host**, as **root**. It creates a Debian 12 LXC, installs Postgres, builds the server, and starts the services.
+Run this **on the Proxmox VE host**, as **root**. It creates a Debian 12 LXC, installs Postgres, installs the **v0.1.0 release** (prebuilt and checksummed; nothing is compiled), and starts the services.
 
 ```bash
-echo "Downloading DefendSec installer…" && \
-  curl -fL --progress-bar \
-    https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh \
-    -o /tmp/defendsec.sh && \
+curl -fL --progress-bar \
+  https://github.com/WASP512/defendsec/releases/download/v0.1.0/create-proxmox-ct.sh \
+  -o /tmp/defendsec.sh && \
   bash /tmp/defendsec.sh
 ```
 
-**How long?** Often **15–30 minutes** on first run. Most of that is downloading a Debian template and compiling Go/Node inside the container. Later reinstalls are faster if the template is already cached.
+The script installs the release it was published with. It downloads that release's installer, checks it against the release's `SHA256SUMS`, and the installer checks every other file the same way (and the Sigstore signature too if `cosign` is installed in the container). To verify the whole release first, signature and provenance included, see [Verifying a DefendSec release](./OPERATIONS.md#verifying-a-defendsec-release).
+
+**How long?** A few minutes: most of it is downloading the Debian template (cached after the first time), then the packages and the release files. The first vulnerability feed sync starts when the install ends and takes a few more minutes; hosts read "not assessed" until it finishes.
+
+To build the current `main` from source instead (15–30 minutes, compiles Go and Node in the container), run the script from the repository, or set `REPO_REF`:
+
+```bash
+curl -fL --progress-bar \
+  https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh \
+  -o /tmp/defendsec.sh && \
+  REPO_REF=main bash /tmp/defendsec.sh
+```
 
 When it finishes, you should see something like:
 
@@ -73,8 +83,9 @@ Download `/tmp/defendsec.sh` first with the visible download command from Path A
 | `STORAGE` | first storage that can hold CT disks (`rootdir`, often `local-lvm`) | Auto-detect picked the wrong disk storage |
 | `TEMPLATE_STORAGE` | first storage that can hold LXC templates (`vztmpl`, usually `local`) | `pveam download` failed against LVM-thin |
 | `BRIDGE` | `vmbr0` | Your LAN bridge is not `vmbr0` |
-| `CORES` / `MEMORY` / `DISK` | `2` / `4096` / `24` | First source build needs about 4 GB RAM and 24 GB disk |
-| `REPO_REF` | `main` | Install a branch other than `main` |
+| `CORES` / `MEMORY` / `DISK` | `2` / `4096` / `24` | A source build needs about 4 GB RAM and 24 GB disk; a release install needs much less |
+| `RELEASE` | the release the script came from | Install another release, e.g. `RELEASE=v0.1.1`, or `latest` |
+| `REPO_REF` | unset | Build this branch or tag **from source** (any value selects a source build; a script from a checkout defaults to `main`) |
 
 Use **`CT_HOSTNAME`**, not `HOSTNAME`. Bash already sets `HOSTNAME` to the Proxmox host’s own name.
 
@@ -84,22 +95,29 @@ Templates **must** live on directory storage with content type `vztmpl` (usually
 
 ## Path B — Linux VM (no Proxmox)
 
-On a Debian, Ubuntu, or Fedora machine as **root**:
+On a Debian, Ubuntu, Fedora, RHEL-family or openSUSE machine as **root**:
 
 ```bash
-echo "Downloading DefendSec server installer…" && \
-  curl -fL --progress-bar \
-    https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/install-server.sh \
-    -o /tmp/defendsec-install-server.sh && \
+curl -fL --progress-bar \
+  https://github.com/WASP512/defendsec/releases/download/v0.1.0/install-server.sh \
+  -o /tmp/defendsec-install-server.sh && \
   bash /tmp/defendsec-install-server.sh
 ```
 
-That installs:
+That installs the **v0.1.0 release** (prebuilt files, each checked against the release's `SHA256SUMS`; no compiler, no source):
 
-- source in `/opt/defendsec`
+- the release's files and docs in `/opt/defendsec`
 - data in `/var/lib/defendsec`
-- systemd units `defendsec-apid` and `defendsec-console`
+- systemd units `defendsec-apid`, `defendsec-console` and `defendsec-web` (HTTPS), and `defendsec-feeds.timer` (the daily vulnerability feed sync, started once at the end of the install)
 - native Postgres (not Docker)
+
+Other ways to run the installer:
+
+```bash
+bash install-server.sh --release v0.1.1        # another release (or: latest)
+bash install-server.sh --release-dir ./dl      # a release you downloaded and verified, no network needed
+bash install-server.sh --from-source           # build main from source (15–30 minutes)
+```
 
 Re-running this script **keeps** the existing Postgres password, admin token, viewer token, and enroll secret unless you pass replacements.
 It also installs the one-click update helper. After that bootstrap, future
@@ -110,6 +128,9 @@ Useful flags:
 
 ```bash
 bash install-server.sh --help
+# --release TAG|latest        install this published release
+# --release-dir DIR           install a downloaded release (no network)
+# --from-source               build from source instead
 # --advertise-hostname NAME   TLS name the agents will verify
 # --admin-token TOKEN         set / replace the console token
 # --viewer-token TOKEN        enable a read-only login

@@ -95,6 +95,41 @@ else
 fi
 install -m 0755 packaging/proxmox/update-server.sh "${OUT}/update-server.sh"
 
+# Server installers. The copies published with a release install THAT release
+# (prebuilt, checksummed, nothing compiled): the tag is stamped into the one
+# RELEASE_DEFAULT line each script has, and the build fails if the line is not
+# there exactly once rather than shipping an installer that would build from
+# whatever main is on the day. A non-release build (a branch, a dirty tree)
+# leaves them unstamped, which means "build from source".
+stamp_release_default() {
+  local src="$1" dest="$2" tag="$3" lines
+  lines="$(grep -c '^RELEASE_DEFAULT=""$' "$src" || true)"
+  if [[ "$lines" != "1" ]]; then
+    echo "error: ${src} must have exactly one RELEASE_DEFAULT=\"\" line (has ${lines})" >&2
+    exit 1
+  fi
+  if [[ "$tag" =~ ^v[0-9] ]]; then
+    sed "s|^RELEASE_DEFAULT=\"\"\$|RELEASE_DEFAULT=\"${tag}\"|" "$src" >"$dest"
+  else
+    cp "$src" "$dest"
+  fi
+  chmod 0755 "$dest"
+}
+stamp_release_default packaging/proxmox/install-server.sh "${OUT}/install-server.sh" "$version"
+stamp_release_default packaging/proxmox/ct/defendsec.sh "${OUT}/create-proxmox-ct.sh" "$version"
+install -m 0755 packaging/proxmox/uninstall-server.sh "${OUT}/uninstall-server.sh"
+
+# Systemd units, backup/restore helpers, the agent installers and the docs, in
+# one archive the server installer verifies and unpacks, so an install from a
+# release needs no checkout. Sorted, with owner and mtime fixed, so the same
+# source gives the same archive.
+echo "  -> defendsec-packaging.tar.gz"
+epoch="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || echo 0)}"
+packaging_files=(LICENSE packaging/systemd packaging/agent scripts/backup.sh scripts/restore.sh)
+while IFS= read -r doc; do packaging_files+=("$doc"); done < <(ls docs/*.md)
+tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@${epoch}" \
+  -cf - "${packaging_files[@]}" | gzip -n >"${OUT}/defendsec-packaging.tar.gz"
+
 echo "  -> defendsec-console.tar.gz"
 npm ci
 npm run build
@@ -108,7 +143,8 @@ printf '%s\n' "$release_version" >"${OUT}/VERSION"
 
 (
   cd "$OUT"
-  sha256sum defendsec-* install-agent* uninstall-agent* update-server.sh VERSION >SHA256SUMS
+  sha256sum defendsec-* install-agent* uninstall-agent* install-server.sh uninstall-server.sh \
+    create-proxmox-ct.sh update-server.sh VERSION >SHA256SUMS
 )
 
 # SBOMs, generated from the built binaries and appended to SHA256SUMS

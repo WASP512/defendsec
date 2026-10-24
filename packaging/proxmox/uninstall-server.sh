@@ -41,12 +41,20 @@ done
 info() { printf '==> %s\n' "$*"; }
 
 info "Stopping DefendSec server units"
-systemctl stop defendsec-console defendsec-apid 2>/dev/null || true
-systemctl disable defendsec-console defendsec-apid 2>/dev/null || true
-rm -f /etc/systemd/system/defendsec-apid.service /etc/systemd/system/defendsec-console.service
-rm -rf /etc/systemd/system/defendsec-apid.service.d /etc/systemd/system/defendsec-console.service.d
+units="defendsec-web defendsec-console defendsec-apid defendsec-feeds.timer defendsec-feeds.service defendsec-update.path defendsec-update.service"
+# shellcheck disable=SC2086
+systemctl stop $units 2>/dev/null || true
+# shellcheck disable=SC2086
+systemctl disable $units 2>/dev/null || true
+for unit in defendsec-web defendsec-apid defendsec-console defendsec-feeds defendsec-update; do
+  rm -f "/etc/systemd/system/${unit}.service"
+  rm -rf "/etc/systemd/system/${unit}.service.d"
+done
+rm -f /etc/systemd/system/defendsec-feeds.timer /etc/systemd/system/defendsec-update.path
+rm -rf /etc/systemd/system/defendsec-update.path.d
 systemctl daemon-reload
-systemctl reset-failed defendsec-apid defendsec-console 2>/dev/null || true
+# shellcheck disable=SC2086
+systemctl reset-failed $units 2>/dev/null || true
 
 # Close the ports install-server.sh opened, in whichever firewall it used.
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
@@ -67,7 +75,9 @@ if command -v docker >/dev/null 2>&1; then
   fi
 fi
 
-rm -f /usr/local/bin/defendsec-apid /usr/local/bin/defendsec-agentd
+rm -f /usr/local/bin/defendsec-apid /usr/local/bin/defendsec-agentd /usr/local/bin/defendsec-web \
+  /usr/local/bin/defendsec-feeds /usr/local/sbin/defendsec-update \
+  /usr/local/bin/defendsec-apid.bak /usr/local/bin/defendsec-web.bak /usr/local/bin/defendsec-feeds.bak
 
 if [[ "$PURGE_POSTGRES" == "1" ]] && command -v psql >/dev/null 2>&1 && id postgres >/dev/null 2>&1; then
   info "Dropping native Postgres database and role defendsec"

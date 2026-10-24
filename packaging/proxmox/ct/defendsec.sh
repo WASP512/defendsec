@@ -4,6 +4,17 @@
 # Run this on the Proxmox VE *host* (as root). It creates a Debian 12 LXC,
 # then installs the DefendSec control plane (Postgres, apid, console).
 #
+# Two ways to install, chosen by where this script came from:
+#
+#   Published with a release (create-proxmox-ct.sh on the release page): installs
+#   THAT release. The installer is downloaded from the same release, checked
+#   against its SHA256SUMS, and installs prebuilt, checksummed binaries. Nothing
+#   is compiled in the container; minutes, not half an hour.
+#
+#   From a git checkout or raw.githubusercontent.com: builds from source
+#   (REPO_REF, default main), 15-30 minutes. Setting REPO_REF or REPO_URL
+#   always selects a source build.
+#
 # Usage:
 #   bash packaging/proxmox/ct/defendsec.sh
 #   CTID=120 CT_HOSTNAME=defendsec bash packaging/proxmox/ct/defendsec.sh
@@ -48,6 +59,14 @@ MEMORY="${MEMORY:-4096}"
 SWAP="${SWAP:-512}"
 DISK="${DISK:-24}"
 UNPRIVILEGED="${UNPRIVILEGED:-1}"
+# scripts/build-release.sh stamps the next line with the release tag in the copy
+# it publishes; in a checkout it stays empty (source build).
+RELEASE_DEFAULT=""
+RELEASE="${RELEASE:-$RELEASE_DEFAULT}"
+RELEASE_REPO="${RELEASE_REPO:-WASP512/defendsec}"
+if [[ -n "${REPO_REF:-}" || -n "${REPO_URL:-}" ]]; then
+  RELEASE=""
+fi
 REPO_URL="${REPO_URL:-https://github.com/WASP512/defendsec.git}"
 REPO_REF="${REPO_REF:-main}"
 INSTALL_URL="${INSTALL_URL:-}"
@@ -65,8 +84,12 @@ info() {
 die() { echo "error: $*" >&2; exit 1; }
 
 info "Starting DefendSec Proxmox installer"
-echo "This creates a Debian 12 container and builds the server inside it."
-echo "A first install commonly takes 15–30 minutes; progress will remain visible here."
+if [[ -n "$RELEASE" ]]; then
+  echo "This creates a Debian 12 container and installs DefendSec ${RELEASE} (prebuilt, checksummed) inside it."
+else
+  echo "This creates a Debian 12 container and builds the server inside it."
+  echo "A first install commonly takes 15–30 minutes; progress will remain visible here."
+fi
 info "Detecting container ID, disk storage, and template storage"
 
 pick_ctid() {
@@ -279,6 +302,25 @@ push_install_script() {
     tmp="$(mktemp)"
     host_http_get "$INSTALL_URL" "$tmp"
     src="$tmp"
+  elif [[ -n "$RELEASE" ]]; then
+    # The installer of the release being installed, checked against that
+    # release's own checksum manifest before it is run as root in the CT.
+    local base sums want got
+    if [[ "$RELEASE" == "latest" ]]; then
+      base="https://github.com/${RELEASE_REPO}/releases/latest/download"
+    else
+      base="https://github.com/${RELEASE_REPO}/releases/download/${RELEASE}"
+    fi
+    tmp="$(mktemp)"
+    sums="$(mktemp)"
+    host_http_get "${base}/SHA256SUMS" "$sums"
+    host_http_get "${base}/install-server.sh" "$tmp"
+    want="$(awk '$2 == "install-server.sh" || $2 == "*install-server.sh" {print tolower($1); exit}' "$sums")"
+    got="$(sha256sum "$tmp" | awk '{print $1}')"
+    rm -f "$sums"
+    [[ "$want" =~ ^[0-9a-f]{64}$ ]] || die "SHA256SUMS has no entry for install-server.sh"
+    [[ "$got" == "$want" ]] || die "install-server.sh does not match the release's SHA256SUMS"
+    src="$tmp"
   elif [[ -n "$script_dir" && -f "${script_dir}/../install-server.sh" ]]; then
     src="${script_dir}/../install-server.sh"
   else
@@ -297,11 +339,15 @@ info "Copying server installer into CT ${CTID}"
 push_install_script
 
 info "Installing DefendSec server inside CT ${CTID}"
+if [[ -n "$RELEASE" ]]; then
+  INSTALL_SOURCE_ARGS=(--release "$RELEASE")
+else
+  INSTALL_SOURCE_ARGS=(--repo-url "$REPO_URL" --repo-ref "$REPO_REF")
+fi
 pct exec "$CTID" -- env \
   GH_TOKEN="${GH_TOKEN}" \
   bash "$TMP_INSTALL" \
-  --repo-url "$REPO_URL" \
-  --repo-ref "$REPO_REF" \
+  "${INSTALL_SOURCE_ARGS[@]}" \
   --advertise-hostname "$CT_HOSTNAME"
 
 IP="$(pct exec "$CTID" -- bash -c "hostname -I 2>/dev/null | awk '{print \$1}'" | tr -d '\r')"

@@ -863,23 +863,29 @@ DefendSec asks you to verify signatures and provenance across your fleet. It hol
 same standard, and you should check rather than take our word for it.
 
 ```bash
-# Download a release
-gh release download v1.2.3 --repo WASP512/defendsec --dir defendsec-v1.2.3
+# Download a release, and the verifier from the same tag
+gh release download v0.1.0 --repo WASP512/defendsec --dir defendsec-v0.1.0
+curl -fL -o verify-release.sh \
+  https://raw.githubusercontent.com/WASP512/defendsec/v0.1.0/scripts/verify-release.sh
 
-# Verify it
-./scripts/verify-release.sh --repo WASP512/defendsec defendsec-v1.2.3
+# Verify it. --strict makes a check that could not run a failure
+bash verify-release.sh --strict --repo WASP512/defendsec defendsec-v0.1.0
 
-# Or the strongest check: rebuild from source and compare
-./scripts/verify-release.sh --repo WASP512/defendsec --tag v1.2.3 --reproduce defendsec-v1.2.3
+# Or the strongest check: also rebuild from source and compare
+bash verify-release.sh --strict --reproduce --tag v0.1.0 --repo WASP512/defendsec defendsec-v0.1.0
 ```
+
+Without `--strict`, a check that cannot run (no `cosign`, no `gh`) is named in the summary and the
+script still exits 0. A release made on your own machine (`scripts/build-release.sh`) has no
+signature or attestation; verify it with `--local-build`, which says so.
 
 Four checks, in increasing order of what they prove:
 
 | Check | What it proves | Needs |
 |---|---|---|
 | Checksums | The files match the manifest, and no file is *missing* from it | nothing |
-| Signature | The manifest was signed by our release workflow | `cosign` |
-| Provenance | GitHub attests which workflow and commit built these bytes | `gh` |
+| Signature | The manifest was signed by our release workflow, run on a release tag | `cosign` |
+| Provenance | GitHub attests which workflow and commit built these bytes; the attestation ships in the release (`SHA256SUMS.intoto.jsonl`), so no GitHub login is needed | `gh` |
 | Rebuild | The bytes are what this source produces — **requires no trust in us** | `go`, `git` |
 
 Any check that cannot run is skipped and named in the summary. The script reports what it did *not*
@@ -891,7 +897,7 @@ verify rather than implying a clean bill of health.
 cosign verify-blob \
   --certificate SHA256SUMS.pem \
   --signature SHA256SUMS.sig \
-  --certificate-identity-regexp '^https://github.com/WASP512/defendsec/\.github/workflows/release\.yml@' \
+  --certificate-identity-regexp '^https://github.com/WASP512/defendsec/\.github/workflows/release\.yml@(refs/tags/v[0-9].*)$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   SHA256SUMS
 ```
