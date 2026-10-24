@@ -79,7 +79,7 @@ Two storage changes carry it:
 - **Every scan is attested in the audit chain.** `RecordSurfaceScan` appends a `surface_scan_recorded` entry (digest version, scan
   id, asset id, SHA-256 digest, how many findings it opened and closed) in the same transaction that stores the scan, so there is
   never a scan without its attestation or an attestation without its scan. `surface_scans.changes` keeps the findings the scan
-  opened or closed and, since slice 7c (migration 030), `surface_scans.seen` keeps every finding the scan reported, so the digest
+  opened or closed and, since slice 7c (migration 031), `surface_scans.seen` keeps every finding the scan reported, so the digest
   can be recomputed at export time. A scan recorded before 7c has `seen` NULL and was chained with the v1 digest.
 
 ## Evidence export

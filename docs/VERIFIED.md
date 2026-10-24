@@ -1458,3 +1458,90 @@ Re-run of (b) with this head's agent and matcher: Ubuntu `repos: 4 checked, 0 wi
 | Pending updates marked unreliable | Postgres 16, console | TS and Go tests | see the card | VM 120: `unreliable` with the reason, then `reliable` |
 | Agent does not write apt's cache | Ubuntu 22.04 | — | — | VM 120: old agent rewrote it, new agent did not (stale and missing) |
 | Repository rows in the ranking (Go = SQL = TS) | linux, Postgres 16 | Go, TS and Postgres tests, 7 mutations | see the card | seen through apid on VM 120 |
+
+## Slice 14 — Autotask tickets from Fix this week (migration 030)
+
+- Date: 2026-10-24 (MDT). Host: `hermesagent`, go1.26.10, node 22, Postgres 16 on titan CT 119 (own database).
+- Branch `lookout/14-autotask`, merged with `origin/main` (ce1c223, slice 11; the migration was renumbered from 029 to 030 after that merge). What is in it: `internal/autotask` (planner, renderer, reconcile engine),
+  `internal/autotask/client` (Autotask REST client), `internal/autotask/atest` (fake Autotask service and fixtures), migration 030, `internal/storepg/autotask.go`,
+  `internal/control/autotask.go` (API and schedule), and the console (Autotask page, settings panel, four route handlers). Design, safety rules and the Autotask
+  facts it rests on, with the pages and the date checked: [AUTOTASK.md](AUTOTASK.md).
+
+### Commands run
+
+| # | Command | Result |
+| --- | --- | --- |
+| 1 | `gofmt -l cmd internal db`, `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./...` | no output, exit 0 |
+| 2 | `unset TEST_DATABASE_URL; TMPDIR=/tmp go test -p 1 -count=1 ./...` | 65 packages `ok`, none failed (database tests skip) |
+| 3 | `TMPDIR=/tmp go test -race -count=1 ./internal/autotask/...` | ok |
+| 4 | `TEST_DATABASE_URL=… TMPDIR=/tmp go test -p 1 -count=1 -v ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/... ./internal/autotask/...` | 463 `--- PASS`, **0 `--- FAIL`**, 2 skips (`TestZZSeedDemo12`, `TestZZDemoSeed`: local seeders that are not in git and not in CI); run under `umask 0022`, `TZ=UTC`, a fresh database, and with `./internal/rmm/...` added as CI does |
+| 5 | `govulncheck ./...`, `scripts/check-reproducible.sh` | the former reports only vulnerabilities in required modules the code does not call (as on main); the latter: "build reproducibly" |
+| 6 | `npx tsc --noEmit`, `npm run lint`, `npm test`, `npx next build` | clean; **223 pass, 0 fail**; build green with `/autotask` and `/api/autotask/{companies,picklists,run,settings}` |
+
+### What each claim rests on
+
+- **Client** (21 tests against the fake service): the three credential headers on every request; zone URL checked (https, `*.autotask.net`, no userinfo, no port) before any
+  credential goes there, and `client.New` itself refuses any other host unless a test sets `AllowAnyHost`; a redirect (301, 302, 307, 308) is never followed, for the zone
+  client, for zone discovery and for a caller-supplied `http.Client`, so no second host sees a request or a credential; requests one at a time; 429 waits `Retry-After` and stops when it is over 60 s or does not clear; 5xx retried for reads and **never for a
+  create**; 401/403 fatal and the error text never holds the secret; a 500 carrying `errors` is a refusal in Autotask's words, not retried; the budget stops
+  before sending; ticket search scoped by company.
+- **Planner** (`group_test.go`): one action per package family, per product release, per surface finding (an open port, a dangling name and a DKIM selector per
+  subject), MFA registration as one ticket, every other identity finding on its own; urgency is the most urgent member's; unfixed and informational never ticketed.
+- **Engine** (`engine_test.go`, in-memory store and the fake service): a dry run sends only queries and lists the exact payload; a live re-run changes nothing;
+  a lost local record is found again by its tag; an answer lost on create is not repeated; a store failure after a create stops the run and the next run adopts the
+  ticket; a new host adds a note, not a ticket; a fixed host adds a note with the evidence and the ticket stays open unless auto-complete is on; a ticket completed
+  or deleted in Autotask is left alone and flagged; **a dry run with a tracked open ticket** (new host, fixed host, all resolved with auto-complete on, a technician-closed
+  and a deleted ticket, a completion left to retry) sends no POST except `/Tickets/query`, no PATCH, adds no note, completes nothing, and changes no tracked row and no
+  ledger entry, and the note it shows is the note a live run then sends; a note answered with a 5xx is sent once, never retried; findings that return open a new generation; the per-run limit defers the rest; a threshold at half stops the
+  run; every live action is one ledger entry; picklist labels are shown only when Autotask was read.
+- **Storage** (Postgres, `storepg/autotask_test.go`): candidates are exactly the fixable, not-revoked, non-info, not-removed items of Fix this week; the live gate
+  accepts only a dry run that read Autotask without a problem and has the same fingerprint; each ledger entry commits with the row it describes; evidence says how a
+  finding closed (version observed, package removed, no longer reported) and never "observed" when unknown.
+- **API** (Postgres + fake service, `control/autotask_test.go`): 401/403 by role, a pasted secret is a 400, live refused in dry-run settings (409), dry run by
+  default, the schedule acts only on live instances and honours the interval, credentials come from files and show nowhere.
+- **Console** (`lib/autotask-model.test.ts`): picklist helpers, the "still to choose" list, sub-issue types per issue type, the settings payload (apid refuses
+  unknown fields), wording of a dry run versus a live one.
+- **Mutations, round 2** (after review, 9, script kept out of git): CheckRedirect removed, discovery following redirects, a caller client used unchanged, `New` not checking the host,
+  `doNote` dry-run guard off, `doFlag` dry-run guard off, `doComplete` dry-run guard off, note retry on in the client, note retry on (seen in the engine test): **9 killed by a failing test.**
+  The first run of the set left `doComplete`'s dry-run guard alive (that branch is reached only after a failed completion); `TestDryRunAfterAFailedCompletionDoesNotRetryIt` was added and then killed it.
+  Review had found two survivors of round 1 (`doNote` dry-run guard, note retry); both are now killed.
+- **Mutations, round 1** (my own, 50, script kept out of git): **50 killed by a failing test, 0 survived** (review then found 2 more that survived: see round 2). A first pass showed 50 "killed", but two did not compile; they
+  were rewritten and rerun, and the run now lists the failing test for each. They cover: tag lookup before create, dry run sending, the fingerprint and mode gates,
+  the threshold (off by one and absent), the per-run limit, fatal errors, auto-complete, new generation, evidence, store failure, 5xx retry on create, 429
+  handling, serialisation, budget, zone URL checks, company scoping, each grouping rule, KEV and EPSS cut-offs, tag and generation, title truncation, the live gate
+  (four ways), each candidate filter, evidence, API defaults, role checks and credentials over the API.
+
+### Real runs
+
+- **Console and API in a browser against the fake Autotask service.** A real control-plane handler on a scratch database seeded with 3 hosts that have fixable openssl
+  findings and 2 identity findings, the production console build, and the fake Autotask service. Through the page: the live picklists loaded into the form,
+  settings saved, "Show me the tickets" listed two exact tickets (`Update openssl on 3 hosts [DS-…]`, `Register MFA for 2 accounts [DS-…]`) with queue, priority,
+  status and issue type named as Autotask's lists name them, Go live, Run now, a re-run changed nothing, a ticket completed on the fake side was reported "needs a
+  look" and not recreated. Found and fixed through it: the settings save echoed `updatedBy` and apid refused it; due dates carried sub-second digits; the run
+  counts did not say a ticket needed a look. **The fake service is my reading of the documentation; it never contacted Autotask.**
+- **Upgrade path.** A scratch database migrated with `origin/main` (through 029), then with this branch twice: `autotask_settings`, `autotask_tickets` and `autotask_runs` exist, the second run is a no-op.
+- **Not run: anything against a real Autotask database.** It needs the API user and a test company and queue that Mason creates; the click-by-click setup is in
+  AUTOTASK.md and on the page, and the card waits on it.
+
+### Not verified
+
+- **Any real Autotask response.** Field names, which fields a real database marks required, picklist shapes, how `completedDate` and `status` read on a real ticket,
+  the zone-discovery response, what a real 429 or 500 carries.
+- **The child path for a ticket note, `POST /v1.0/Tickets/{id}/Notes`.** The help page that lists it needs a Swagger session; the path is the documented convention
+  applied to Tickets. The fake accepts it, so the passing tests do not prove it. First thing to check in the real run.
+- **Searching the title with `contains` for the tag** against a real index, and that a ticket under a different company is not returned.
+- **The thread limit and the hourly numbers** are the documented ones, enforced by the fake; real latency throttling is untested.
+- **Ranking thresholds** (what opens a ticket) are a judgement, not measured on a real client list.
+- Not run: a first run against a company with hundreds of open actions, a second DefendSec instance pointing at the same company (the tag search would find the
+  other instance's tickets; one instance per company is the rule), Autotask rich text.
+
+## Feature × platform × evidence matrix — additions from slice 14
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Autotask client (headers, zone check, serialised, 429/5xx, budget) | any | tests against a fake service | see handoff | **not run** against Autotask |
+| One ticket per remediation action, urgency, threshold | any | planner tests | see handoff | **not run** on a real client list |
+| Idempotent create (tag in title and key on both sides, adopt on lost answer) | any | engine tests | see handoff | **not run** against Autotask |
+| Notes on new host and on a fix, evidence from DefendSec's record, auto-complete off by default | any | engine and storepg tests | see handoff | **not run** against Autotask |
+| Dry run changes nothing; live needs a dry run with the same fingerprint | any | engine, storepg, control tests | see handoff | fake service, in a browser |
+| Every ticket action in the audit ledger | any | storepg and control tests (Postgres) | see handoff | fake service |

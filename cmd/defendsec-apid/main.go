@@ -223,6 +223,12 @@ func run(log *slog.Logger) error {
 		if strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_M365_SCHEDULE"))) != "off" {
 			go svc.RunM365Schedule(exportCtx, control.M365ScheduleCheck)
 		}
+		// Reconciles the Fix-this-week tickets in Autotask (every 6 hours) for an
+		// instance whose settings are in live mode, which needs a dry run behind it.
+		// A dry-run instance is never touched; DEFENDSEC_AUTOTASK_SCHEDULE=off disables it.
+		if strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_AUTOTASK_SCHEDULE"))) != "off" {
+			go svc.RunAutotaskSchedule(exportCtx, control.AutotaskScheduleCheck)
+		}
 		// Reads of the Datto RMM site the operator selected (every 6 hours). With no
 		// site, or no credentials, it does nothing; DEFENDSEC_RMM_SCHEDULE=off disables it.
 		if strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_RMM_SCHEDULE"))) != "off" {
@@ -338,6 +344,9 @@ func run(log *slog.Logger) error {
 	// Identity posture (slice 12): the Microsoft 365 tenant's MFA, legacy
 	// authentication, administrator roles and inbox rules, read-only.
 	adminMux.HandleFunc("/v1/identity/", svc.HandleIdentity)
+	// Autotask tickets (slice 14): Fix this week as grouped, idempotent tickets,
+	// dry run first.
+	adminMux.HandleFunc("/v1/autotask/", svc.HandleAutotask)
 	adminMux.HandleFunc("/v1/agent-releases", svc.HandleAgentReleases)
 	adminMux.HandleFunc("/v1/saved-queries", svc.HandleSavedQueries)
 	adminMux.HandleFunc("/v1/alerts", svc.HandleAlerts)

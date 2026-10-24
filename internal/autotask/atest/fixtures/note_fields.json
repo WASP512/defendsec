@@ -1,0 +1,17 @@
+{
+  "fields": [
+    {"name": "ticketID", "dataType": "integer", "length": 0, "isRequired": true, "isReadOnly": false, "isQueryable": true, "isReference": true, "referenceEntityType": "Ticket", "isPickList": false, "picklistValues": null, "picklistParentValueField": ""},
+    {"name": "title", "dataType": "string", "length": 250, "isRequired": false, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": false, "picklistValues": null, "picklistParentValueField": ""},
+    {"name": "description", "dataType": "string", "length": 32000, "isRequired": true, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": false, "picklistValues": null, "picklistParentValueField": ""},
+    {"name": "noteType", "dataType": "integer", "length": 0, "isRequired": true, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": true, "picklistParentValueField": "",
+     "picklistValues": [
+       {"value": "1", "label": "Task Summary", "isDefaultValue": true, "sortOrder": 1, "parentValue": "", "isActive": true, "isSystem": true},
+       {"value": "3", "label": "Workflow Rule Note", "isDefaultValue": false, "sortOrder": 3, "parentValue": "", "isActive": true, "isSystem": true}
+     ]},
+    {"name": "publish", "dataType": "integer", "length": 0, "isRequired": true, "isReadOnly": false, "isQueryable": true, "isReference": false, "referenceEntityType": "", "isPickList": true, "picklistParentValueField": "",
+     "picklistValues": [
+       {"value": "1", "label": "All Autotask Users", "isDefaultValue": true, "sortOrder": 1, "parentValue": "", "isActive": true, "isSystem": true},
+       {"value": "2", "label": "Internal Project Team", "isDefaultValue": false, "sortOrder": 2, "parentValue": "", "isActive": true, "isSystem": true}
+     ]}
+  ]
+}

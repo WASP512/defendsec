@@ -616,7 +616,7 @@ func verifySurface(b *Bundle, rep *Report) {
 		}
 		if len(diff) > 0 {
 			sr.FindingsFailed++
-			fproblems = append(fproblems, fmt.Sprintf("%s: %s differ from what scan %d recorded", name, strings.Join(diff, ", "), st.seenScan))
+			fproblems = append(fproblems, fmt.Sprintf("%s: differs from what scan %d recorded in: %s", name, st.seenScan, strings.Join(diff, ", ")))
 			continue
 		}
 		sr.FindingsVerified++
