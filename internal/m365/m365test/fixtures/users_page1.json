@@ -1,0 +1,10 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users(id,userPrincipalName,displayName,mail,accountEnabled,userType)",
+  "value": [
+    {"id": "11111111-0000-4000-8000-000000000001", "userPrincipalName": "alex.admin@example.com", "displayName": "Alex Admin", "mail": "alex.admin@example.com", "accountEnabled": true, "userType": "Member"},
+    {"id": "11111111-0000-4000-8000-000000000002", "userPrincipalName": "sam.admin@example.com", "displayName": "Sam Admin", "mail": "sam.admin@example.com", "accountEnabled": true, "userType": "Member"},
+    {"id": "11111111-0000-4000-8000-000000000003", "userPrincipalName": "pat.helpdesk@example.com", "displayName": "Pat Helpdesk", "mail": "pat.helpdesk@example.com", "accountEnabled": true, "userType": "Member"},
+    {"id": "11111111-0000-4000-8000-000000000004", "userPrincipalName": "casey@example.com", "displayName": "Casey Example", "mail": "casey@example.com", "accountEnabled": true, "userType": "Member"}
+  ],
+  "@odata.nextLink": "{{BASE}}/v1.0/users?$select=id,userPrincipalName,displayName,mail,accountEnabled,userType&$top=999&$skiptoken=page2"
+}

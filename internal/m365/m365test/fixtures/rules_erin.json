@@ -1,0 +1,15 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('11111111-0000-4000-8000-000000000006')/mailFolders('inbox')/messageRules",
+  "value": [
+    {
+      "id": "AQAAAJ5dZqB=", "displayName": "Copy to boss", "sequence": 1, "isEnabled": true, "hasError": false, "isReadOnly": false,
+      "conditions": {"importance": "high"},
+      "actions": {"forwardTo": [{"emailAddress": {"name": "Alex Admin", "address": "alex.admin@example.com"}}]}
+    },
+    {
+      "id": "AQAAAJ5dZqC=", "displayName": "File the monthly report", "sequence": 2, "isEnabled": true, "hasError": false, "isReadOnly": false,
+      "conditions": {"subjectContains": ["monthly report"]},
+      "actions": {"moveToFolder": "AAMkADNEWSFOLDER="}
+    }
+  ]
+}

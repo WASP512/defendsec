@@ -1,0 +1,10 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users(id,userPrincipalName,displayName,mail,accountEnabled,userType)",
+  "value": [
+    {"id": "11111111-0000-4000-8000-000000000005", "userPrincipalName": "dana@example.com", "displayName": "Dana Example", "mail": "dana@example.com", "accountEnabled": true, "userType": "Member"},
+    {"id": "11111111-0000-4000-8000-000000000006", "userPrincipalName": "erin@example.com", "displayName": "Erin Example", "mail": "erin@example.com", "accountEnabled": true, "userType": "Member"},
+    {"id": "11111111-0000-4000-8000-000000000007", "userPrincipalName": "shared.noMailbox@example.com", "displayName": "No Mailbox", "mail": "shared.nomailbox@example.com", "accountEnabled": true, "userType": "Member"},
+    {"id": "11111111-0000-4000-8000-000000000008", "userPrincipalName": "former@example.com", "displayName": "Former Employee", "mail": "former@example.com", "accountEnabled": false, "userType": "Member"},
+    {"id": "11111111-0000-4000-8000-000000000009", "userPrincipalName": "visitor_example.net#EXT#@example.com", "displayName": "Visitor", "mail": "visitor@example.net", "accountEnabled": true, "userType": "Guest"}
+  ]
+}
