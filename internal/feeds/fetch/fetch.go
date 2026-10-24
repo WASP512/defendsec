@@ -207,6 +207,10 @@ func (f *Fetcher) now() time.Time {
 	return time.Now().UTC()
 }
 
+// Clock is the fetcher's current time (UTC), for a feed that picks what to
+// download by date.
+func (f *Fetcher) Clock() time.Time { return f.now() }
+
 // Fetch brings feed name up to date from rawURL. If the cache holds a copy for
 // the same URL with a validator, the request is conditional. The file is
 // written to a temporary name and renamed into place only after the whole body

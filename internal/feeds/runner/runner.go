@@ -24,6 +24,7 @@ import (
 	"defendsec/internal/feeds/epss"
 	"defendsec/internal/feeds/fetch"
 	"defendsec/internal/feeds/kev"
+	"defendsec/internal/feeds/msrc"
 	"defendsec/internal/feeds/osv"
 	"defendsec/internal/feeds/rhel"
 	"defendsec/internal/feeds/rocky"
@@ -132,6 +133,9 @@ func (r *Runner) Sync(ctx context.Context) ([]Result, error) {
 func (r *Runner) fetchSpec(ctx context.Context, spec Spec) (fetch.Result, error) {
 	if spec.Kind == KindRocky {
 		return r.Fetcher.FetchPaged(ctx, spec.Name, spec.URL, rocky.Pager(spec.URL, spec.Release))
+	}
+	if spec.Kind == KindMSRC {
+		return msrc.Fetch(ctx, r.Fetcher, spec.Name, spec.URL, r.Cfg.MSRCMonths)
 	}
 	return r.Fetcher.Fetch(ctx, spec.Name, spec.URL)
 }
@@ -475,6 +479,12 @@ func (r *Runner) loadRanges(ctx context.Context, it *item, res *Result, prev sto
 		var f io.ReadCloser
 		if f, err = openDecompressed(it.path); err == nil {
 			st, err = alma.Parse(f, it.spec.Release, emit)
+			f.Close()
+		}
+	case KindMSRC:
+		var f *os.File
+		if f, err = os.Open(it.path); err == nil {
+			st, err = msrc.Parse(f, emit)
 			f.Close()
 		}
 	case KindSUSE:

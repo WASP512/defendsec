@@ -14,6 +14,7 @@ import (
 
 	"defendsec/internal/feeds/debian"
 	"defendsec/internal/feeds/fetch"
+	"defendsec/internal/feeds/msrc"
 	"defendsec/internal/feeds/ubuntu"
 	"defendsec/internal/storepg"
 )
@@ -31,6 +32,10 @@ const (
 	KindAlma   Kind = "almalinux"
 	KindSUSE   Kind = "suse"
 	KindOSV    Kind = "osv"
+	// KindMSRC is Microsoft's Security Update Guide: which Windows update (KB)
+	// fixes which CVE. It is opt-in (add "msrc" to DEFENDSEC_FEEDS_ENABLED): a
+	// client with no Windows devices read through an RMM has no use for it.
+	KindMSRC Kind = "msrc"
 )
 
 // Spec is one feed: where it comes from and what part of the advisory data it
@@ -54,7 +59,7 @@ type Spec struct {
 // they only annotate advisories.
 func (s Spec) Scopes() []storepg.RangeScope {
 	switch s.Kind {
-	case KindUbuntu, KindRHEL, KindRocky, KindAlma, KindSUSE:
+	case KindUbuntu, KindRHEL, KindRocky, KindAlma, KindSUSE, KindMSRC:
 		return []storepg.RangeScope{{Distro: s.Distro, Release: s.Release}}
 	case KindDebian:
 		var out []storepg.RangeScope
@@ -100,6 +105,7 @@ type Config struct {
 	Enabled        []string
 	OSVEcosystems  []string
 	DebianReleases []string // codenames
+	MSRCMonths     int      // monthly Microsoft documents to keep (default 12)
 	URLOverrides   map[string]string
 	MaxBytes       int64
 	FetchTimeout   time.Duration
@@ -113,6 +119,7 @@ type Config struct {
 //	DEFENDSEC_FEEDS_ENABLED          comma list of feed names (default: DefaultEnabled)
 //	DEFENDSEC_FEEDS_OSV_ECOSYSTEMS   comma list, e.g. PyPI,npm (default none)
 //	DEFENDSEC_FEEDS_DEBIAN_RELEASES  comma list of codenames (default bookworm,trixie)
+//	DEFENDSEC_FEEDS_MSRC_MONTHS      monthly Microsoft security documents to keep (default 12, 1-36)
 //	DEFENDSEC_FEEDS_URL_<NAME>       override one feed's URL (mirror), NAME upper-cased, non-alphanumerics as _
 //	DEFENDSEC_FEEDS_MAX_BYTES        per-file download limit (default 4 GiB)
 //	DEFENDSEC_FEEDS_TIMEOUT          per-feed fetch timeout, a Go duration (default 30m)
@@ -137,6 +144,14 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 			return c, fmt.Errorf("DEFENDSEC_FEEDS_MAX_BYTES %q: want a positive integer", v)
 		}
 		c.MaxBytes = n
+	}
+	c.MSRCMonths = msrc.DefaultMonths
+	if v := getenv("DEFENDSEC_FEEDS_MSRC_MONTHS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 36 {
+			return c, fmt.Errorf("DEFENDSEC_FEEDS_MSRC_MONTHS %q: want a whole number from 1 to 36", v)
+		}
+		c.MSRCMonths = n
 	}
 	if v := getenv("DEFENDSEC_FEEDS_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -240,6 +255,9 @@ func Catalog(c Config) []Spec {
 	add(Spec{Name: "suse-leap-15.6", Kind: KindSUSE, Distro: "opensuse-leap", Release: "15.6", URL: suse + "opensuse.leap.15.6-affected.xml.bz2"})
 	add(Spec{Name: "suse-leap-16.0", Kind: KindSUSE, Distro: "opensuse-leap", Release: "16.0", URL: suse + "opensuse.leap.16.0-affected.xml.bz2"})
 	add(Spec{Name: "suse-tumbleweed", Kind: KindSUSE, Distro: "opensuse-tumbleweed", URL: suse + "opensuse.tumbleweed-affected.xml.bz2"})
+
+	// Which Windows update fixes which CVE (for hosts read through an RMM).
+	add(Spec{Name: "msrc", Kind: KindMSRC, Distro: msrc.Distro, URL: msrc.BaseURL})
 
 	for _, eco := range c.OSVEcosystems {
 		if !osvEcoRe.MatchString(eco) {
