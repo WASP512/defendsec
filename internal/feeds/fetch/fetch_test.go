@@ -237,3 +237,45 @@ func TestRedactURL(t *testing.T) {
 		}
 	}
 }
+
+func TestStashRestoreDiscard(t *testing.T) {
+	s := newServer(t, "good copy")
+	f := fetcher(t)
+	ctx := context.Background()
+	if err := f.Cache.Stash("x"); err != nil { // nothing cached: no-op
+		t.Fatal(err)
+	}
+	r, err := f.Fetch(ctx, "x", s.URL+"/feed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A replacement arrives, and is judged unusable: restore the good copy.
+	if err := f.Cache.Stash("x"); err != nil {
+		t.Fatal(err)
+	}
+	s.body.Store("junk")
+	s.etag.Store(`"v2"`)
+	bad, err := f.Fetch(ctx, "x", s.URL+"/feed")
+	if err != nil || bad.SHA256 == r.SHA256 {
+		t.Fatalf("replacement fetch: %+v %v", bad, err)
+	}
+	if err := f.Cache.Restore("x"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(f.Cache.Path("x")); string(got) != "good copy" {
+		t.Errorf("restored body = %q", got)
+	}
+	if m, ok, _ := f.Cache.LoadMeta("x"); !ok || m.SHA256 != r.SHA256 || m.ETag != `"v1"` {
+		t.Errorf("restored meta = %+v", m)
+	}
+	// Restore with no stash left is a no-op, not an error.
+	if err := f.Cache.Restore("x"); err != nil {
+		t.Error(err)
+	}
+	// Accepting the new copy discards the stash.
+	f.Cache.Stash("x")
+	f.Cache.Discard("x")
+	if _, err := os.Stat(f.Cache.Path("x") + ".prev"); err == nil {
+		t.Error("stash not discarded")
+	}
+}

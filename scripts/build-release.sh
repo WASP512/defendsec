@@ -64,6 +64,11 @@ build windows arm64 ./cmd/defendsec-agentd "defendsec-agentd-windows-arm64.exe"
 build linux amd64 ./cmd/defendsec-web "defendsec-web-linux-amd64"
 build linux arm64 ./cmd/defendsec-web "defendsec-web-linux-arm64"
 
+# The feed sync service: mirrors vulnerability feeds, exports and imports signed
+# bundles for air-gapped installs. Server-side, Linux only.
+build linux   amd64 ./cmd/defendsec-feeds "defendsec-feeds-linux-amd64"
+build linux   arm64 ./cmd/defendsec-feeds "defendsec-feeds-linux-arm64"
+
 build linux   amd64 ./cmd/defendsec-verify "defendsec-verify-linux-amd64"
 build linux   arm64 ./cmd/defendsec-verify "defendsec-verify-linux-arm64"
 build darwin  amd64 ./cmd/defendsec-verify "defendsec-verify-darwin-amd64"

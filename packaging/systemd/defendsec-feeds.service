@@ -1,0 +1,28 @@
+[Unit]
+Description=DefendSec vulnerability feed sync (KEV, EPSS, distro advisories; one-shot)
+Documentation=https://github.com/WASP512/defendsec/blob/main/docs/FEEDS.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=defendsec
+Group=defendsec
+# Copy packaging/systemd/feeds.env.example to /etc/defendsec/feeds.env. The
+# database URL comes from the same apid.env the control plane uses, so the two
+# cannot point at different databases.
+EnvironmentFile=-/etc/defendsec/apid.env
+EnvironmentFile=-/etc/defendsec/feeds.env
+Environment=DEFENDSEC_DATA_DIR=/var/lib/defendsec
+Environment=DEFENDSEC_FEEDS_CACHE_DIR=/var/lib/defendsec/feeds
+ExecStart=/usr/local/bin/defendsec-feeds sync
+# The biggest feed (Debian) is 80 MB; allow a slow mirror and a cold database.
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/defendsec

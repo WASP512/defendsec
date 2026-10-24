@@ -347,3 +347,60 @@ func RedactURL(raw string) string {
 	u.RawQuery, u.Fragment, u.User = "", "", nil
 	return u.String()
 }
+
+// Stash keeps the current cached copy of a feed (data and metadata) aside so it
+// can be put back if the replacement turns out to be unusable. It is a no-op
+// when nothing is cached. The data file is hard-linked, not copied, so a stash
+// of an 80 MB feed costs nothing; if linking is not possible it copies.
+func (c Cache) Stash(name string) error {
+	if _, ok, err := c.LoadMeta(name); err != nil || !ok {
+		return err
+	}
+	data, prev := c.Path(name), c.Path(name)+".prev"
+	os.Remove(prev)
+	if err := os.Link(data, prev); err != nil {
+		in, oerr := os.Open(data)
+		if oerr != nil {
+			return oerr
+		}
+		defer in.Close()
+		out, cerr := os.OpenFile(prev, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if cerr != nil {
+			return cerr
+		}
+		if _, cerr = io.Copy(out, in); cerr != nil {
+			out.Close()
+			return cerr
+		}
+		if cerr = out.Close(); cerr != nil {
+			return cerr
+		}
+	}
+	raw, err := os.ReadFile(c.metaPath(name))
+	if err != nil {
+		return err
+	}
+	return writeAtomic(c.metaPath(name)+".prev", raw)
+}
+
+// Restore puts the stashed copy back as the cached copy, discarding whatever
+// replaced it. It is a no-op when there is no stash.
+func (c Cache) Restore(name string) error {
+	prev := c.Path(name) + ".prev"
+	if _, err := os.Stat(prev); err != nil {
+		return nil
+	}
+	if err := os.Rename(prev, c.Path(name)); err != nil {
+		return err
+	}
+	if err := os.Rename(c.metaPath(name)+".prev", c.metaPath(name)); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Discard drops the stash once the new copy has been accepted.
+func (c Cache) Discard(name string) {
+	os.Remove(c.Path(name) + ".prev")
+	os.Remove(c.metaPath(name) + ".prev")
+}

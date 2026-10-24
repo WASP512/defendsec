@@ -61,7 +61,7 @@ is what is **not built yet**.
 
 | Question | Today | Not built yet |
 | --- | --- | --- |
-| **What is exploitable right now?** | Matches installed software against an advisory catalog, with triage and acknowledgement | The catalog is hard-coded in the console, plus an optional OSV ingest script. **No feed sync, no CISA KEV or EPSS ranking, no distro-aware fixed versions.** Planned for slices 2–5 of the [plan](docs/DIRECTION.md) |
+| **What is exploitable right now?** | Matches installed software against an advisory catalog, with triage and acknowledgement. `defendsec-feeds` syncs CISA KEV, EPSS and the Ubuntu, Debian, Red Hat and SUSE advisories into the database, and the Advisories page shows how old they are ([docs/FEEDS.md](docs/FEEDS.md)) | **The matcher does not use that data yet:** it still matches the hard-coded console catalog. No KEV → EPSS → CVSS ranking and no distro-aware fixed versions in findings. Slices 4–5 of the [plan](docs/DIRECTION.md) |
 | **What is end-of-life or unpatched?** | Hardware, OS, software and pending patches per host on Linux (apt, dnf/yum, zypper) and Windows (Windows Update), with package change history. A **Supported OS** policy flags hosts on releases their vendor no longer patches | Pending patches ranked by age |
 | **What is misconfigured?** | 42 SCA checks in control-tagged packs. On Linux the CIS-aligned checks know each distro: its package names, SELinux on Fedora, RHEL and openSUSE, AppArmor on Ubuntu and Debian. On Windows: BitLocker, Defender, firewall, SMBv1, UAC and RDP. Firewall state is read from ufw, firewalld or plain nftables. A check the host cannot answer is reported as missing evidence | |
 | **What is exposed from the outside?** | | DNS, MX, SPF, DKIM, DMARC, MTA-STS, certificate expiry and open ports (slice 7) |
@@ -182,12 +182,12 @@ response settings that are being removed. Where they disagree with this README, 
 
 ### Honest status
 
-- **Vulnerability feeds are not synced yet.** Today's matcher uses a catalog that is hard-coded in
-  the console, plus an optional OSV ingest script. It has no CISA KEV or EPSS data and no
-  distro-aware fixed versions, so **do not rely on the vulnerability view to say a host is clean**,
-  or to say a package is vulnerable when the distro has backported the fix. Fixing this is Phase 0
-  (slices 2–4) and it is pending. The acceptance test for it is zero findings on a fully patched
-  Ubuntu 22.04 and a fully patched Rocky 9.
+- **Feeds are synced; findings do not use them yet.** `defendsec-feeds` loads KEV, EPSS and the
+  distro advisories, but today's matcher still uses a catalog that is hard-coded in the console. It
+  has no distro-aware fixed versions, so **do not rely on the vulnerability view to say a host is
+  clean**, or to say a package is vulnerable when the distro has backported the fix. Moving the
+  matcher onto the synced data is slice 4 and it is pending. The acceptance test for it is zero
+  findings on a fully patched Ubuntu 22.04 and a fully patched Rocky 9.
 - **The Windows agent has never been run on a real Windows machine.** It has been verified by
   cross-compilation, parser tests and PowerShell parse checks only. That covers the service,
   inventory and posture checks. Treat any Windows deployment as an experiment. Windows service and

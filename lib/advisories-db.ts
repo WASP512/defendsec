@@ -4,6 +4,11 @@ import { ADVISORIES } from "./advisories";
 
 export async function loadAdvisories(): Promise<Advisory[]> {
   try {
+    // Advisories written by defendsec-feeds keep their versions in
+    // advisory_ranges and have an empty package/below. This matcher only
+    // understands the legacy single-floor rows, so it must not see them (an
+    // empty package would be matched against everything). Same filter as
+    // storepg.ListAdvisories. The distro-aware matcher replaces this.
     const rows = await query<{
       id: string;
       cve: string;
@@ -11,7 +16,7 @@ export async function loadAdvisories(): Promise<Advisory[]> {
       below: string;
       severity: string;
       summary: string;
-    }>(`SELECT id, cve, package, below, severity, summary FROM advisories ORDER BY severity, package`);
+    }>(`SELECT id, cve, package, below, severity, summary FROM advisories WHERE package <> '' ORDER BY severity, package`);
     if (rows.length === 0) return ADVISORIES;
     return rows.map((row) => ({
       id: row.id,

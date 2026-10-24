@@ -101,15 +101,21 @@ type item struct {
 func (r *Runner) Sync(ctx context.Context) ([]Result, error) {
 	results := make([]Result, len(r.Specs))
 	var items []*item
+	// A downloaded file only replaces the cached copy for good if it loads: see settle.
+	defer func() { r.settle(items, results) }()
 	for i, spec := range r.Specs {
 		res := &results[i]
 		res.Name, res.Kind, res.URL = spec.Name, spec.Kind, fetch.RedactURL(spec.URL)
 		start := time.Now()
+		if err := r.Cache.Stash(spec.Name); err != nil {
+			r.Log.Warn("could not stash the cached copy", "feed", spec.Name, "err", err)
+		}
 		fctx, cancel := context.WithTimeout(ctx, r.Cfg.FetchTimeout)
 		got, err := r.Fetcher.Fetch(fctx, spec.Name, spec.URL)
 		cancel()
 		res.Duration = time.Since(start)
 		if err != nil {
+			r.Cache.Discard(spec.Name) // the cache was not touched
 			r.fail(ctx, res, spec, err)
 			continue
 		}
@@ -117,6 +123,22 @@ func (r *Runner) Sync(ctx context.Context) ([]Result, error) {
 		items = append(items, &item{idx: i, spec: spec, meta: got.Meta, path: got.Path})
 	}
 	return r.process(ctx, items, results)
+}
+
+// settle decides, once a run is over, whether each downloaded file stays in the
+// cache. A file that could not be parsed or loaded is replaced by the copy it
+// displaced, so the cache (and therefore `export`) only ever holds files that
+// loaded; the bad download is retried on the next run.
+func (r *Runner) settle(items []*item, results []Result) {
+	for _, it := range items {
+		if results[it.idx].Status == StatusFailed {
+			if err := r.Cache.Restore(it.spec.Name); err != nil {
+				r.Log.Error("could not restore the previous cached copy", "feed", it.spec.Name, "err", err)
+			}
+			continue
+		}
+		r.Cache.Discard(it.spec.Name)
+	}
 }
 
 func (r *Runner) fail(ctx context.Context, res *Result, spec Spec, err error) {
@@ -167,13 +189,8 @@ func (r *Runner) process(ctx context.Context, items []*item, results []Result) (
 		st, ok := status[it.spec.Name]
 		return !ok || st.SHA256 != it.meta.SHA256
 	}
-	anyRanges := false
-	for _, it := range items {
-		if it.spec.HasRanges() && needs(it) {
-			anyRanges = true
-		}
-	}
-	anyChange := anyRanges
+	rangesLoaded := false // set once a range feed commits: KEV/EPSS then re-apply to what it wrote
+	anyChange := false
 	for _, it := range items {
 		if needs(it) {
 			anyChange = true
@@ -201,7 +218,7 @@ func (r *Runner) process(ctx context.Context, items []*item, results []Result) (
 		st, had := status[it.spec.Name]
 		changed := needs(it)
 		enrich := it.spec.Kind == KindKEV || it.spec.Kind == KindEPSS
-		if !changed && !(enrich && anyRanges) {
+		if !changed && !(enrich && rangesLoaded) {
 			// Confirmed current and already loaded: only refresh the status row.
 			res.Status, res.Records = StatusUnchanged, st.RecordCount
 			r.refreshStatus(ctx, it, st, snapID)
@@ -235,6 +252,9 @@ func (r *Runner) process(ctx context.Context, items []*item, results []Result) (
 		}
 		r.Log.Info("feed done", "feed", it.spec.Name, "status", res.Status, "records", res.Records,
 			"advisories", res.Advisories, "skipped", res.Skipped, "seconds", res.Duration.Seconds())
+		if it.spec.HasRanges() {
+			rangesLoaded = true
+		}
 	}
 
 	if snapID != 0 {
@@ -673,6 +693,7 @@ func (r *Runner) Import(ctx context.Context, bundlePath string, extraKeys []stri
 	}
 	results := make([]Result, 0, len(v.Manifest.Feeds))
 	var items []*item
+	defer func() { r.settle(items, results) }()
 	for _, mf := range v.Manifest.Feeds {
 		res := Result{Name: mf.Name, URL: mf.URL, SHA256: mf.SHA256, Size: mf.Size, FetchedAt: mf.FetchedAt}
 		spec, ok := byName[mf.Name]
@@ -689,7 +710,11 @@ func (r *Runner) Import(ctx context.Context, bundlePath string, extraKeys []stri
 			continue
 		}
 		meta := fetch.Meta{URL: mf.URL, SHA256: mf.SHA256, Size: mf.Size, FetchedAt: mf.FetchedAt}
+		if err := r.Cache.Stash(mf.Name); err != nil {
+			r.Log.Warn("could not stash the cached copy", "feed", mf.Name, "err", err)
+		}
 		if err := r.Cache.Install(mf.Name, v.FilePaths[mf.Name], meta); err != nil {
+			r.Cache.Restore(mf.Name) //nolint:errcheck
 			res.Status, res.Err = StatusFailed, fmt.Errorf("install into cache: %w", err)
 			results = append(results, res)
 			continue

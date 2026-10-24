@@ -237,3 +237,76 @@ A real PostgreSQL **16.15** (same major as CI's `postgres:16`), run in user spac
 | --- | --- | --- | --- | --- |
 | Migration 019 (advisory ranges, snapshots) fresh + upgrade | linux, Postgres 16.15 (user-space) | 3 new migration tests + 2 existing, green against real PG | not checked | none |
 | Advisory store (`UpsertAdvisoryWithRanges`, `ListAdvisoryRanges`, snapshots) | linux, Postgres 16.15 (user-space) | green (unit validation + integration) | not checked | none |
+
+## Slice 3 — feed sync service (`defendsec-feeds`)
+
+- Branch `scout/3-feeds`, stacked on `scout/2-advisory-schema` (slices 1–2 are unmerged and not pushed).
+- Added: `cmd/defendsec-feeds`, `internal/feeds/{kev,epss,oval,ubuntu,rhel,suse,debian,osv,fetch,bundle,runner}`, `internal/storepg/feeds.go`, migration `020_feed_status.sql`, `sign.Load`/`SignBlob`/`VerifyBlob`, `GET /v1/feeds` (`internal/control/feeds.go`), `lib/feed-banner.ts` + `components/feed-age-banner.tsx`, `packaging/systemd/defendsec-feeds.{service,timer}`, `feeds.env.example`, `docs/FEEDS.md`.
+- Removed: `scripts/ingest-osv.py`, `scripts/ingest-osv.timer.md`, `packaging/systemd/defendsec-ingest-osv.{service,timer}`, and the console's "last OSV ingest" line.
+- Changed besides that: `lib/advisories-db.ts` now selects `WHERE package <> ''` (same filter as `storepg.ListAdvisories`) so feed-written advisories, which carry versions only in `advisory_ranges`, cannot reach the legacy console matcher; `.github/workflows/ci.yml` runs `./internal/feeds/runner/...` in `postgres-integration` (`TestEveryIntegrationPackageRunsInCI` demands it); the release scripts build `defendsec-feeds`.
+- **The matcher does not use any of this yet.** Findings still come from the legacy catalog. That is slice 4.
+
+### Postgres used
+
+The same user-space PostgreSQL 16.15 as slice 2 (port 54329, scratch databases). Not the console's database, not the host at 10.10.10.214.
+
+### Commands
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `gofmt -l cmd db internal` | 0 | no output |
+| `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./...` | 0 | green |
+| `CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/defendsec-feeds` | 0 | green (no cgo) |
+| `TEST_DATABASE_URL=… go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/... ./internal/sign/... ./internal/supplychain/...` | 0 | per test+subtest, 0 fail, 0 skip: migrations 5, control 147, storepg 95, feeds/runner 20, bundle 22, debian 10, epss 8, fetch 11, kev 8, oval 5, ubuntu 4, rhel 3, suse 3, osv 3, feeds 4, sign 16, supplychain 16 |
+| same, without `TEST_DATABASE_URL` | 0 | DB tests skip (runner 15 pass / 5 skip; control 95 / 50; storepg 20 / 68); parser, fetch, bundle, sign tests all run |
+| `go test ./...` with and without DB | 1 | only the known slice-0 environmental failure `TestQuarantinePathMovesFile` (EXDEV) |
+| `npm run lint` / `npm test` / `npm run build` | 0 / 0 / 0 | lint clean; `# tests 79 / # pass 79 / # fail 0` (8 new in `lib/feed-banner.test.ts`); build green |
+
+Every parser has a committed fixture cut from the real upstream file (Ubuntu jammy, RHEL 9, SUSE Leap, Debian tracker, KEV, EPSS, four OSV records) and tests against it.
+
+### Real runs against the live upstream feeds (this box, 2 vCPU, scratch database `feedsdemo`)
+
+`defendsec-feeds sync`, first run, all nine default feeds, 2m22s wall:
+
+| Feed | Status | Records | Advisories | Download | Seconds |
+| --- | --- | ---: | ---: | ---: | ---: |
+| ubuntu-jammy | loaded | 51,376 | 5,133 | 1.4 MiB | 7.7 |
+| ubuntu-noble | loaded | 34,263 | 3,193 | 1.2 MiB | 6.1 |
+| debian | loaded | 134,089 | 62,299 | 82.1 MiB | 12.9 |
+| rhel-8 | loaded | 128,069 | 6,791 | 1.9 MiB | 12.4 |
+| rhel-9 | loaded | 279,367 | 7,861 | 1.3 MiB | 20.6 |
+| suse-leap-16.0 | loaded | 334,606 | 19,955 | 7.3 MiB | 42.9 |
+| suse-tumbleweed | loaded | 265,937 | 30,003 | 7.0 MiB | 33.3 |
+| kev | loaded | 1,756 | – | 1.7 MiB | 0.5 |
+| epss | loaded | 394,803 | – | 2.6 MiB | 5.0 |
+
+Skipped and counted, not guessed: Ubuntu jammy 114 definitions without a CVE + 1,763 kernel running-version tests; noble 68 + 787; Debian 792 non-CVE identifiers; RHEL 8 16,563 and RHEL 9 2,212 module-stream ranges; SUSE Leap 16.0 2,388 CVEs without package ranges.
+
+- **Peak RSS** (VmHWM polled every 0.2 s during `sync --dry-run`, one feed at a time): suse-leap-16.0 281 MiB, debian 239, epss 145, rhel-9 138.
+- **Second run**: all nine `unchanged` (HTTP 304 / identical SHA-256), 4.0 s wall, nothing loaded.
+- **Kill and resume**: `kill -9` during a first sync into `feedsdemo2` (after ubuntu-jammy and noble had loaded, snapshot 1 created); the next sync loaded the remaining seven and made snapshot 2. Final state: all nine feeds loaded, snapshot 2.
+- **OSV** (off by default): `DEFENDSEC_FEEDS_ENABLED=osv-pypi DEFENDSEC_FEEDS_OSV_ECOSYSTEMS=PyPI sync --dry-run` parsed 19,400 records / 12,604 advisories from a 35.3 MiB `all.zip` in 2.9 s; skipped last_affected 1,551, GIT ranges 1,535, withdrawn 622. Dry run only: PyPI was not loaded into a database.
+- **Export → import**: `export` wrote a 111,789,056-byte tar of the nine cached feeds. `import --trust-key <exporter pub>` into the separate database `feedsairgap` with a different control key verified and accepted it (nine feeds, digests identical to the exporter's). Earlier on the same data: import with no trust key was refused; a tampered bundle was refused before anything was written; ranges and advisories tables compared by md5 between the two databases were identical (that comparison was done on the first bundle; the second bundle above was not re-compared by md5).
+- **`GET /v1/feeds`** on a real `defendsec-apid` (built binary, pointed at `feedsdemo`): 200 with all nine feeds with age, record count and snapshot id (e.g. kev: 1,756 records, snapshot 1, ageSeconds 1094); no token 401; POST 405.
+
+### Not verified
+
+- **No browser look at the banner.** `lib/feed-banner.ts` (the decision logic) is unit-tested and the page builds; the rendered red/amber/plain states were not seen in a browser.
+- **`sync` has never run on the console host (10.10.10.214)** and the systemd units were never started: `systemd-analyze verify` only complained that `/usr/local/bin/defendsec-feeds` does not exist here. The timer is untested; the environment-file layering with `apid.env` is untested.
+- **Postgres 16.15 only**, scratch databases, no CI run (branch not on GitHub). The CI step addition is only checked by `TestEveryIntegrationPackageRunsInCI`.
+- **Whether the data is right is not verified against a real host.** Parsers are checked against fixtures cut from the real feeds and counted in the run above; no installed-package list has been matched against them (slice 4). RHEL module-stream errata, Ubuntu kernel definitions and RHEL "unpatched" classes are skipped by design.
+- **Alma/Rocky**: no feed of their own; the plan is that the matcher maps them to `rhel`. Not exercised.
+- **RHEL 10** has no v2 OVAL feed (HTTP 404 at the time of the probe) and is not in the defaults.
+- **Large `advisory_ranges` performance**: the nine feeds parsed to about 1.23 million records in total; no query plans inspected and no timing of reads against that table.
+- Mirrors: `DEFENDSEC_FEEDS_URL_*` overrides are unit-tested against an httptest server, not a real mirror.
+
+## Feature × platform × evidence matrix — additions from slice 3
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Feed parsers (KEV, EPSS, Ubuntu/RHEL/SUSE OVAL, Debian, OSV) | linux | fixture tests from real files, green | not checked | parsed full live feeds on hermesagent (counts above) |
+| `defendsec-feeds sync` (resumable, conditional, shrink guard) | linux, Postgres 16.15 | runner e2e tests, green | not checked | real sync of 9 feeds into a scratch DB; kill -9 + resume |
+| `export` / `import` signed bundles | linux, Postgres 16.15 | bundle + runner tests (tamper, wrong key, rollback) | not checked | round trip between two scratch DBs with different keys |
+| `GET /v1/feeds` | linux, Postgres 16.15 | green | not checked | called on a real apid |
+| Feed-age banner | any | logic unit-tested | not checked | none (not seen in a browser) |
+| systemd service + timer | linux | none | none | none |

@@ -173,7 +173,7 @@ else
     rm -rf "$work/src/.git"
     mismatches=0
     checked=0
-    for pkg in defendsec-apid defendsec-agentd defendsec-verify defendsec-web; do
+    for pkg in defendsec-apid defendsec-agentd defendsec-verify defendsec-web defendsec-feeds; do
       for pair in "linux amd64" "linux arm64"; do
         read -r os arch <<<"$pair"
         artifact="$DIR/${pkg}-${os}-${arch}"
