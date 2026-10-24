@@ -1,4 +1,4 @@
-// Identity posture (slice 12: Microsoft 365; Google Workspace joins in slice 13) as
+// Identity posture (slice 12: Microsoft 365; slice 13: Google Workspace) as
 // the control plane serves it (GET /v1/identity/*): the wire types and the pure
 // helpers the Identity page, the Fleet card and the Fix this week rows share. It
 // imports nothing from the app, so `node --test` can run it.
@@ -15,8 +15,19 @@ export const CHECK_LABELS: Record<string, string> = {
   "inbox-rules": "Inbox rules",
 };
 
-export function checkLabel(check: string): string {
-  return CHECK_LABELS[check] ?? check;
+/** The check groups of a Google Workspace read: there is no legacy-auth group. */
+export const CHECK_ORDER_GOOGLE = ["mfa", "admin-roles", "inbox-rules"] as const;
+
+export const CHECK_LABELS_GOOGLE: Record<string, string> = {
+  mfa: "2-Step Verification",
+  "admin-roles": "Super administrators",
+  "inbox-rules": "Gmail forwarding and filters",
+};
+
+/** A check group's name in the words of its provider (Microsoft 365's unless it is Google's). */
+export function checkLabel(check: string, provider?: string): string {
+  const labels = provider === "google" ? CHECK_LABELS_GOOGLE : CHECK_LABELS;
+  return labels[check] ?? CHECK_LABELS[check] ?? check;
 }
 
 export type IdentitySettings = {
@@ -30,6 +41,29 @@ export type IdentitySettings = {
   resolveFolders: boolean;
   updatedBy?: string;
   updatedAt?: string;
+};
+
+export type GoogleSettings = {
+  configured: boolean;
+  adminEmail: string;
+  /** "readonly" is gmail.readonly; "settings.basic" is gmail.settings.basic. */
+  gmailScope: "readonly" | "settings.basic";
+  superAdminMax: number;
+  trustedDomains: string[];
+  financeTerms: string[];
+  updatedBy?: string;
+  updatedAt?: string;
+};
+
+export type GoogleCredentials = {
+  configured: boolean;
+  clientEmail?: string;
+  /** The numeric ID entered in the Admin console's domain-wide delegation list. */
+  clientId?: string;
+  keyId?: string;
+  projectId?: string;
+  problem?: string;
+  warnings: string[];
 };
 
 export type IdentityFinding = {
@@ -118,6 +152,25 @@ export type IdentityStatus = {
   readOnlyNote: string;
 };
 
+/** GET /v1/identity/google/status. */
+export type GoogleStatus = {
+  provider: string;
+  settings: GoogleSettings;
+  credentials: GoogleCredentials;
+  summary: IdentitySummary;
+  latestRun: IdentityRun | null;
+  running: boolean;
+  intervalHours: number;
+  scheduled: boolean;
+  notAssessed: { what: string; why: string }[];
+  /** The OAuth scopes the domain-wide delegation must carry. */
+  permissions: IdentityPermission[];
+  checkLabels: Record<string, string>;
+  checkOrder: string[];
+  generatedAt: string;
+  readOnlyNote: string;
+};
+
 /** What the drawer of an identity row is given. */
 export type ExposureIdentityResponse = {
   advisoryId: string;
@@ -143,7 +196,7 @@ export function isIdentityResponse(r: { source?: string } | null | undefined): r
 export function identityWhere(g: Pick<ExposureGroup, "identity">): string {
   const i = g.identity;
   if (!i) return "";
-  return [providerLabel(i.provider), checkLabel(i.check), i.subject].join(" · ");
+  return [providerLabel(i.provider), checkLabel(i.check, i.provider), i.subject].join(" · ");
 }
 
 export function providerLabel(provider: string): string {
@@ -154,7 +207,7 @@ export function providerLabel(provider: string): string {
 export function identityUnconfirmedNote(g: Pick<ExposureGroup, "identity">): string {
   const i = g.identity;
   if (!i || !i.unconfirmed) return "";
-  return `The latest ${checkLabel(i.check)} check could not cover this: shown from the last confirmation on ${i.lastSeen.slice(0, 10)}.`;
+  return `The latest ${checkLabel(i.check, i.provider)} check could not cover this: shown from the last confirmation on ${i.lastSeen.slice(0, 10)}.`;
 }
 
 /** How a read went, in the words the page uses. */
@@ -165,6 +218,11 @@ export function runResultLabel(status: string): string {
 /** Whether a tenant ID or application ID could be right: the page checks before it asks. */
 export function looksLikeGuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s.trim());
+}
+
+/** Whether an administrator address could be right: one @ and a dotted domain. */
+export function looksLikeEmail(s: string): boolean {
+  return /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/.test(s.trim()) && !/\.\./.test(s) && !/@\./.test(s) && !/\.$/.test(s.trim());
 }
 
 export function looksLikeTenant(s: string): boolean {

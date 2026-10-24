@@ -342,23 +342,24 @@ var native = []Control{
 		Note:     "SPF, DKIM, DMARC, MTA-STS and TLS-RPT records published for declared domains, judged for whether spoofed mail would be rejected. This is the nearest 800-53 control; inbound spam filtering itself is not assessed.",
 	},
 
-	// --- Microsoft 365 identity posture (slice 12) -------------------------
-	// Read from the client's tenant through Microsoft Graph, read-only. These
+	// --- Microsoft 365 and Google Workspace identity posture (slices 12, 13) ----
+	// Read from the client's tenant through Microsoft Graph or Google's Admin SDK
+	// and Gmail settings APIs, read-only. These
 	// speak to the client's own accounts, not to DefendSec's console accounts
 	// (which IA-2(1), cis-v8:5.4, 6.3 and 6.5 above already cover).
 	{
 		ID: MustParseID("nist-800-53:IA-2(2)"), Family: "IA",
 		Title:    "Multi-factor authentication for non-privileged accounts",
 		Coverage: CoveragePartial,
-		Signals:  []Signal{SignalM365MFA},
-		Note:     "Whether each user of a Microsoft 365 tenant has registered a second factor, from the authentication methods registration report. Registered is not enforced: whether a sign-in is actually required to use it depends on Conditional Access or per-user settings DefendSec does not read.",
+		Signals:  []Signal{SignalM365MFA, SignalGWS2SV},
+		Note:     "Whether each user of a Microsoft 365 tenant has registered a second factor, from the authentication methods registration report, and whether each user of a Google Workspace domain is enrolled in 2-Step Verification and has it enforced. Registered is not enforced: for Microsoft 365, whether a sign-in is actually required to use it depends on Conditional Access or per-user settings DefendSec does not read.",
 	},
 	{
 		ID: MustParseID("nist-800-53:AC-6(5)"), Family: "AC",
 		Title:    "Least privilege: privileged accounts",
 		Coverage: CoveragePartial,
-		Signals:  []Signal{SignalM365Roles, SignalM365MFA},
-		Note:     "How many accounts hold Global Administrator in a Microsoft 365 tenant, and whether administrators have registered MFA. Roles held through a group, or eligible through Privileged Identity Management, are not read.",
+		Signals:  []Signal{SignalM365Roles, SignalM365MFA, SignalGWSAdmins, SignalGWS2SV},
+		Note:     "How many accounts hold Global Administrator in a Microsoft 365 tenant, or are super administrators of a Google Workspace domain, and whether administrators have registered MFA or enrolled in 2-Step Verification. Roles held through a group, or eligible through Privileged Identity Management, and what a Google delegated administrator may do, are not read.",
 	},
 	{
 		ID: MustParseID("nist-800-53:AC-17"), Family: "AC",
@@ -371,8 +372,8 @@ var native = []Control{
 		ID: MustParseID("nist-800-53:AC-4"), Family: "AC",
 		Title:    "Information flow enforcement — mail forwarded or hidden by inbox rules",
 		Coverage: CoveragePartial,
-		Signals:  []Signal{SignalM365MailRules},
-		Note:     "Inbox rules that forward or redirect mail outside the organisation, or hide it, read from each mailbox's rule definitions. Mailbox-level forwarding addresses and transport rules are Exchange Online settings Microsoft Graph does not expose, so they are not assessed.",
+		Signals:  []Signal{SignalM365MailRules, SignalGWSMailFilters},
+		Note:     "Inbox rules and Gmail filters that forward or redirect mail outside the organisation, or hide it, read from each mailbox's rule definitions, plus Gmail's per-user auto-forwarding setting. Mailbox-level forwarding addresses and transport rules are Exchange Online settings Microsoft Graph does not expose, and the Google domain's routing and compliance rules are Admin console settings the Gmail API does not expose, so they are not assessed.",
 	},
 
 	// --- Controls DefendSec deliberately cannot evidence ------------------

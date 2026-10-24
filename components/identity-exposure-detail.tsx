@@ -44,7 +44,7 @@ export function IdentityExposureDetail({ group, response }: { group: ExposureGro
           <dd>{f.subjectLabel}</dd>
           <dt className="text-muted-foreground">Check</dt>
           <dd>
-            {checkLabel(f.check)} · <code>{f.findingId}</code>
+            {checkLabel(f.check, f.provider)} · <code>{f.findingId}</code>
           </dd>
           {f.controls.length > 0 ? (
             <>
@@ -82,7 +82,7 @@ export function IdentityExposureDetail({ group, response }: { group: ExposureGro
           className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200"
           data-unconfirmed
         >
-          The latest read could not cover this: {state && !state.assessed ? `${checkLabel(f.check)} was not assessed (${state.reason || "no reason recorded"})` : "its mailbox could not be read"}.
+          The latest read could not cover this: {state && !state.assessed ? `${checkLabel(f.check, f.provider)} was not assessed (${state.reason || "no reason recorded"})` : "its mailbox could not be read"}.
           This finding is shown from its last confirmation, not from today.
         </p>
       ) : null}
@@ -98,9 +98,9 @@ export function IdentityExposureDetail({ group, response }: { group: ExposureGro
       </section>
 
       <p className="text-xs text-muted-foreground">
-        {group?.identity ? `${providerLabel(group.identity.provider)} · ${checkLabel(group.identity.check)}` : checkLabel(f.check)}. This is evidence of how the
+        {group?.identity ? `${providerLabel(group.identity.provider)} · ${checkLabel(group.identity.check, group.identity.provider)}` : checkLabel(f.check, f.provider)}. This is evidence of how the
         tenant is configured, not proof that anyone has abused it.{" "}
-        <Link href="/identity" className="underline">
+        <Link href={f.provider === "google" ? "/identity/google" : "/identity"} className="underline">
           All identity findings
         </Link>
       </p>

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"defendsec/internal/gws"
+	"defendsec/internal/idposture"
 	"defendsec/internal/m365"
 	"defendsec/internal/m365/graph"
 	"defendsec/internal/secret"
@@ -22,8 +24,11 @@ import (
 //	GET  /v1/identity/status        what is configured, the credentials' state (no secret), the counts, the latest run, what is not assessed (viewers)
 //	PUT  /v1/identity/m365/settings the tenant and how it is judged (admins)
 //	POST /v1/identity/m365/sync     {wait?}: read the tenant now (admins). 202 and a background read, or 200 with the run
-//	GET  /v1/identity/findings      ?resolved=1&check=: the findings (viewers)
-//	GET  /v1/identity/runs?limit=   the history of reads (viewers)
+//	GET  /v1/identity/findings      ?provider=m365|google&resolved=1&check=: the findings, of every provider unless one is named (viewers)
+//	GET  /v1/identity/runs          ?provider=m365|google&limit=: the history of reads, Microsoft 365's unless a provider is named (viewers)
+//
+// Google Workspace has its own status, settings and sync routes under
+// /v1/identity/google/ (gws.go), and shares the findings and runs routes.
 //
 // The certificate or client secret is never accepted over the API. apid reads
 // it from the file named in DEFENDSEC_M365_CERT_FILE (a PEM file with the RSA
@@ -212,12 +217,28 @@ func (s *Server) HandleIdentity(w http.ResponseWriter, r *http.Request) {
 		if methodOnly(w, r, http.MethodPost) && s.identityReady(w, r, true) {
 			s.m365Sync(w, r)
 		}
+	case "google/status":
+		if methodOnly(w, r, http.MethodGet) && s.identityReady(w, r, false) {
+			s.gwsStatus(w, r)
+		}
+	case "google/settings":
+		if methodOnly(w, r, http.MethodPut) && s.identityReady(w, r, true) {
+			s.gwsSettings(w, r)
+		}
+	case "google/sync":
+		if methodOnly(w, r, http.MethodPost) && s.identityReady(w, r, true) {
+			s.gwsSync(w, r)
+		}
 	case "findings":
 		if methodOnly(w, r, http.MethodGet) && s.identityReady(w, r, false) {
 			s.identityFindings(w, r)
 		}
 	case "runs":
 		if !methodOnly(w, r, http.MethodGet) || !s.identityReady(w, r, false) {
+			return
+		}
+		provider, ok := identityProviderParam(w, r, m365.Provider)
+		if !ok {
 			return
 		}
 		n := 20
@@ -228,7 +249,7 @@ func (s *Server) HandleIdentity(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		list, err := s.pg.ListIdentityRuns(r.Context(), m365.Provider, n)
+		list, err := s.pg.ListIdentityRuns(r.Context(), provider, n)
 		if err != nil {
 			s.log.Warn("list identity runs", "err", err)
 			http.Error(w, "could not read the history", http.StatusInternalServerError)
@@ -240,6 +261,19 @@ func (s *Server) HandleIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// identityProviderParam reads ?provider=: m365, google, or fallback when absent
+// ("" means every provider). A name it does not know is a 400.
+func identityProviderParam(w http.ResponseWriter, r *http.Request, fallback string) (string, bool) {
+	switch p := r.URL.Query().Get("provider"); p {
+	case "":
+		return fallback, true
+	case m365.Provider, gws.Provider:
+		return p, true
+	}
+	http.Error(w, "unknown provider: use m365 or google", http.StatusBadRequest)
+	return "", false
+}
+
 func (s *Server) identityStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	set, err := s.pg.GetM365Settings(ctx)
@@ -248,7 +282,7 @@ func (s *Server) identityStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not read the settings", http.StatusInternalServerError)
 		return
 	}
-	sum, err := s.pg.IdentityExposureSummary(ctx)
+	sum, err := s.pg.IdentityProviderSummary(ctx, m365.Provider)
 	if err != nil {
 		s.log.Warn("identity summary", "err", err)
 		http.Error(w, "could not read the identity state", http.StatusInternalServerError)
@@ -340,9 +374,13 @@ func (s *Server) m365Settings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) identityFindings(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	flt := storepg.IdentityFindingFilter{Provider: m365.Provider, Resolved: q.Get("resolved") == "1"}
+	provider, ok := identityProviderParam(w, r, "")
+	if !ok {
+		return
+	}
+	flt := storepg.IdentityFindingFilter{Provider: provider, Resolved: q.Get("resolved") == "1"}
 	if c := q.Get("check"); c != "" {
-		if _, ok := m365.CheckLabels[c]; !ok {
+		if _, ok := idposture.CheckLabels[c]; !ok {
 			http.Error(w, "unknown check", http.StatusBadRequest)
 			return
 		}

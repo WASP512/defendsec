@@ -2,27 +2,17 @@ package m365
 
 import (
 	"defendsec/internal/controls"
+	"defendsec/internal/idposture"
 	"fmt"
-	"sort"
 	"strings"
 )
 
-// DefaultFinanceTerms are the words and senders that mark mail a fraudster wants
-// hidden: the payment-redirection pattern of a business email compromise. They
-// match whole words, case-insensitively, in a rule's sender and keyword
-// conditions, so "ach" matches "ACH payment" and not "reach". The operator can
-// add terms (settings); the defaults are not removable, because a client that
-// never typed a term should still be covered.
-var DefaultFinanceTerms = []string{
-	"invoice", "payment", "remittance", "wire", "ach", "bank", "quickbooks", "intuit",
-	"payroll", "bill.com", "purchase order", "direct deposit",
-}
-
-// DefaultSecurityTerms are the words of the mail an attacker hides so the owner
-// does not see a security notice about the account itself.
-var DefaultSecurityTerms = []string{
-	"security alert", "password", "verification code", "sign-in", "suspicious", "unusual activity",
-}
+// DefaultFinanceTerms and DefaultSecurityTerms are shared with the other identity
+// collectors (internal/idposture).
+var (
+	DefaultFinanceTerms  = idposture.DefaultFinanceTerms
+	DefaultSecurityTerms = idposture.DefaultSecurityTerms
+)
 
 // DefaultHidingFolders are the folders a rule's mail disappears into: nobody
 // reads them. Names are English; a mailbox in another language names them
@@ -44,12 +34,7 @@ type RuleContext struct {
 
 // DefaultRuleContext returns the default word lists with the given domains.
 func DefaultRuleContext(internal map[string]bool, extraFinance []string) RuleContext {
-	fin := append([]string{}, DefaultFinanceTerms...)
-	for _, t := range extraFinance {
-		if t = strings.TrimSpace(t); t != "" {
-			fin = append(fin, t)
-		}
-	}
+	fin := idposture.WithExtraTerms(extraFinance)
 	return RuleContext{
 		InternalDomains: internal,
 		FinanceTerms:    fin,
@@ -58,47 +43,17 @@ func DefaultRuleContext(internal map[string]bool, extraFinance []string) RuleCon
 	}
 }
 
-func isAlnum(b byte) bool {
-	return b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
-}
-
-// containsTerm reports whether haystack contains term as a whole word (or
-// phrase), case-insensitively. A term that starts or ends with a letter or digit
-// must not be glued to another letter or digit there.
-func containsTerm(haystack, term string) bool {
-	h, t := strings.ToLower(haystack), strings.ToLower(strings.TrimSpace(term))
-	if t == "" {
-		return false
-	}
-	for from := 0; from <= len(h)-len(t); {
-		i := strings.Index(h[from:], t)
-		if i < 0 {
-			return false
-		}
-		i += from
-		end := i + len(t)
-		startOK := !isAlnum(t[0]) || i == 0 || !isAlnum(h[i-1])
-		endOK := !isAlnum(t[len(t)-1]) || end == len(h) || !isAlnum(h[end])
-		if startOK && endOK {
-			return true
-		}
-		from = i + 1
-	}
-	return false
-}
+func containsTerm(haystack, term string) bool { return idposture.ContainsTerm(haystack, term) }
 
 // conditionText is one of a rule's conditions with where it is.
-type conditionText struct {
-	where string // "sender", "subject keyword", "body keyword", "header keyword", "recipient"
-	text  string
-}
+type conditionText = idposture.ConditionText
 
 func (r InboxRule) texts() []conditionText {
 	var out []conditionText
 	add := func(where string, l []string) {
 		for _, s := range l {
 			if s = strings.TrimSpace(s); s != "" {
-				out = append(out, conditionText{where, s})
+				out = append(out, conditionText{Where: where, Text: s})
 			}
 		}
 	}
@@ -120,36 +75,13 @@ func (r InboxRule) hasAnyCondition() bool {
 	return r.hasMatchConditions() || len(r.OtherConditions) > 0
 }
 
-// match is a term found in a condition.
-type match struct {
-	Term  string `json:"term"`
-	Where string `json:"in"`
-}
+type match = idposture.Match
 
 func findTerms(texts []conditionText, terms []string) []match {
-	var out []match
-	seen := map[string]bool{}
-	for _, c := range texts {
-		for _, t := range terms {
-			if containsTerm(c.text, t) {
-				k := c.where + "\x00" + strings.ToLower(t)
-				if !seen[k] {
-					seen[k] = true
-					out = append(out, match{Term: strings.ToLower(t), Where: c.where})
-				}
-			}
-		}
-	}
-	return out
+	return idposture.FindTerms(texts, terms)
 }
 
-func domainOf(addr string) string {
-	i := strings.LastIndexByte(addr, '@')
-	if i < 0 || i == len(addr)-1 {
-		return ""
-	}
-	return strings.ToLower(strings.TrimSpace(addr[i+1:]))
-}
+func domainOf(addr string) string { return idposture.DomainOf(addr) }
 
 // externalRecipients are the addresses a rule sends mail to outside the
 // internal domains. An address with no domain (an Exchange legacy DN) is not
@@ -175,18 +107,7 @@ func (c RuleContext) externalRecipients(r InboxRule) (ext []string, kinds []stri
 	return dedupe(ext), kinds
 }
 
-func dedupe(l []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, s := range l {
-		k := strings.ToLower(s)
-		if !seen[k] {
-			seen[k] = true
-			out = append(out, s)
-		}
-	}
-	return out
-}
+func dedupe(l []string) []string { return idposture.Dedupe(l) }
 
 func (c RuleContext) isHidingFolder(name string) bool {
 	for _, f := range c.HidingFolders {
@@ -299,26 +220,9 @@ func conditionSummary(r InboxRule) string {
 	return "mail " + strings.Join(parts, " and ")
 }
 
-func quoteList(l []string) string {
-	q := make([]string, len(l))
-	for i, s := range l {
-		q[i] = "“" + s + "”"
-	}
-	return strings.Join(q, ", ")
-}
+func quoteList(l []string) string { return idposture.QuoteList(l) }
 
-func termList(ms []match) string {
-	seen := map[string]bool{}
-	var t []string
-	for _, m := range ms {
-		if !seen[m.Term] {
-			seen[m.Term] = true
-			t = append(t, m.Term)
-		}
-	}
-	sort.Strings(t)
-	return strings.Join(t, ", ")
-}
+func termList(ms []match) string { return idposture.TermList(ms) }
 
 const ruleFix = "Ask the mailbox owner whether they made this rule. If they did not, treat the account as possibly compromised: reset the password, sign the user out of every session, review recent sign-ins and the sent items for payment requests, remove the rule, and look for other rules and forwarding on the mailbox. " +
 	"To review rules: Outlook, Home > Rules > Manage Rules & Alerts, or Outlook on the web, Settings > Mail > Rules. If the rule is legitimate, nothing needs doing and it can be left as is."

@@ -22,7 +22,7 @@ export type ExposureSource = "vulnerability" | "surface" | "identity";
 /** The part of an identity row (slice 12) the list needs; the drawer fetches the rest. */
 export type IdentityRow = {
   findingId: number;
-  /** "m365" (later "google"). */
+  /** "m365" or "google". */
   provider: string;
   /** What a person reads: a user principal name, "user · rule name", or the tenant. */
   subject: string;
@@ -255,7 +255,10 @@ export type SurfaceSummary = {
 
 export type IdentitySummary = {
   configured: boolean;
+  /** The configured provider, or both joined by a comma; "m365" when none. */
   provider: string;
+  /** The configured providers ("m365", "google"). Absent from a control plane older than slice 13. */
+  providers?: string[];
   /** Open findings; all of them rank. */
   findings: number;
   bySeverity: Record<string, number>;
