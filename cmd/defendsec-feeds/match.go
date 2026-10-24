@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"defendsec/internal/hostinv"
+	"defendsec/internal/repohealth"
 	"defendsec/internal/vuln"
 )
 
@@ -41,6 +42,16 @@ type matchReport struct {
 	Open      int            `json:"openFindings"` // fixable: same number as Counts.Fixable
 	Counts    matchCounts    `json:"counts"`
 	Findings  []matchFinding `json:"findings"`
+	// PendingUpdates says whether the host's pending-updates list can be
+	// believed, with the reasons when it cannot; "unassessed" when the
+	// inventory carries no repository evidence.
+	PendingUpdates pendingVerdict `json:"pendingUpdates"`
+}
+
+type pendingVerdict struct {
+	Reliability string   `json:"reliability"`
+	Reasons     []string `json:"reasons"`
+	Repos       int      `json:"repositories"`
 }
 
 // kindCounts is one tally of findings by what the operator can do about them.
@@ -59,6 +70,9 @@ type kindCounts struct {
 	// support. The fix is an upgrade; it counts with "fix this week" but is
 	// not a patch, so it is not in Fixable.
 	EOL int `json:"eol"`
+	// RepoHealth: package repositories with an expired or missing signing key
+	// or a stale index. The fix is work for this week; it is not a patch.
+	RepoHealth int `json:"repoHealth"`
 }
 
 // matchCounts tallies all findings, and again only those on the CISA KEV list.
@@ -86,6 +100,8 @@ func countFindings(fs []vuln.Finding) matchCounts {
 				t.Informational++
 			case vuln.KindEOL:
 				t.EOL++
+			case vuln.KindRepoHealth:
+				t.RepoHealth++
 			}
 		}
 	}
@@ -93,7 +109,7 @@ func countFindings(fs []vuln.Finding) matchCounts {
 }
 
 func (k kindCounts) line() string {
-	return fmt.Sprintf("%d fixable, %d awaiting_vendor, %d no_fix, %d informational, %d eol", k.Fixable, k.AwaitingVendor, k.NoFix, k.Informational, k.EOL)
+	return fmt.Sprintf("%d fixable, %d awaiting_vendor, %d no_fix, %d informational, %d eol, %d repo_health", k.Fixable, k.AwaitingVendor, k.NoFix, k.Informational, k.EOL, k.RepoHealth)
 }
 
 type matchFinding struct {
@@ -117,6 +133,8 @@ type matchFinding struct {
 	// EOL is set on end-of-life findings: the release, its end date, where the
 	// packages came from and what to upgrade to.
 	EOL *vuln.EOLDetail `json:"eol,omitempty"`
+	// Repo is set on repository-health findings.
+	Repo *vuln.RepoDetail `json:"repo,omitempty"`
 }
 
 // cmdMatch runs the matcher over a package inventory against the advisory
@@ -131,7 +149,8 @@ func cmdMatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	dbURL := fs.String("db-url", "", "Postgres URL (default: DEFENDSEC_DATABASE_URL or DATABASE_URL)")
 	asJSON := fs.Bool("json", false, "print the full result as JSON")
 	all := fs.Bool("all", false, "also list entries with no fix at all (no_fix, will_not_fix, under_investigation); awaiting_vendor and eol are always listed")
-	asOf := fs.String("as-of", "", "judge application end-of-life on this day, YYYY-MM-DD (default: today), to reproduce a run")
+	asOf := fs.String("as-of", "", "judge application end-of-life and repository freshness on this day, YYYY-MM-DD (default: today), to reproduce a run")
+	staleDays := fs.Int("stale-days", 7, "a repository index older than this many days without a refresh is a finding")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -163,7 +182,8 @@ func cmdMatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	defer closeDB()
 
-	host := vuln.Host{Distro: inv.Distro, Release: inv.DistroRelease, PackageManager: inv.PackageManager, AsOf: asOfDay}
+	host := vuln.Host{Distro: inv.Distro, Release: inv.DistroRelease, PackageManager: inv.PackageManager, AsOf: asOfDay,
+		RepoHealth: inv.RepoHealth, StaleAfter: time.Duration(*staleDays) * 24 * time.Hour}
 	for _, sw := range inv.Software {
 		host.Packages = append(host.Packages, vuln.Package{
 			Name: sw.Name, Version: sw.Version, SourcePackage: sw.SourcePackage, SourceVersion: sw.SourceVersion,
@@ -178,22 +198,35 @@ func cmdMatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if snap, ok, err := store.LatestFeedSnapshot(ctx); err == nil && ok {
 		snapID = &snap.ID
 	}
-	return printMatch(stdout, path, res, snapID, *asJSON, *all)
+	verdict := pendingVerdict{Reliability: string(repohealth.Unassessed), Reasons: []string{}}
+	if inv.RepoHealth != nil && !inv.RepoHealth.Empty() {
+		asm := repohealth.Assess(*inv.RepoHealth, repoAsOf(asOfDay), host.StaleAfter)
+		verdict = pendingVerdict{Reliability: string(asm.Reliability), Reasons: asm.Reasons, Repos: asm.Checked}
+	}
+	return printMatch(stdout, path, res, snapID, *asJSON, *all, verdict)
 }
 
-func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON, all bool) error {
+func repoAsOf(day time.Time) time.Time {
+	if day.IsZero() {
+		return time.Now()
+	}
+	return day
+}
+
+func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON, all bool, verdict pendingVerdict) error {
 	open := res.Open()
 	if asJSON {
 		rep := matchReport{
 			Inventory: path, Distro: res.Distro, Release: res.Release, Coverage: string(res.Coverage),
 			Snapshot: snapID, Stats: res.Stats, Open: len(open), Counts: countFindings(res.Findings), Findings: []matchFinding{},
+			PendingUpdates: verdict,
 		}
 		for _, f := range res.Findings {
 			rep.Findings = append(rep.Findings, matchFinding{
 				AdvisoryID: f.AdvisoryID, CVE: f.CVE, RangeID: f.RangeID, SnapshotID: f.SnapshotID, Feed: f.Feed,
 				FeedDate: f.FeedDate, Kind: string(f.Kind), Basis: string(f.Basis), Package: f.Package,
 				SourcePackage: f.SourcePackage, Installed: f.Installed, Fixed: f.Fixed, FixState: f.FixState,
-				Severity: f.Severity, KEV: f.KEV, EPSS: f.EPSS, Reason: f.Reason, EOL: f.EOL,
+				Severity: f.Severity, KEV: f.KEV, EPSS: f.EPSS, Reason: f.Reason, EOL: f.EOL, Repo: f.Repo,
 			})
 		}
 		enc := json.NewEncoder(w)
@@ -214,13 +247,17 @@ func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON
 			res.Stats.DistroMapped, res.Stats.Upstream, res.Stats.Undecidable, res.Stats.Advisories, res.Stats.NotAffected)
 		fmt.Fprintf(w, "app eol:    %d mapped to a product: %d the distribution's own (not judged), %d origin unknown (not assessed), %d no release data (not assessed), %d supported\n",
 			res.Stats.EOLMapped, res.Stats.EOLDistroOrigin, res.Stats.EOLOriginUnknown, res.Stats.EOLNoRelease, res.Stats.EOLSupported)
+		fmt.Fprintf(w, "repos:      %d checked, %d with a problem; pending updates: %s\n", res.Stats.RepoHealthChecked, res.Stats.RepoHealthFindings, verdict.Reliability)
+		for _, r := range verdict.Reasons {
+			fmt.Fprintf(w, "            - %s\n", r)
+		}
 		counts := countFindings(res.Findings)
 		fmt.Fprintf(w, "result:     %s\n", counts.line())
 		fmt.Fprintf(w, "kev:        %s\n", counts.KEV.line())
 		tw := tabwriter.NewWriter(w, 0, 8, 2, ' ', 0)
 		shown := 0
 		for _, f := range res.Findings {
-			if f.Kind != vuln.KindFinding && f.Kind != vuln.KindAwaitingVendor && f.Kind != vuln.KindEOL && !all {
+			if f.Kind != vuln.KindFinding && f.Kind != vuln.KindAwaitingVendor && f.Kind != vuln.KindEOL && f.Kind != vuln.KindRepoHealth && !all {
 				continue
 			}
 			if shown == 0 {
@@ -241,6 +278,9 @@ func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON
 					fixed = "upgrade to " + f.EOL.UpgradeTo
 				}
 			}
+			if f.Kind == vuln.KindRepoHealth {
+				note, fixed = f.Summary, "see fix text"
+			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", f.Severity, kev, firstNonEmpty(f.CVE, f.AdvisoryID),
 				f.Package, f.Installed, fixed, kindLabel(f.Kind), f.Feed, note)
 		}
@@ -251,8 +291,9 @@ func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON
 	switch {
 	case res.Coverage != vuln.CoverageFull:
 		return exitError{exitUnassessed, fmt.Sprintf("not assessed: no advisory feed covers this host (coverage %s)", res.Coverage)}
-	case len(open) > 0 || countFindings(res.Findings).EOL > 0:
-		return exitError{exitFindings, fmt.Sprintf("%d open findings, %d end-of-life", len(open), countFindings(res.Findings).EOL)}
+	case len(open) > 0 || countFindings(res.Findings).EOL > 0 || countFindings(res.Findings).RepoHealth > 0:
+		c := countFindings(res.Findings)
+		return exitError{exitFindings, fmt.Sprintf("%d open findings, %d end-of-life, %d repository problems", len(open), c.EOL, c.RepoHealth)}
 	}
 	return nil
 }

@@ -168,11 +168,12 @@ export function ExposureList({ query, page }: { query: ExposureListQuery; page: 
                     scroll={false}
                     className="font-medium underline-offset-2 hover:underline"
                   >
-                    {g.eol ? `${g.eol.productLabel} ${g.eol.cycle}` : g.cve || g.advisoryId}
+                    {g.eol ? `${g.eol.productLabel} ${g.eol.cycle}` : g.repo ? g.repo.label : g.cve || g.advisoryId}
                   </Link>
                   {g.eol ? (
                     <Badge variant="outline">{g.eol.stage === "eol" ? "End of life" : "Past active support"}</Badge>
                   ) : null}
+                  {g.repo ? <Badge variant="outline">Package repository</Badge> : null}
                   {g.cve && g.cve !== g.advisoryId ? (
                     <span className="text-xs text-muted-foreground">{g.advisoryId}</span>
                   ) : null}
@@ -186,7 +187,7 @@ export function ExposureList({ query, page }: { query: ExposureListQuery; page: 
                   {hostsLabel(g)}
                   <span className="text-muted-foreground">
                     {" — "}
-                    {g.packages.join(", ")}
+                    {g.repo ? g.repo.manager : g.packages.join(", ")}
                     {watch ? ` · ${watchLabel(g)}` : ` · ${fixedLabel(g)}`}
                   </span>
                 </p>

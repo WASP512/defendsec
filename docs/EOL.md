@@ -24,7 +24,10 @@ The agent reads the origin without changing anything (`internal/hostinv/origin.g
   distribution wins. A version no repository carries any more has no origin; the server then looks for third-party
   signatures in the version string (`sury`, `nodesource`, `pgdg`, `+maria~`, `.remi`, `1rl1`, `ppa`) and otherwise leaves
   it unknown. A Release file whose `Origin:` names nothing (NodeSource's says `. nodistro`) is replaced by the
-  repository's host. Repository addresses are reported with credentials and query strings removed.
+  repository's host. Repository addresses are reported with credentials and query strings removed. Run as root,
+  `apt-cache policy` rewrites `/var/cache/apt/pkgcache.bin` when it is missing or older than the indexes, so the agent
+  passes `-o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache=` and apt builds the cache in memory instead (measured on a
+  real host in [VERIFIED.md](VERIFIED.md), slice 11).
 - **rpm:** the `Vendor` tag, and the `Packager` (e-mail address removed) as evidence or when the vendor is blank. A
   Rocky package's vendor is the Rocky Enterprise Software Foundation; an EPEL package says `Fedora Project`, which on a
   Rocky or RHEL host is a third party and is treated as one.

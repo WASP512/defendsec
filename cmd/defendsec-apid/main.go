@@ -179,6 +179,16 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer tracer.Shutdown(context.Background())
+	// How old a package repository's index may be before it is a finding. The
+	// agent reports what it read and the server judges, so this is one setting
+	// for the fleet and changing it re-judges hosts at their next report.
+	if v := strings.TrimSpace(os.Getenv("DEFENDSEC_REPO_STALE_DAYS")); v != "" {
+		days, err := strconv.Atoi(v)
+		if err != nil || days < 1 || days > 365 {
+			return fmt.Errorf("DEFENDSEC_REPO_STALE_DAYS must be a whole number of days between 1 and 365, got %q", v)
+		}
+		svc.SetRepoStaleAfter(time.Duration(days) * 24 * time.Hour)
+	}
 	if viewer := strings.TrimSpace(os.Getenv("DEFENDSEC_VIEWER_TOKEN")); viewer != "" {
 		svc.SetViewerToken(viewer)
 		log.Info("viewer token enabled (GET-only admin API)")

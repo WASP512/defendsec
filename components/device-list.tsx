@@ -94,7 +94,14 @@ export function DeviceList({ query, page }: { query: DeviceListQuery; page: Devi
                   <TableCell className="hidden md:table-cell">{d.username || "—"}</TableCell>
                   <TableCell className="hidden lg:table-cell">
                     {d.softwareCount}
-                    {d.pendingUpdates ? <span className="text-muted-foreground"> · {d.pendingUpdates} updates</span> : null}
+                    {d.patchReliability === "unreliable" ? (
+                      <span className="text-amber-700 dark:text-amber-400" title={d.patchReason} data-patch-unreliable>
+                        {" · "}
+                        {d.pendingUpdates ? `${d.pendingUpdates} updates, list unreliable` : "updates unreliable"}
+                      </span>
+                    ) : d.pendingUpdates ? (
+                      <span className="text-muted-foreground"> · {d.pendingUpdates} updates</span>
+                    ) : null}
                   </TableCell>
                   <TableCell><OnlineBadge online={d.online} /></TableCell>
                   <TableCell className="hidden text-muted-foreground sm:table-cell">{relativeTime(d.lastSeen)}</TableCell>

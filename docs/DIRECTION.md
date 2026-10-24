@@ -159,7 +159,7 @@ detection or response. Slice 8 (the Datto RMM collector) is already in the plan.
 | Slice | Content | Owner | Done when |
 | ---: | --- | --- | --- |
 | 10 | **Application end-of-life.** Software from third-party repositories (Sury PHP, PGDG, NodeSource, ...) checked against endoflife.date through the feed pipeline. The distribution's own packages are never judged: they follow the distribution's lifecycle. See [EOL.md](EOL.md) | scout | A third-party PHP 8.0 host gives one finding naming PHP 8.0 and 2023-11-26; patched Ubuntu and Rocky hosts give none |
-| 11 | **Repository health.** Expired repository keys and stale package indexes, which hide pending updates. "Pending updates" are marked unreliable until the indexes are fresh | scout | A host with a stale index or an expired key is flagged and its pending-update count says it cannot be trusted |
+| 11 | **Repository health.** Expired repository keys and stale package indexes, which hide pending updates. "Pending updates" are marked unreliable until the indexes are fresh. See [REPO_HEALTH.md](REPO_HEALTH.md) | scout | A host with a stale index or an expired key is flagged and its pending-update count says it cannot be trusted |
 | 12 | **Microsoft 365 identity posture.** MFA coverage, legacy authentication, admin roles, hiding and forwarding inbox rules (the business-email-compromise lesson) | lookout | A real read-only run against a tenant Mason creates the credentials for |
 | 13 | **Google Workspace identity posture.** The same questions for Google Workspace | lookout | A real read-only run against a test domain |
 | 14 | **Autotask tickets.** "Fix this week" items opened as tickets in the MSP's Autotask | lookout | A real ticket created from a real finding in a test queue |

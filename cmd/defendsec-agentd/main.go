@@ -33,6 +33,7 @@ import (
 	"defendsec/internal/agentfim"
 	defendsecv1 "defendsec/internal/gen/defendsec/v1"
 	"defendsec/internal/hostinv"
+	"defendsec/internal/repohealth"
 	"defendsec/internal/sca"
 	"defendsec/internal/sign"
 )
@@ -567,6 +568,7 @@ func inventoryReport(log *slog.Logger, snap hostinv.Snapshot, stateDir string) *
 		Distro:         snap.Distro,
 		DistroRelease:  snap.DistroRelease,
 		PackageManager: snap.PackageManager,
+		RepoHealth:     repohealth.ToProto(snap.RepoHealth),
 	}
 	rep.Host.Hostname = snap.Hostname
 	rep.Host.OsName = snap.OSName
