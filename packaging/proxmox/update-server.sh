@@ -194,7 +194,10 @@ apply_release() {
   exec 9>"${DATA_DIR}/update.lock"
   flock -n 9 || die "another server update is already running"
 
-  local work version apid_name arch release_dir previous_console="" backup_path
+  # `work` is deliberately not local: the EXIT trap runs after this function has
+  # returned, when a local would be gone (set -u then fails the trap, leaving the
+  # downloaded release behind and the exit status 1 after a successful update).
+  local version apid_name arch release_dir previous_console="" backup_path
   work="$(mktemp -d "${DATA_DIR}/update-work.XXXXXX")"
   trap 'rm -f "$REQUEST_FILE"; rm -rf "$work"' EXIT
   write_status downloading "Downloading and verifying release"
