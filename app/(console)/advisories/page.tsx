@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { FindingActions } from "@/components/finding-actions";
-import { CoverageBanner, FindingSummary } from "@/components/finding-summary";
+import { CoverageBanner, ExploitedAwaitingBanner, FindingSummary } from "@/components/finding-summary";
 import { ActivityItem, ActivityList, EmptyState, PageHeader } from "@/components/console-ui";
 import { FeedAgeBanner } from "@/components/feed-age-banner";
 import { ensureStore } from "@/lib/store";
 import { getFeedStatus } from "@/lib/feeds";
 import { getFindings, getFindingsSummary } from "@/lib/findings";
-import { findingStatus } from "@/lib/findings-model";
+import { exploitedAwaitingNotice, findingStatus } from "@/lib/findings-model";
 import { listAlerts } from "@/lib/alerts";
 import { isReadOnlySession } from "@/lib/auth";
 import { ShieldCheck } from "lucide-react";
@@ -28,6 +28,9 @@ export default async function AdvisoriesPage() {
   const findings = result?.findings ?? [];
   const unassessed = summaries ? [...summaries.values()].filter((s) => s.coverage !== "covered").length : 0;
   const unfixed = summaries ? [...summaries.values()].reduce((n, s) => n + s.unfixed, 0) : 0;
+  const awaiting = summaries ? [...summaries.values()].reduce((n, s) => n + s.awaitingVendor, 0) : 0;
+  const kevAwaiting = summaries ? [...summaries.values()].reduce((n, s) => n + s.kevAwaitingVendor, 0) : 0;
+  const exploited = exploitedAwaitingNotice(kevAwaiting);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -43,6 +46,7 @@ export default async function AdvisoriesPage() {
         }
       />
       <FeedAgeBanner status={feedStatus} />
+      {exploited ? <ExploitedAwaitingBanner notice={exploited} /> : null}
       {result === null ? (
         <CoverageBanner
           notice={{
@@ -69,11 +73,18 @@ export default async function AdvisoriesPage() {
       {result !== null && findings.length === 0 ? (
         <EmptyState
           title="No findings with a fix available"
-          description={
+          description={[
+            "No assessed host has a vulnerability with a fix to install.",
+            awaiting > 0
+              ? `${awaiting} ${awaiting === 1 ? "is" : "are"} fixed upstream by Red Hat but not yet released by Rocky Linux or AlmaLinux.`
+              : "",
             unfixed > 0
-              ? `No assessed host has a vulnerability with a fix to install. ${unfixed} finding${unfixed === 1 ? " has" : "s have"} no fix published yet; they are listed on each host.`
-              : "No assessed host has a vulnerability with a fix to install."
-          }
+              ? `${unfixed} finding${unfixed === 1 ? " has" : "s have"} no fix published yet.`
+              : "",
+            awaiting > 0 || unfixed > 0 ? "They are listed on each host." : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           icon={ShieldCheck}
         />
       ) : (

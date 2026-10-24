@@ -15,7 +15,9 @@ It replaces `scripts/ingest-osv.py`, which sent the fleet's package names to `ap
 | `epss` | FIRST EPSS CSV (gz) | `advisories.epss`, `epss_date` | ~395k scores; only advisories that exist are updated. |
 | `ubuntu-<codename>` | Canonical USN OVAL (`com.ubuntu.<codename>.usn.oval.xml.bz2`) | ranges, `distro=ubuntu`, `release=22.04` … | One range per **binary** package, with the source package alongside. |
 | `debian` | Debian Security Tracker JSON | ranges, `distro=debian`, `release=12`/`13` | Includes `not_affected`, `will_not_fix`, `under_investigation`. Keyed by **source** package. |
-| `rhel-8`, `rhel-9` | Red Hat OVAL v2 (`rhel-N.oval.xml.bz2`) | ranges, `distro=rhel`, `release=8`/`9` | Fixed errata only. |
+| `rhel-8`, `rhel-9` | Red Hat OVAL v2 (`rhel-N.oval.xml.bz2`) | ranges, `distro=rhel`, `release=8`/`9` | Fixed errata only. Each range carries the erratum's issue date (`advisory_ranges.issued`). |
+| `rocky-8`, `rocky-9` | Rocky Linux errata service (Apollo), `/v2/advisories`, walked page by page | ranges, `distro=rocky`, `release=8`/`9` | What **Rocky has released**, as opposed to what Red Hat has. See "Rebuild distributions" below. |
+| `almalinux-8`, `almalinux-9` | AlmaLinux `errata.full.json` (`https://errata.almalinux.org/N/errata.full.json`, 30-45 MB) | ranges, `distro=almalinux`, `release=8`/`9` | What **Alma has released**. Same section. |
 | `suse-leap-16.0`, `suse-tumbleweed` (`suse-leap-15.6` available) | SUSE per-CVE OVAL, `-affected` variant | ranges, `distro=opensuse-leap`/`opensuse-tumbleweed` | `fixed`, `affected` (no fix yet) and `not_affected`. |
 | `osv-<ecosystem>` | OSV bulk `<ECOSYSTEM>/all.zip` | ranges with no distro, `ecosystem=PyPI` … | **Off by default.** For software the fleet runs outside the package manager. |
 
@@ -29,9 +31,8 @@ These are decisions the parsers made so slice 4's matcher can rely on them.
 
 - **`distro` is the `/etc/os-release` `ID`, `release` is its `VERSION_ID`** (`ubuntu`/`22.04`,
   `debian`/`12`, `rhel`/`9`, `opensuse-leap`/`16.0`). `opensuse-tumbleweed` is rolling and has a
-  NULL release. AlmaLinux and Rocky rebuild RHEL with the same package versions: a matcher should
-  map them (and CentOS Stream) onto `distro=rhel` and the **major** version, rather than DefendSec
-  storing every row three times.
+  NULL release. CentOS Stream and Oracle Linux are matched onto `distro=rhel` and the **major**
+  version. Rocky and AlmaLinux are matched against **both** their own feed and RHEL's (see below).
 - **`fix_state`**: `fixed` means "installed older than `fixed` is vulnerable"; `not_affected` and
   `will_not_fix` and `under_investigation` carry no version; `affected` means affected with no fix
   published.
@@ -44,6 +45,44 @@ These are decisions the parsers made so slice 4's matcher can rely on them.
   `Source` field) first. Ubuntu OVAL does list binaries.
 - **Epochs are kept as published** (`1:3.0.1-43.el9_0`, `0:2.470.0-160000.3.1`). Use the dpkg/rpm
   comparators in `internal/vuln`, which understand them.
+
+### Rebuild distributions (Rocky, AlmaLinux)
+
+Rocky and Alma rebuild Red Hat's packages and publish their own errata only after the rebuild, so
+a fix reaches them days after it reaches RHEL. Matching a Rocky host against Red Hat's feed alone
+reported fixes the operator could not install (measured 2026-10-24: eight kernel CVEs on a patched
+Rocky 9.8, fixed upstream in `5.14.0-687.60.1`, with Rocky's newest published kernel at `687.59.1`).
+So these hosts are matched against two feeds, and the finding says which one the fix came from:
+
+- Rocky/Alma's own errata cover the CVE: that erratum's fixed version is the fix to install.
+- Only Red Hat has the fix: the finding is **`awaiting_vendor`** ("fixed upstream by Red Hat in
+  `<version>` on `<date>`; not yet released by Rocky Linux"). It is not fixable, and it flips to
+  fixable by itself on the first sync after the rebuild ships.
+
+CentOS Stream and RHEL keep using Red Hat's feed directly. A Rocky or Alma host is only reported as
+assessed when its own feed is loaded; with Red Hat's feed alone it is `no_feed`, because that feed
+cannot say whether the rebuild shipped anything. All four rebuild feeds are on by default.
+
+How the sources were checked (2026-10-24), because the first guess about Rocky's API was wrong:
+
+- **Rocky.** `https://apollo.build.resf.org/api/v3/advisories/` **ignores every filter** (`cve`,
+  `product`, `kind`, `after_raw`, and the `filters.`-prefixed forms all returned the same 10,198
+  advisories), caps `size` at 100, and a page of 100 is 2.7 MB. `/v2/advisories` honours
+  `filters.product=Rocky Linux 9`, `filters.type=TYPE_SECURITY` and `filters.cve`, takes
+  `limit` (at most 100) and a zero-based `page`, and returns 1,558 release-9 security advisories in 16
+  pages. DefendSec walks that, with only the release and the page number in the query. A walk takes
+  about 1 to 4 minutes per release (the service answers a page in roughly 5 s).
+- **Apollo quirks the walker handles.** Its `total` counts ten advisories twice (same name, same
+  content), so the walk compares the records *received* with `total` and stores each name once; and
+  the order of the CVEs and packages inside an advisory changes between requests, so the stored file
+  keeps only the fields the parser reads, with lists sorted. The stored file is
+  `{"advisories":[...]}` (about 6 MB for release 9, 9 MB for release 8), identical bytes for identical
+  data: a second sync reports `unchanged`. A walk that comes back empty or short is refused and the
+  loaded data stays.
+- **Alma.** `errata.full.json` is one document (`schema_version`, `data`), streamed while parsed.
+
+Both parsers skip module-stream builds, source RPMs and errata without a CVE, and count what they
+skipped in the sync output.
 
 ### What is deliberately not covered (and counted, not guessed)
 
@@ -124,8 +163,13 @@ defendsec-feeds match inv.json                       # read-only: stores nothing
 defendsec-feeds match --json --all inv.json          # full result, including unfixed/informational
 ```
 
-Exit status: 0 no findings with a fix available, 2 at least one, 3 not assessed (no feed covers
-the host's distro and release). See [MATCHING.md](MATCHING.md).
+Output (and `--json`'s `counts`) tallies the findings as **fixable** (a fix is released for this
+host's distribution), **awaiting_vendor** (fixed by Red Hat, not yet released by Rocky/Alma),
+**no_fix** (affected, no fix anywhere) and **informational**, then repeats the tally for the CISA
+KEV entries among them. `awaiting_vendor` rows are always listed; `--all` adds the other two.
+
+Exit status: 0 no *fixable* findings, 2 at least one, 3 not assessed (no feed covers the host's
+distro and release). `awaiting_vendor` never makes the status 2. See [MATCHING.md](MATCHING.md).
 
 ## Air-gapped installs
 

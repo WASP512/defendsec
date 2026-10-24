@@ -38,8 +38,56 @@ type matchReport struct {
 	Coverage  string         `json:"coverage"`
 	Snapshot  *int64         `json:"latestSnapshotId"`
 	Stats     vuln.Stats     `json:"stats"`
-	Open      int            `json:"openFindings"`
+	Open      int            `json:"openFindings"` // fixable: same number as Counts.Fixable
+	Counts    matchCounts    `json:"counts"`
 	Findings  []matchFinding `json:"findings"`
+}
+
+// kindCounts is one tally of findings by what the operator can do about them.
+type kindCounts struct {
+	// Fixable: a fix is released for this host's distribution and can be
+	// installed. The only bucket that is "fix this week".
+	Fixable int `json:"fixable"`
+	// AwaitingVendor: fixed upstream by Red Hat, not yet released by the rebuild
+	// (Rocky, AlmaLinux) the host runs. Nothing to install yet.
+	AwaitingVendor int `json:"awaitingVendor"`
+	// NoFix: affected, and no fix is published anywhere.
+	NoFix int `json:"noFix"`
+	// Informational: will not fix, or under investigation.
+	Informational int `json:"informational"`
+}
+
+// matchCounts tallies all findings, and again only those on the CISA KEV list.
+type matchCounts struct {
+	kindCounts
+	KEV kindCounts `json:"kev"`
+}
+
+func countFindings(fs []vuln.Finding) matchCounts {
+	var c matchCounts
+	for _, f := range fs {
+		tallies := []*kindCounts{&c.kindCounts}
+		if f.KEV {
+			tallies = append(tallies, &c.KEV)
+		}
+		for _, t := range tallies {
+			switch f.Kind {
+			case vuln.KindFinding:
+				t.Fixable++
+			case vuln.KindAwaitingVendor:
+				t.AwaitingVendor++
+			case vuln.KindUnfixed:
+				t.NoFix++
+			case vuln.KindInformational:
+				t.Informational++
+			}
+		}
+	}
+	return c
+}
+
+func (k kindCounts) line() string {
+	return fmt.Sprintf("%d fixable, %d awaiting_vendor, %d no_fix, %d informational", k.Fixable, k.AwaitingVendor, k.NoFix, k.Informational)
 }
 
 type matchFinding struct {
@@ -59,6 +107,7 @@ type matchFinding struct {
 	Severity      string     `json:"severity"`
 	KEV           bool       `json:"kev"`
 	EPSS          *float64   `json:"epss"`
+	Reason        string     `json:"reason"`
 }
 
 // cmdMatch runs the matcher over a package inventory against the advisory
@@ -72,7 +121,7 @@ func cmdMatch(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	fs.SetOutput(stderr)
 	dbURL := fs.String("db-url", "", "Postgres URL (default: DEFENDSEC_DATABASE_URL or DATABASE_URL)")
 	asJSON := fs.Bool("json", false, "print the full result as JSON")
-	all := fs.Bool("all", false, "also list entries with no fix to install (unfixed, will_not_fix, under_investigation)")
+	all := fs.Bool("all", false, "also list entries with no fix at all (no_fix, will_not_fix, under_investigation); awaiting_vendor is always listed")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -118,14 +167,14 @@ func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON
 	if asJSON {
 		rep := matchReport{
 			Inventory: path, Distro: res.Distro, Release: res.Release, Coverage: string(res.Coverage),
-			Snapshot: snapID, Stats: res.Stats, Open: len(open), Findings: []matchFinding{},
+			Snapshot: snapID, Stats: res.Stats, Open: len(open), Counts: countFindings(res.Findings), Findings: []matchFinding{},
 		}
 		for _, f := range res.Findings {
 			rep.Findings = append(rep.Findings, matchFinding{
 				AdvisoryID: f.AdvisoryID, CVE: f.CVE, RangeID: f.RangeID, SnapshotID: f.SnapshotID, Feed: f.Feed,
 				FeedDate: f.FeedDate, Kind: string(f.Kind), Basis: string(f.Basis), Package: f.Package,
 				SourcePackage: f.SourcePackage, Installed: f.Installed, Fixed: f.Fixed, FixState: f.FixState,
-				Severity: f.Severity, KEV: f.KEV, EPSS: f.EPSS,
+				Severity: f.Severity, KEV: f.KEV, EPSS: f.EPSS, Reason: f.Reason,
 			})
 		}
 		enc := json.NewEncoder(w)
@@ -144,24 +193,29 @@ func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON
 		fmt.Fprintf(w, "coverage:   %s (latest feed snapshot %s)\n", res.Coverage, snap)
 		fmt.Fprintf(w, "examined:   %d distro-mapped, %d against upstream floors, %d undecidable, %d advisories, %d marked not-affected\n",
 			res.Stats.DistroMapped, res.Stats.Upstream, res.Stats.Undecidable, res.Stats.Advisories, res.Stats.NotAffected)
-		fmt.Fprintf(w, "result:     %d findings (fix available), %d unfixed (no fix published), %d informational (will not fix / investigating)\n",
-			len(open), res.Stats.Unfixed, res.Stats.Informational)
+		counts := countFindings(res.Findings)
+		fmt.Fprintf(w, "result:     %s\n", counts.line())
+		fmt.Fprintf(w, "kev:        %s\n", counts.KEV.line())
 		tw := tabwriter.NewWriter(w, 0, 8, 2, ' ', 0)
 		shown := 0
 		for _, f := range res.Findings {
-			if f.Kind != vuln.KindFinding && !all {
+			if f.Kind != vuln.KindFinding && f.Kind != vuln.KindAwaitingVendor && !all {
 				continue
 			}
 			if shown == 0 {
-				fmt.Fprintln(tw, "\nSEVERITY\tKEV\tCVE\tPACKAGE\tINSTALLED\tFIXED IN\tSTATE\tFEED")
+				fmt.Fprintln(tw, "\nSEVERITY\tKEV\tCVE\tPACKAGE\tINSTALLED\tFIXED IN\tKIND\tFEED\tNOTE")
 			}
 			shown++
 			kev := ""
 			if f.KEV {
 				kev = "KEV"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", f.Severity, kev, firstNonEmpty(f.CVE, f.AdvisoryID),
-				f.Package, f.Installed, orDash(f.Fixed), f.FixState, f.Feed)
+			note := ""
+			if f.Kind == vuln.KindAwaitingVendor {
+				note = f.Reason
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", f.Severity, kev, firstNonEmpty(f.CVE, f.AdvisoryID),
+				f.Package, f.Installed, orDash(f.Fixed), kindLabel(f.Kind), f.Feed, note)
 		}
 		if err := tw.Flush(); err != nil {
 			return err
@@ -174,6 +228,18 @@ func printMatch(w io.Writer, path string, res vuln.Result, snapID *int64, asJSON
 		return exitError{exitFindings, fmt.Sprintf("%d open findings", len(open))}
 	}
 	return nil
+}
+
+// kindLabel names a finding kind the way the operator reads it: "finding" is
+// what can be fixed.
+func kindLabel(k vuln.Kind) string {
+	switch k {
+	case vuln.KindFinding:
+		return "fixable"
+	case vuln.KindUnfixed:
+		return "no_fix"
+	}
+	return string(k)
 }
 
 func orDash(s string) string {

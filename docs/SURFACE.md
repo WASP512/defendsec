@@ -59,7 +59,7 @@ control tags from `internal/controls` (new signals `surface.email`, `surface.dns
 9.5, all marked *partial*) and fix-it text. Provider hints from the MX records (Google Workspace,
 Microsoft 365, Cloudflare) change the wording of fix-it text, never the findings.
 
-## Storage (migration 022)
+## Storage (migration 023)
 
 `surface_assets`, `surface_scans`, `surface_observations` (the raw material of every check of every
 scan, append-only), `surface_findings`. Removing an asset hides it and stops scanning but keeps its

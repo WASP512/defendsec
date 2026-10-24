@@ -1,0 +1,26 @@
+{"advisories":[
+{"type":"TYPE_SECURITY","shortCode":"RL","name":"RLSA-2026:86033","synopsis":"Important: kernel security update","severity":"SEVERITY_IMPORTANT","affectedProducts":["Rocky Linux 9"],
+ "cves":[
+  {"name":"CVE-2026-31678","sourceBy":"MITRE","cvss3ScoringVector":"CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H","cvss3BaseScore":"7.8","cwe":"CWE-416"},
+  {"name":"CVE-2026-52935","sourceBy":"MITRE","cvss3ScoringVector":"","cvss3BaseScore":"","cwe":""}],
+ "publishedAt":"2026-10-22T00:04:07.745746Z",
+ "rpms":{"Rocky Linux 9":{"nvras":[
+  "kernel-0:5.14.0-687.59.1.el9_8.aarch64.rpm","kernel-0:5.14.0-687.59.1.el9_8.x86_64.rpm","kernel-0:5.14.0-687.59.1.el9_8.src.rpm",
+  "kernel-core-0:5.14.0-687.59.1.el9_8.x86_64.rpm","kernel-debuginfo-0:5.14.0-687.59.1.el9_8.x86_64.rpm"]}}},
+{"type":"TYPE_SECURITY","shortCode":"RL","name":"RLSA-2022:7288","synopsis":"Important: openssl security update","severity":"SEVERITY_IMPORTANT","affectedProducts":["Rocky Linux 8","Rocky Linux 9"],
+ "cves":[{"name":"CVE-2022-3602","sourceBy":"MITRE","cvss3ScoringVector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H","cvss3BaseScore":"7.5","cwe":"CWE-805"}],
+ "publishedAt":"2022-11-01T12:00:00Z",
+ "rpms":{
+  "Rocky Linux 8":{"nvras":["openssl-1:1.1.1k-9.el8_7.x86_64.rpm"]},
+  "Rocky Linux 9":{"nvras":["openssl-1:3.0.1-43.el9_0.x86_64.rpm","openssl-libs-1:3.0.1-43.el9_0.x86_64.rpm","openssl-libs-1:3.0.1-43.el9_0.i686.rpm"]}}},
+{"type":"TYPE_SECURITY","shortCode":"RL","name":"RLSA-2022:9999","synopsis":"Moderate: nodejs:18 security update","severity":"SEVERITY_MODERATE","affectedProducts":["Rocky Linux 9"],
+ "cves":[{"name":"CVE-2022-3517","sourceBy":"MITRE","cvss3ScoringVector":"","cvss3BaseScore":"","cwe":""}],
+ "publishedAt":"2022-12-06T12:00:00Z",
+ "rpms":{"Rocky Linux 9":{"nvras":["nodejs-1:18.12.1-1.module+el9.1.0+16755+0e7c4a5f.x86_64.rpm"]}}},
+{"type":"TYPE_BUGFIX","shortCode":"RL","name":"RLBA-2026:1","synopsis":"bug fix","severity":"SEVERITY_NONE","affectedProducts":["Rocky Linux 9"],
+ "cves":[],"publishedAt":"2026-10-01T00:00:00Z","rpms":{"Rocky Linux 9":{"nvras":["tzdata-0:2026a-1.el9.noarch.rpm"]}}},
+{"type":"TYPE_SECURITY","shortCode":"RL","name":"RLSA-2022:8000","synopsis":"Low: eight only","severity":"SEVERITY_LOW","affectedProducts":["Rocky Linux 8"],
+ "cves":[{"name":"CVE-2022-0001","sourceBy":"MITRE","cvss3ScoringVector":"","cvss3BaseScore":"","cwe":""}],
+ "publishedAt":"2022-01-01T00:00:00Z",
+ "rpms":{"Rocky Linux 8":{"nvras":["bind-32:9.11.36-3.el8.x86_64.rpm"]}}}
+]}

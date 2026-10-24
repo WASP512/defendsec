@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0",
+  "data": [
+    {
+      "id": "ALSA-2026:86033",
+      "issued_date": 1792454400,
+      "updated_date": 1792500000,
+      "severity": "Important",
+      "title": "Important: kernel security update",
+      "description": "kernel",
+      "type": "security",
+      "packages": [
+        {"name": "kernel", "epoch": "0", "version": "5.14.0", "release": "687.59.1.el9_8", "arch": "x86_64", "src": "kernel-5.14.0-687.59.1.el9_8.src.rpm"},
+        {"name": "kernel", "epoch": "0", "version": "5.14.0", "release": "687.59.1.el9_8", "arch": "aarch64", "src": "kernel-5.14.0-687.59.1.el9_8.src.rpm"},
+        {"name": "kernel-core", "epoch": "0", "version": "5.14.0", "release": "687.59.1.el9_8", "arch": "x86_64", "src": "kernel-5.14.0-687.59.1.el9_8.src.rpm"},
+        {"name": "kernel-doc", "epoch": "0", "version": "5.14.0", "release": "687.59.1.el9_8", "arch": "noarch", "src": "kernel-5.14.0-687.59.1.el9_8.src.rpm"}
+      ],
+      "modules": [],
+      "references": [
+        {"id": "RHSA-2026:86033", "type": "rhsa", "href": "https://access.redhat.com/errata/RHSA-2026:86033"},
+        {"id": "CVE-2026-31678", "type": "cve", "href": "https://access.redhat.com/security/cve/CVE-2026-31678"},
+        {"id": "CVE-2026-52935", "type": "cve", "href": "https://access.redhat.com/security/cve/CVE-2026-52935"},
+        {"id": "2061633", "type": "bugzilla", "href": "https://bugzilla.redhat.com/2061633"},
+        {"id": "ALSA-2026:86033", "type": "self", "href": "https://errata.almalinux.org/9/ALSA-2026-86033.html"}
+      ]
+    },
+    {
+      "id": "ALSA-2022:7288",
+      "issued_date": 1667260800,
+      "updated_date": 1667260800,
+      "severity": "Important",
+      "title": "Important: openssl security update",
+      "description": "openssl",
+      "type": "security",
+      "packages": [
+        {"name": "openssl", "epoch": "1", "version": "3.0.1", "release": "43.el9_0.alma", "arch": "x86_64", "src": "openssl-3.0.1-43.el9_0.alma.src.rpm"},
+        {"name": "openssl-libs", "epoch": "1", "version": "3.0.1", "release": "43.el9_0.alma", "arch": "x86_64", "src": "openssl-3.0.1-43.el9_0.alma.src.rpm"},
+        {"name": "openssl-libs", "epoch": "1", "version": "3.0.1", "release": "43.el9_0.alma", "arch": "i686", "src": "openssl-3.0.1-43.el9_0.alma.src.rpm"}
+      ],
+      "modules": [],
+      "references": [
+        {"id": "CVE-2022-3602", "type": "cve", "href": "https://access.redhat.com/security/cve/CVE-2022-3602"},
+        {"id": "not-a-cve", "type": "cve", "href": ""}
+      ]
+    },
+    {
+      "id": "ALSA-2022:9999",
+      "issued_date": 1670000000,
+      "updated_date": 1670000000,
+      "severity": "Moderate",
+      "title": "Moderate: nodejs:18 security update",
+      "description": "nodejs",
+      "type": "security",
+      "packages": [
+        {"name": "nodejs", "epoch": "1", "version": "18.12.1", "release": "1.module_el9.1.0+16755+0e7c4a5f", "arch": "x86_64", "src": "nodejs.src.rpm", "module": "nodejs:18:9010020221207131845:8cf767d6:x86_64"}
+      ],
+      "modules": [{"name": "nodejs", "arch": "x86_64", "stream": "18", "version": "9010020221207131845", "context": "8cf767d6"}],
+      "references": [
+        {"id": "CVE-2022-3517", "type": "cve", "href": ""}
+      ]
+    },
+    {
+      "id": "ALBA-2026:39332",
+      "issued_date": 1783987200,
+      "updated_date": 1784938810,
+      "severity": "None",
+      "title": "None: kernel bug fix and enhancement update",
+      "description": "bug fix",
+      "type": "bugfix",
+      "packages": [
+        {"name": "kernel-doc", "epoch": "0", "version": "5.14.0", "release": "687.26.1.el9_8", "arch": "noarch", "src": "kernel.src.rpm"}
+      ],
+      "modules": [],
+      "references": [
+        {"id": "2061633", "type": "bugzilla", "href": ""}
+      ]
+    }
+  ]
+}

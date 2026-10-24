@@ -112,7 +112,7 @@ func rangesFor(doc *oval.Doc, def oval.Definition, release string) []feeds.Range
 			seen[key] = true
 			out = append(out, feeds.Range{
 				Ecosystem: "Red Hat", Distro: "rhel", Release: release,
-				Package: name, Fixed: state.EVR, State: feeds.Fixed,
+				Package: name, Fixed: state.EVR, State: feeds.Fixed, Issued: def.Issued,
 			})
 		}
 	}

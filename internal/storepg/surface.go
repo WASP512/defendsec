@@ -13,7 +13,7 @@ import (
 	"defendsec/internal/surface"
 )
 
-// External surface scanner storage (slice 7a). See db/migrations/022_surface.sql.
+// External surface scanner storage (slice 7a). See db/migrations/023_surface.sql.
 
 var (
 	// ErrNoSurfaceAsset is returned for an unknown or removed asset.

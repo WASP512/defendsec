@@ -119,12 +119,16 @@ func (s *Server) matchDevice(ctx context.Context, dev presence.Device) (*vuln.Re
 }
 
 // urgent reports whether a finding warrants an alert of its own: exploited in
-// the wild (KEV), fixed or not, or a critical one with a fix to install.
+// the wild (KEV), fixed or not, or a critical one with a fix to install. A KEV
+// CVE that is fixed upstream but not yet released by the host's own distribution
+// (awaiting_vendor) is exploited now whether or not there is anything to
+// install yet, so it alerts too; a merely critical one does not, because it is
+// not actionable.
 func urgent(f vuln.Finding) bool {
 	switch f.Kind {
 	case vuln.KindFinding:
 		return f.KEV || strings.EqualFold(f.Severity, "critical")
-	case vuln.KindUnfixed:
+	case vuln.KindUnfixed, vuln.KindAwaitingVendor:
 		return f.KEV
 	}
 	return false
@@ -164,7 +168,10 @@ func (s *Server) alertFromFinding(dev presence.Device, f vuln.Finding) presence.
 		title = f.CVE + " on " + f.Package
 	}
 	fixed := "no fixed version is published"
-	if f.Fixed != "" {
+	switch {
+	case f.Kind == vuln.KindAwaitingVendor:
+		fixed = f.Reason
+	case f.Fixed != "":
 		fixed = "fixed in " + f.Fixed
 	}
 	summary := fmt.Sprintf("%s %s: %s", f.Package, f.Installed, fixed)
@@ -181,7 +188,7 @@ func (s *Server) alertFromFinding(dev presence.Device, f vuln.Finding) presence.
 	raw := map[string]any{
 		"advisoryId": f.AdvisoryID, "cve": f.CVE, "package": f.Package, "sourcePackage": f.SourcePackage,
 		"version": f.Installed, "fixed": f.Fixed, "fixState": f.FixState, "basis": string(f.Basis),
-		"feed": f.Feed, "kev": f.KEV, "summary": f.Summary,
+		"feed": f.Feed, "kev": f.KEV, "summary": f.Summary, "kind": string(f.Kind),
 	}
 	if f.RangeID != 0 {
 		raw["rangeId"] = f.RangeID

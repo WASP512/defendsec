@@ -35,10 +35,11 @@ contacts nothing, for offline matching and for support requests.
 
 ## Matching rules
 
-1. **Distro mapping.** Rocky, AlmaLinux, CentOS Stream and Oracle Linux are matched against the
-   RHEL feed by major release. A range applies to a package through its source package (Ubuntu,
-   Debian) or its binary name (RHEL, SUSE). When the range is keyed on the source, the installed
-   *source* version is compared, so a binNMU (`2.36-9+deb12u4+b1`) is judged as `2.36-9+deb12u4`.
+1. **Distro mapping.** CentOS Stream and Oracle Linux are matched against the RHEL feed by major
+   release. Rocky and AlmaLinux are matched against **their own errata and RHEL's**, by major
+   release (rule 5). A range applies to a package through its source package (Ubuntu, Debian) or
+   its binary name (RHEL, SUSE). When the range is keyed on the source, the installed *source*
+   version is compared, so a binNMU (`2.36-9+deb12u4+b1`) is judged as `2.36-9+deb12u4`.
 2. **Fix state.**
    - `fixed`: a finding if the installed version is below the fixed one; clean at or above it.
      If several fixed ranges apply (security pocket and ESM) reaching any of them is clean.
@@ -46,25 +47,41 @@ contacts nothing, for offline matching and for support requests.
    - `affected` with no fix: kind **unfixed**.
    - `will_not_fix`, `under_investigation`: kind **informational**.
    - `introduced`: a package older than the first vulnerable version is not affected.
-3. **Kinds.** `finding` has a fix to install and is the "fix these" list. `unfixed` and
-   `informational` are stored and shown, never counted as things to patch. A fully patched
-   Debian host still has `unfixed` entries because Debian's tracker lists open CVEs; Ubuntu and
-   RHEL feeds only carry fixed errata.
+3. **Kinds.** `finding` (fixable) has a fix to install and is the "fix these" list.
+   `awaiting_vendor`, `unfixed` and `informational` are stored and shown, never counted as things
+   to patch. A fully patched Debian host still has `unfixed` entries because Debian's tracker lists
+   open CVEs; Ubuntu and RHEL feeds only carry fixed errata. Order everywhere: finding,
+   awaiting_vendor, unfixed, informational, then KEV, severity, EPSS.
 4. **Ubuntu Pro.** A range from `Ubuntu:Pro` counts only on a host that evidently uses Pro (an
    installed `+esm`/`~esm` package). Otherwise the fix cannot be installed and the entry is
    `unfixed`. This is a heuristic: the agent does not report `pro status` yet.
-5. **Upstream floors** (`distro IS NULL`, ecosystem `legacy` only) are used for software the
+5. **Rebuild hosts (Rocky, AlmaLinux).** A fix reaches them after Red Hat's. Each advisory is judged
+   from both feeds' ranges:
+   - installed at or above *either* feed's fixed version: patched (reaching a published fix is
+     never a finding);
+   - otherwise, if the **rebuild's** errata list a fix above the installed version: `finding`, and
+     the version to install is the rebuild's;
+   - otherwise, if only **Red Hat** has one: `awaiting_vendor`, with the reason "fixed upstream by
+     Red Hat in `<version>` on `<date>`; not yet released by Rocky Linux". Not fixable, not "fix
+     this week", but still shown, still counted per host, and a KEV one still raises an alert (the
+     CVE is exploited whether or not there is anything to install) and the console's red notice.
+   When the rebuild ships, the next match (new feed snapshot) turns it into a `finding` in place.
+   Without the rebuild's own feed loaded the host is `no_feed`: Red Hat's feed cannot say whether
+   the rebuild shipped anything, so nothing is invented either way. RHEL and CentOS Stream skip all
+   of this and use Red Hat's feed directly.
+6. **Upstream floors** (`distro IS NULL`, ecosystem `legacy` only) are used for software the
    distro feed has no entry for, and only through `Assess()`, which answers "unknown" for a
    distro-built version below an upstream floor rather than guessing. OSV language ecosystems
    are never matched against OS packages.
-6. **Coverage.** Each run records whether a feed could speak for the host: `covered`,
+7. **Coverage.** Each run records whether a feed could speak for the host: `covered`,
    `no_feed` (distro known, no feed loaded for that release) or `no_distro`. A host with no
    findings and no coverage was not assessed; the console says so.
 
 ## What each finding records
 
 `advisory_id`, `range_id`, `snapshot_id`, `feed` (name) and `feed_date` (when that feed was
-fetched), plus the installed and fixed versions, severity, KEV and EPSS. Findings are never
+fetched), plus the installed and fixed versions, severity, KEV and EPSS. An `awaiting_vendor`
+finding's `feed` is Red Hat's (where the fix is) and its `reason` says who has not released it. Findings are never
 deleted: a finding that goes away gets `resolved_at`, and one that returns reopens with a new
 `first_seen`. `range_id` is evidence, not a foreign key, because ranges are replaced on every feed
 sync; `snapshot_id` is the durable reference.
@@ -78,9 +95,11 @@ available.
 
 ## API
 
-`GET /v1/findings?deviceId=&kind=finding|unfixed|informational&resolved=1&limit=`,
+`GET /v1/findings?deviceId=&kind=finding|awaiting_vendor|unfixed|informational&resolved=1&limit=`,
 `GET /v1/findings/{id}` (advisory, matched range, snapshot with each feed's URL, fetch time and
-SHA-256), `GET /v1/findings/summary[?deviceId=]`. Same tokens as the other read endpoints.
+SHA-256), `GET /v1/findings/summary[?deviceId=]` (per host: `open`, `kev`, `awaitingVendor`,
+`kevAwaitingVendor`, `unfixed`, `informational`; `open` is the fixable count and never includes
+`awaitingVendor`). Same tokens as the other read endpoints.
 
 ## Known limits
 
@@ -95,3 +114,8 @@ SHA-256), `GET /v1/findings/summary[?deviceId=]`. Same tokens as the other read 
   non-default stream is not matched.
 - Fixed versions can only be as good as the feed: a distribution that has not yet published an
   advisory looks clean.
+- **awaiting_vendor needs both Red Hat's and the rebuild's feeds to be current.** If Rocky has
+  shipped a fix under an erratum that carries no CVE, or Apollo is behind, a fixable item can
+  show as awaiting until the feed catches up. The reverse cannot happen: a finding is only
+  "fixable" when the rebuild's own errata list it.
+- Rocky 10 and AlmaLinux 10 are not covered: no feed is enabled for release 10 (Red Hat publishes no v2 OVAL feed for it yet, so there is nothing to compare the rebuild with).

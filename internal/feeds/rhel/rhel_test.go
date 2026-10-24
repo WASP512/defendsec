@@ -53,6 +53,9 @@ func TestParseFixture(t *testing.T) {
 			t.Errorf("range = %+v", r)
 		}
 		pk[r.Package] = r.Fixed
+		if r.Issued != "2022-11-01" {
+			t.Errorf("%s issued = %q, want the advisory's <issued date> 2022-11-01", r.Package, r.Issued)
+		}
 	}
 	// Epoch is kept as published: "1:" is part of the version.
 	for _, p := range []string{"openssl", "openssl-libs", "openssl-devel", "openssl-perl"} {
