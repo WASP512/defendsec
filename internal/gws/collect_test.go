@@ -189,7 +189,7 @@ func TestCollectOnlyReadsSettingsAndNeverTouchesAMessage(t *testing.T) {
 	for _, r := range s.Requests() {
 		scopes[r.Scope] = true
 	}
-	if len(scopes) != 2 || !scopes[google.ScopeDirectoryUsers] || !scopes[google.ScopeGmailReadonly] {
+	if len(scopes) != 2 || !scopes[google.ScopeDirectoryUsers] || !scopes[google.ScopeGmailSettingsBasic] || scopes[google.ScopeGmailReadonly] {
 		t.Errorf("scopes used = %v", scopes)
 	}
 }
@@ -251,7 +251,7 @@ func TestCollectFailsClosed(t *testing.T) {
 	})
 	t.Run("no delegation for the directory scope", func(t *testing.T) {
 		s := gwstest.New(t)
-		s.DelegatedScopes[google.ScopeGmailReadonly] = true
+		s.DelegatedScopes[google.ScopeGmailSettingsBasic] = true
 		notAssessedAll(t, collect(t, s, gws.Options{}, nil), false, "domain-wide delegation")
 	})
 	t.Run("the read is cancelled", func(t *testing.T) {

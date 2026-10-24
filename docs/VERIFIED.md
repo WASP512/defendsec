@@ -1914,8 +1914,11 @@ listening on the LAN address, admin API on loopback.
   signature, but Google has never been asked to accept it.
 - **The Admin console menu paths** named in fix texts (2-step verification enforcement, admin roles) are from memory of the current console, and the
   delegation path is Google's own text on the service-account page; none was clicked.
-- **`gmail.readonly` is a read-all-mail scope.** It is the only read-only scope the settings calls accept, so it is the default; `gmail.settings.basic` is the
-  alternative (cannot read mail, can change settings). Which one a client prefers is Mason's call; the page and the doc say so.
+- **The Gmail scope is a trade, and the default is the one that cannot read mail** (changed after the first review request; see "Default Gmail scope" below).
+  `gmail.settings.basic` (default) cannot read mail but is a write scope for settings; `gmail.readonly` cannot change settings but could read every mailbox.
+  Google has no scope for these calls that is both read-only and unable to read mail. The operator can switch in the identity settings; the page and the doc say so.
+- **The real run is pending.** No Google Workspace domain, Cloud project, service account or key was used for any of this slice; every Google fact is from
+  Google's reference pages. The card has no real-run evidence and the matrix below says **not run** accordingly.
 - **Ranking thresholds and the super administrator limit (4)** are judgements, not measured against a real client list. A super administrator without 2-Step
   Verification is critical here, where the card said "admins high": it follows slice 12's Global Administrator ranking (a one-line change in `CheckTwoStep`).
 - **Not assessed by design, and said on every screen:** routing and compliance rules and the automatic-forwarding policy, mailbox delegation, 2-Step Verification
@@ -1923,6 +1926,27 @@ listening on the LAN address, admin API on loopback.
 - **Not run:** a domain with thousands of mailboxes (2,000-mailbox limit and 4-way concurrency are unit-tested only), a delegated administrator limited to an OU,
   a domain with 2-Step Verification enforced everywhere, Workspace editions without Gmail, screenshots.
 - **Identity findings are not in the signed evidence export** (`defendsec-verify`); same as slice 12.
+
+### Default Gmail scope: `gmail.settings.basic` (change after the first review request, 2026-10-24)
+
+- **What changed.** The default Gmail scope is now `gmail.settings.basic` (cannot read mail; write scope for settings, never used: GET only). `gmail.readonly`
+  is the operator's alternative. Touched: `internal/gws/google` (default and comments), `internal/gws/permissions.go` (which scope is required),
+  `internal/storepg/identity_gws.go` and `032_gws_identity.sql` (default; 032 is not on `main`, so no upgrade path is involved), the settings radios and
+  setup text in the console, `docs/GOOGLE-WORKSPACE.md`. Branch merged with `origin/main` at 2cda0ac (slice 6) first: one conflict, in this file, both sides kept.
+- **Checked against Google's reference pages on 2026-10-24** (fetched): `users.settings.getAutoForwarding`, `users.settings.filters.list` and
+  `users.settings.forwardingAddresses.list` each list `gmail.settings.basic`, `mail.google.com`, `gmail.modify` and `gmail.readonly`. So the two reads
+  DefendSec makes work with the scope that cannot read mail. This is the documentation, **not an observed Google response**.
+- **Runs** (`umask 0022`, `TZ=UTC`, `TMPDIR=/tmp`, own database on CT 119): `go build ./...`, `go vet` of gws/control/storepg, `gofmt -l` clean;
+  `go test -p 1 -count=1 -v ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/... ./internal/gws/...`: exit 0, 361 PASS lines,
+  0 FAIL (all six packages `ok`). `npm test` 220/220, `npm run lint` clean, `npm run build` green, `tsc --noEmit` clean after the build regenerated `.next/types`.
+- **New or changed assertions:** an unconfigured client requests exactly the Directory scope and `gmail.settings.basic` and never `gmail.readonly`; an
+  empty or default setting resolves to `gmail.settings.basic`, an explicit `readonly` to `gmail.readonly`; `gmail.settings.basic` is the required scope in the
+  status page and `gmail.readonly` is not.
+- **4 mutations, each reverted, each fails a test (not a compile error):** client default back to `gmail.readonly` (`TestCollectOnlyReadsSettingsAndNeverTouchesAMessage`,
+  `TestGmailSettingsActsAsTheUserAndReadsOnlyTwoResources`); `DefaultGWSSettings` back to `readonly` (`TestGWSSettings`); `GmailScopeURL` inverted
+  (`TestGWSSettings`); `gmail.readonly` marked required (`TestGWSAPIEndToEnd`).
+- **Still not verified:** everything under "Not verified" above. In particular, no real Google Workspace domain was used, so the claim that a real domain's
+  `getAutoForwarding` and `filters.list` accept `gmail.settings.basic` under domain-wide delegation rests on Google's documentation only.
 
 ## Feature × platform × evidence matrix — additions from slice 13
 

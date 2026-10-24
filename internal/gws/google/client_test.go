@@ -165,7 +165,7 @@ func TestGmailSettingsActsAsTheUserAndReadsOnlyTwoResources(t *testing.T) {
 		t.Fatalf("filters = %+v, err %v", fl, err)
 	}
 	for _, r := range s.Requests() {
-		if r.Method != "GET" || r.Sub != "dana@example.com" || r.Scope != google.ScopeGmailReadonly || !strings.HasPrefix(r.Path, "/gmail/v1/users/me/settings/") {
+		if r.Method != "GET" || r.Sub != "dana@example.com" || r.Scope != google.ScopeGmailSettingsBasic || !strings.HasPrefix(r.Path, "/gmail/v1/users/me/settings/") {
 			t.Errorf("request %+v", r)
 		}
 	}
@@ -336,7 +336,7 @@ func TestTokenRefusalsAreClassified(t *testing.T) {
 	// Delegation missing for a scope: unauthorized_client is the delegation, with the
 	// numeric-client-id hint, and no request reaches an API.
 	s = gwstest.New(t)
-	s.DelegatedScopes[google.ScopeGmailReadonly] = true
+	s.DelegatedScopes[google.ScopeGmailSettingsBasic] = true
 	c = newClient(t, s, nil)
 	_, err = listUsers(t, c)
 	if google.KindOf(err) != google.KindDelegation || !strings.Contains(google.Reason(err), "numeric client ID") {

@@ -225,8 +225,8 @@ export default async function GoogleIdentityPage() {
           <li>
             In <strong>admin.google.com</strong>, signed in as a <strong>super administrator</strong> of the client&apos;s domain: <strong>Security &gt; Access and data control &gt; API
             controls &gt; Manage domain-wide delegation &gt; Add new</strong>. <strong>Client ID</strong>: the numeric ID from step 3. <strong>OAuth scopes</strong>: paste{" "}
-            <code className="break-all">https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/gmail.readonly</code> (or, if you chose it below,{" "}
-            <code className="break-all">gmail.settings.basic</code> in place of <code>gmail.readonly</code>). Click <strong>Authorize</strong>. It usually takes a few minutes and can take
+            <code className="break-all">https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/gmail.settings.basic</code> (or, if you chose it below,{" "}
+            <code className="break-all">gmail.readonly</code> in place of <code>gmail.settings.basic</code>). Click <strong>Authorize</strong>. It usually takes a few minutes and can take
             up to 24 hours.
           </li>
           <li>

@@ -111,10 +111,15 @@ func TestGWSAPIEndToEnd(t *testing.T) {
 	for _, p := range st.Permissions {
 		scopes = append(scopes, p.Name)
 		if !strings.HasSuffix(p.Name, ".readonly") && p.Name != "https://www.googleapis.com/auth/gmail.settings.basic" {
-			t.Errorf("scope %q is not read-only and not the documented alternative", p.Name)
+			t.Errorf("scope %q is not read-only and not the documented default", p.Name)
 		}
-		if p.Name == "https://www.googleapis.com/auth/gmail.settings.basic" && p.Required {
-			t.Error("the alternative scope is marked required")
+		// The default Gmail scope is the one that cannot read mail; the one that can
+		// is the optional alternative.
+		if p.Name == "https://www.googleapis.com/auth/gmail.settings.basic" && !p.Required {
+			t.Error("the default Gmail scope (settings.basic) is not marked required")
+		}
+		if p.Name == "https://www.googleapis.com/auth/gmail.readonly" && p.Required {
+			t.Error("gmail.readonly (can read mail) is marked required")
 		}
 	}
 	if len(scopes) != 3 {
@@ -155,7 +160,7 @@ func TestGWSAPIEndToEnd(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("PUT = %d %s", rec.Code, rec.Body.String())
 	}
-	if got := decode[storepg.GWSSettings](t, rec); !got.Configured || got.SuperAdminMax != 4 || got.GmailScope != "readonly" {
+	if got := decode[storepg.GWSSettings](t, rec); !got.Configured || got.SuperAdminMax != 4 || got.GmailScope != "settings.basic" {
 		t.Errorf("saved = %+v", got)
 	}
 	if c := put("admin-token", map[string]any{"superAdminMax": 3}); c != 200 {

@@ -21,8 +21,9 @@ type GWSSettings struct {
 	// Configured is true once an administrator to act as is set.
 	Configured bool   `json:"configured"`
 	AdminEmail string `json:"adminEmail"`
-	// GmailScope is "readonly" (gmail.readonly) or "settings.basic"
-	// (gmail.settings.basic): which Gmail scope the operator delegated.
+	// GmailScope is "settings.basic" (gmail.settings.basic, the default: cannot
+	// read mail) or "readonly" (gmail.readonly): which Gmail scope the operator
+	// delegated.
 	GmailScope     string     `json:"gmailScope"`
 	SuperAdminMax  int        `json:"superAdminMax"`
 	TrustedDomains []string   `json:"trustedDomains"`
@@ -37,17 +38,18 @@ const (
 	GWSScopeSettingsBasic = "settings.basic"
 )
 
-// GmailScopeURL is the OAuth scope the setting stands for.
+// GmailScopeURL is the OAuth scope the setting stands for. Anything but an explicit
+// "readonly" is the default, gmail.settings.basic (it cannot read mail).
 func (g GWSSettings) GmailScopeURL() string {
-	if g.GmailScope == GWSScopeSettingsBasic {
-		return google.ScopeGmailSettingsBasic
+	if g.GmailScope == GWSScopeReadonly {
+		return google.ScopeGmailReadonly
 	}
-	return google.ScopeGmailReadonly
+	return google.ScopeGmailSettingsBasic
 }
 
 // DefaultGWSSettings are the settings of an instance that never saved any.
 func DefaultGWSSettings() GWSSettings {
-	return GWSSettings{GmailScope: GWSScopeReadonly, SuperAdminMax: gws.DefaultSuperAdminMax, TrustedDomains: []string{}, FinanceTerms: []string{}}
+	return GWSSettings{GmailScope: GWSScopeSettingsBasic, SuperAdminMax: gws.DefaultSuperAdminMax, TrustedDomains: []string{}, FinanceTerms: []string{}}
 }
 
 // GetGWSSettings returns the saved settings, or the defaults with Configured=false.
@@ -82,7 +84,7 @@ func (g *GWSSettings) Normalize() error {
 		return fmt.Errorf("%w: the administrator must be the email address of a user of the domain", ErrBadIdentitySettings)
 	}
 	if g.GmailScope == "" {
-		g.GmailScope = GWSScopeReadonly
+		g.GmailScope = GWSScopeSettingsBasic
 	}
 	if g.GmailScope != GWSScopeReadonly && g.GmailScope != GWSScopeSettingsBasic {
 		return fmt.Errorf("%w: the Gmail scope must be %q or %q", ErrBadIdentitySettings, GWSScopeReadonly, GWSScopeSettingsBasic)

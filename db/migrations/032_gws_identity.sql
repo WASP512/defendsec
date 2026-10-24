@@ -14,10 +14,11 @@ CREATE TABLE IF NOT EXISTS gws_settings (
   -- The user the Directory API is read as: a super administrator (a delegated
   -- administrator limited to some organisational units sees only those users).
   admin_email     TEXT NOT NULL DEFAULT '',
-  -- readonly: gmail.readonly, the only read-only scope the settings reads accept.
-  -- settings.basic: gmail.settings.basic, which cannot read a message but is a write
-  -- scope for Gmail settings. Whichever is chosen is what must be delegated.
-  gmail_scope     TEXT NOT NULL DEFAULT 'readonly' CHECK (gmail_scope IN ('readonly', 'settings.basic')),
+  -- settings.basic (default): gmail.settings.basic, which cannot read a message but
+  -- is a write scope for Gmail settings (DefendSec only reads).
+  -- readonly: gmail.readonly, which cannot change settings but could read mail.
+  -- Whichever is chosen is what must be delegated.
+  gmail_scope     TEXT NOT NULL DEFAULT 'settings.basic' CHECK (gmail_scope IN ('readonly', 'settings.basic')),
   -- More super administrators than this is a finding.
   super_admin_max INT NOT NULL DEFAULT 4 CHECK (super_admin_max BETWEEN 1 AND 50),
   -- Domains, besides the domain's own, a filter may forward to without being "outside".

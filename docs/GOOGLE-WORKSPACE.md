@@ -1,5 +1,9 @@
 # Google Workspace identity posture (slice 13)
 
+> **Status: built and tested against a fake Google only. It has never been run against a real Google Workspace domain, a real service account or Google's real
+> token endpoint** (no Workspace domain, Cloud project or key exists yet; the operator creates them). Every Google fact below is from Google's reference
+> pages, with the date checked, not from an observed response. See *Not verified* in `docs/VERIFIED.md`, slice 13.
+
 DefendSec reads what a client's Google Workspace domain says about **how easily its accounts could be taken over, and how mail could be hidden or
 redirected once one is**. It is the counterpart of [M365.md](M365.md) and fills the same tables, the same Identity page area, the same finding kind
 (`identity`) and the same ranking in **Fix this week**. It is read-only, agentless and per client instance: one DefendSec instance reads one domain,
@@ -87,35 +91,36 @@ case-insensitively (`ach` matches "ACH payment", not "reach"), exactly as in sli
 
 ## Google endpoints and scopes (verified)
 
-Checked against Google's reference pages on **2026-10-24** (each page's own "last updated" date is given). Every scope is the narrowest one Google lists for
-the call that is read-only for the call.
+Checked against Google's reference pages on **2026-10-24** (each page's own "last updated" date is given). The Directory scope is read-only. The Gmail scope
+is a choice between two, explained below; the default is the one that cannot read mail.
 
 | Read | Endpoint | Scope (one of the listed ones) | Source |
 | --- | --- | --- | --- |
 | Users, 2-Step Verification state, administrator flags | `GET https://admin.googleapis.com/admin/directory/v1/users` (`customer=my_customer`, `maxResults=500`, `viewType=admin_view`, `projection=basic`, a `fields` mask, `pageToken`) | `admin.directory.user.readonly` (the page lists `admin.directory.user`, `admin.directory.user.readonly` and `cloud-platform`) | https://developers.google.com/workspace/admin/directory/reference/rest/v1/users/list (updated 2026-03-10) and https://developers.google.com/workspace/admin/directory/reference/rest/v1/users (updated 2026-06-03): `isAdmin` "super administrator privileges", `isDelegatedAdmin`, `isEnrolledIn2Sv`, `isEnforcedIn2Sv`, `suspended`, `archived`, `isMailboxSetup` "only applicable if the user has been assigned a Gmail licence", `isGuestUser`, `orgUnitPath`, `aliases` |
-| Auto-forwarding | `GET https://gmail.googleapis.com/gmail/v1/users/me/settings/autoForwarding` | `gmail.readonly` (the page lists `gmail.settings.basic`, `mail.google.com`, `gmail.modify`, `gmail.readonly`) | https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.settings/getAutoForwarding (updated 2026-04-15); fields `enabled`, `emailAddress`, `disposition` (`leaveInInbox`, `archive`, `trash`, `markRead`): https://developers.google.com/workspace/gmail/api/reference/rest/v1/AutoForwarding (updated 2025-03-24) |
+| Auto-forwarding | `GET https://gmail.googleapis.com/gmail/v1/users/me/settings/autoForwarding` | `gmail.settings.basic` (default; the page lists `gmail.settings.basic`, `mail.google.com`, `gmail.modify`, `gmail.readonly`, so `gmail.readonly` also works) | https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.settings/getAutoForwarding (updated 2026-04-15); fields `enabled`, `emailAddress`, `disposition` (`leaveInInbox`, `archive`, `trash`, `markRead`): https://developers.google.com/workspace/gmail/api/reference/rest/v1/AutoForwarding (updated 2025-03-24) |
 | Filters | `GET https://gmail.googleapis.com/gmail/v1/users/me/settings/filters` | the same four | https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.settings.filters/list (updated 2026-04-15); criteria `from`, `to`, `subject`, `query`, `negatedQuery`, `hasAttachment`, `excludeChats`, `size`; actions `addLabelIds`, `removeLabelIds`, `forward`: https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.settings.filters (updated 2026-05-13) |
 
 **The final minimal set is two scopes** (and a choice for the Gmail one):
 
 1. `https://www.googleapis.com/auth/admin.directory.user.readonly`
-2. one of `https://www.googleapis.com/auth/gmail.readonly` (**default**) or `https://www.googleapis.com/auth/gmail.settings.basic`
+2. one of `https://www.googleapis.com/auth/gmail.settings.basic` (**default**) or `https://www.googleapis.com/auth/gmail.readonly`
 
-**Why the Gmail scope is a choice, and why `gmail.readonly` is the default.** Gmail's settings reads accept four scopes. Two are broad (`mail.google.com`,
-`gmail.modify`) and are not used. That leaves:
+**Why the Gmail scope is a choice, and why `gmail.settings.basic` is the default.** Gmail's settings reads accept four scopes (checked on the two
+reference pages above and on `forwardingAddresses.list`, which DefendSec does not call, on 2026-10-24: all three list the same four). Two are broad
+(`mail.google.com`, `gmail.modify`) and are not used. That leaves:
 
 | | can read a message | can change settings (forwarding, filters) |
 | --- | --- | --- |
+| `gmail.settings.basic` (**default**) | no | **yes** |
 | `gmail.readonly` | **yes** | no |
-| `gmail.settings.basic` | no | **yes** |
 
-The brief for this slice is "read-only scopes only", and `gmail.readonly` is the only read-only scope the settings calls accept, so it is the default. It
-has a cost that the status page and the setup guide say plainly: a service account key with domain-wide delegation of `gmail.readonly` can read **every
-mailbox's mail**, not just settings, if the key leaks. DefendSec has no call that names a message (and a test enforces it), but the *scope* is what a thief
-holds. `gmail.settings.basic` cannot read a message, but a thief could add a forwarding address or a filter to a mailbox (the API refuses an external
-forwarding address that the owner has not verified, but the thief owns that address). DefendSec only makes `GET` requests either way. **Which risk a client
-prefers is Mason's call, not the code's**; the Identity page has the choice (`gmailScope`: `readonly` or `settings.basic`), and whatever is chosen is what must
-be delegated. Delegate one, not both.
+Neither is both read-only and unable to read mail: Google offers no such Gmail scope for these calls. The default is the one **that cannot read mail**,
+because a service account key with domain-wide delegation reaches *every* mailbox of the domain, and mail content is what a client most needs kept
+private. The price is that `gmail.settings.basic` is a write scope for settings: a thief holding the key could add a forwarding address or a filter to a
+mailbox (the API refuses an external forwarding address that the owner has not verified, but the thief owns that address). DefendSec itself only makes
+`GET` requests with either scope (the client has no method that writes, and a test enforces it). `gmail.readonly` is the alternative for a client that
+cannot accept a write scope: a leaked key with it could read every mailbox's mail. **Which risk a client prefers is the operator's call**; the Identity page
+has the choice (`gmailScope`: `settings.basic` or `readonly`), and whatever is chosen is what must be delegated. Delegate one, not both.
 
 Sign-in with a service account (https://developers.google.com/identity/protocols/oauth2/service-account, updated 2026-03-23): a JWT with header `alg RS256`,
 `typ JWT`, optional `kid`; claims `iss` (the service account's email), `sub` (the user to act as), `scope` (space separated), `aud`
@@ -184,8 +189,8 @@ protects every client, so it needs the care of a master credential).
    `DEFENDSEC_GWS_KEY_FILE` for apid to its path, restart apid. (If Google refuses to create a key, an organisation policy blocks service account keys.)
 5. In **admin.google.com**, as a **super administrator** of the client's domain: **Security > Access and data control > API controls > Manage domain-wide
    delegation > Add new.** Client ID: the numeric ID from step 3 (not the email: Google rejects that, see the table above). OAuth scopes:
-   `https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/gmail.readonly` (or `gmail.settings.basic` in place of
-   `gmail.readonly`, if you chose it). **Authorize.** (This path is Google's own text on the service account page quoted above. Propagation usually takes
+   `https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/gmail.settings.basic` (or `gmail.readonly` in place of
+   `gmail.settings.basic`, if you chose it). **Authorize.** (This path is Google's own text on the service account page quoted above. Propagation usually takes
    minutes and can take up to 24 hours.)
 6. In the console: **Identity > Google Workspace.** Enter a **super administrator's** email address as the administrator to act as (ideally a dedicated
    super administrator with 2-Step Verification), choose the Gmail scope you delegated, **Connect this domain**, then **Read the domain now**.

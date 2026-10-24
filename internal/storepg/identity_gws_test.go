@@ -47,10 +47,10 @@ func TestGWSSettings(t *testing.T) {
 	s, _ := scratchStore(t)
 	ctx := context.Background()
 	d, err := s.GetGWSSettings(ctx)
-	if err != nil || d.Configured || d.GmailScope != GWSScopeReadonly || d.SuperAdminMax != gws.DefaultSuperAdminMax || d.UpdatedAt != nil {
+	if err != nil || d.Configured || d.GmailScope != GWSScopeSettingsBasic || d.SuperAdminMax != gws.DefaultSuperAdminMax || d.UpdatedAt != nil {
 		t.Fatalf("defaults = %+v, %v", d, err)
 	}
-	if d.GmailScopeURL() != "https://www.googleapis.com/auth/gmail.readonly" {
+	if d.GmailScopeURL() != "https://www.googleapis.com/auth/gmail.settings.basic" {
 		t.Errorf("scope url = %q", d.GmailScopeURL())
 	}
 
@@ -67,6 +67,13 @@ func TestGWSSettings(t *testing.T) {
 		len(got.TrustedDomains) != 1 || got.TrustedDomains[0] != "partner.example.org" || got.FinanceTerms[0] != "tax refund" ||
 		got.UpdatedBy != "admin:test" || got.UpdatedAt == nil {
 		t.Errorf("saved = %+v", got)
+	}
+	// An explicit "readonly" is honoured; anything else is the default, which cannot read mail.
+	if u := (GWSSettings{GmailScope: GWSScopeReadonly}).GmailScopeURL(); u != "https://www.googleapis.com/auth/gmail.readonly" {
+		t.Errorf("readonly scope URL = %q", u)
+	}
+	if u := (GWSSettings{}).GmailScopeURL(); u != "https://www.googleapis.com/auth/gmail.settings.basic" {
+		t.Errorf("an empty scope must be the default that cannot read mail, got %q", u)
 	}
 	if got.GmailScopeURL() != "https://www.googleapis.com/auth/gmail.settings.basic" {
 		t.Errorf("scope url = %q", got.GmailScopeURL())
@@ -94,7 +101,7 @@ func TestGWSSettings(t *testing.T) {
 	if err := s.SetGWSSettings(ctx, "admin:test", GWSSettings{SuperAdminMax: 4}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.GetGWSSettings(ctx); got.Configured || got.GmailScope != GWSScopeReadonly {
+	if got, _ := s.GetGWSSettings(ctx); got.Configured || got.GmailScope != GWSScopeSettingsBasic {
 		t.Errorf("cleared = %+v", got)
 	}
 }

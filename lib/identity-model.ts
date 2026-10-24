@@ -46,7 +46,7 @@ export type IdentitySettings = {
 export type GoogleSettings = {
   configured: boolean;
   adminEmail: string;
-  /** "readonly" is gmail.readonly; "settings.basic" is gmail.settings.basic. */
+  /** "settings.basic" (default) is gmail.settings.basic, which cannot read mail; "readonly" is gmail.readonly. */
   gmailScope: "readonly" | "settings.basic";
   superAdminMax: number;
   trustedDomains: string[];

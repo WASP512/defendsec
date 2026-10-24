@@ -39,19 +39,21 @@ import (
 	"time"
 )
 
-// The scopes. Both are read-only; docs/GOOGLE-WORKSPACE.md says why these and not
-// others (verified against Google's reference pages, with the date).
+// The scopes. docs/GOOGLE-WORKSPACE.md says why these and not others (verified
+// against Google's reference pages, with the date).
 const (
 	// ScopeDirectoryUsers reads users, including 2-Step Verification state and
 	// administrator flags (Admin SDK Directory API, users.list).
 	ScopeDirectoryUsers = "https://www.googleapis.com/auth/admin.directory.user.readonly"
-	// ScopeGmailReadonly reads Gmail settings (auto-forwarding, filters). It is the
-	// only read-only scope the settings reads accept. It could also read messages,
-	// which is why this client has no method that touches a message.
-	ScopeGmailReadonly = "https://www.googleapis.com/auth/gmail.readonly"
-	// ScopeGmailSettingsBasic is the alternative: it cannot read a message but it
-	// can change settings. An operator who prefers that trade chooses it in settings.
+	// ScopeGmailSettingsBasic reads Gmail settings (auto-forwarding, filters): the
+	// reference pages of getAutoForwarding, filters.list and forwardingAddresses.list
+	// all list it. It is the DEFAULT because it cannot read a message; it is a write
+	// scope for settings, which this client never uses (GET only).
 	ScopeGmailSettingsBasic = "https://www.googleapis.com/auth/gmail.settings.basic"
+	// ScopeGmailReadonly is the alternative for an operator who cannot accept a write
+	// scope: the settings reads accept it too, but it could also read every message
+	// if the key leaked. This client has no method that touches a message.
+	ScopeGmailReadonly = "https://www.googleapis.com/auth/gmail.readonly"
 )
 
 const (
@@ -262,7 +264,7 @@ type Config struct {
 	Account *ServiceAccount
 	// AdminEmail is the user the Directory API is read as: an administrator.
 	AdminEmail string
-	// GmailScope is the scope for the Gmail settings reads (default ScopeGmailReadonly).
+	// GmailScope is the scope for the Gmail settings reads (default ScopeGmailSettingsBasic).
 	GmailScope string
 
 	// TokenURL, DirectoryURL and GmailURL override Google's endpoints. They must be
@@ -341,7 +343,7 @@ func New(cfg Config) (*Client, error) {
 	}
 	switch cfg.GmailScope {
 	case "":
-		cfg.GmailScope = ScopeGmailReadonly
+		cfg.GmailScope = ScopeGmailSettingsBasic
 	case ScopeGmailReadonly, ScopeGmailSettingsBasic:
 	default:
 		return nil, errors.New("the Gmail scope must be gmail.readonly or gmail.settings.basic")

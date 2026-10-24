@@ -109,21 +109,20 @@ export function GoogleIdentityPanel({ status, readOnly }: { status: GoogleStatus
       <fieldset className="space-y-2 text-sm">
         <legend className="font-medium">Gmail scope you delegated</legend>
         <label className="flex items-start gap-2">
-          <input type="radio" name="gws-scope" className="mt-1" checked={scope === "readonly"} onChange={() => setScope("readonly")} />
+          <input type="radio" name="gws-scope" className="mt-1" checked={scope === "settings.basic"} onChange={() => setScope("settings.basic")} />
           <span>
-            <code>gmail.readonly</code>: read-only
+            <code>gmail.settings.basic</code>: cannot read mail, can change settings (default)
             <span className="block text-xs text-muted-foreground">
-              The only read-only scope Gmail&apos;s settings calls accept. It could also read mail; DefendSec has no call that names a message, but a leaked key with
-              this scope could read every mailbox. Recommended where a write scope is not acceptable.
+              A leaked key could not read a message, but could add forwarding or filters. DefendSec still only reads. Delegate the one you choose here, not both.
             </span>
           </span>
         </label>
         <label className="flex items-start gap-2">
-          <input type="radio" name="gws-scope" className="mt-1" checked={scope === "settings.basic"} onChange={() => setScope("settings.basic")} />
+          <input type="radio" name="gws-scope" className="mt-1" checked={scope === "readonly"} onChange={() => setScope("readonly")} />
           <span>
-            <code>gmail.settings.basic</code>: cannot read mail, can change settings
+            <code>gmail.readonly</code>: cannot change settings, can read mail
             <span className="block text-xs text-muted-foreground">
-              A leaked key could not read a message, but could add forwarding or filters. DefendSec still only reads. Delegate the one you choose here, not both.
+              For where a write scope is not acceptable. DefendSec has no call that names a message, but a leaked key with this scope could read every mailbox.
             </span>
           </span>
         </label>
