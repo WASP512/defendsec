@@ -52,11 +52,14 @@ type Server struct {
 	// alertBatches holds per-device open-alert sets while an inventory
 	// report is processed; see beginAlertBatch.
 	alertBatches sync.Map
-	commands     *cmdlog.File
-	pg           *storepg.Store
-	hub          *Hub
-	signer       *sign.Key
-	log          *slog.Logger
+	// vulnSeen remembers what each host's last vulnerability match was
+	// computed from; see vulnState.
+	vulnSeen vulnState
+	commands *cmdlog.File
+	pg       *storepg.Store
+	hub      *Hub
+	signer   *sign.Key
+	log      *slog.Logger
 
 	// Transparency anchoring (roadmap 1.6). Both are optional: an instance
 	// with no targets simply publishes nothing, and one with no peer token
@@ -349,9 +352,15 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 		IPAddresses:     req.GetIpAddresses(),
 		Username:        req.GetUsername(),
 		PatchInventory:  req.GetPatchInventory(),
+		Distro:          req.GetDistro(),
+		DistroRelease:   req.GetDistroRelease(),
+		PackageManager:  req.GetPackageManager(),
 	}
 	for _, item := range req.GetSoftware() {
-		dev.Software = append(dev.Software, presence.Software{Name: item.GetName(), Version: item.GetVersion()})
+		dev.Software = append(dev.Software, presence.Software{
+			Name: item.GetName(), Version: item.GetVersion(),
+			SourcePackage: item.GetSourcePackage(), SourceVersion: item.GetSourceVersion(),
+		})
 	}
 	for _, item := range req.GetPendingUpdates() {
 		dev.PendingUpdates = append(dev.PendingUpdates, presence.Update{

@@ -8,6 +8,7 @@ import { ensureStore, publicDevice } from "@/lib/store";
 import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
 import { isOnline } from "@/lib/policies";
 import { fleetAggregates } from "@/lib/fleet-aggregates";
+import { getFindingsSummary } from "@/lib/findings";
 import { isReadOnlySession } from "@/lib/auth";
 import { FileWarning, MonitorCheck, Package, ShieldAlert } from "lucide-react";
 import Link from "next/link";
@@ -23,18 +24,14 @@ export default async function HomePage() {
   // shipping every host to the browser was 42 MB at 10,000 hosts.
   const firstPage = await loadDevicePage(parseDeviceListQuery({}));
   const online = fleet.filter((d) => isOnline(d)).length;
-  const aggregates = fleetAggregates(fleet, store.triages);
+  const aggregates = fleetAggregates(fleet, store.triages, await getFindingsSummary());
   const failing = aggregates.policies.reduce(
     (n, p) => n + p.failing,
     0,
   );
   const samples = store.devices.some((d) => d.sample);
-  const findings = aggregates.findings;
-  const serious = findings.filter(
-    (f) =>
-      f.status === "open" &&
-      (f.advisory.severity === "critical" || f.advisory.severity === "high"),
-  ).length;
+  // null when the control plane could not be asked: shown as unknown, not zero.
+  const serious = aggregates.serious;
   const patches = fleet.reduce((n, d) => n + d.pendingUpdates.length, 0);
 
   return (
@@ -43,9 +40,9 @@ export default async function HomePage() {
         title="Fleet"
         description={
           <>
-            Security inventory for machines you enroll: versions, pending patches, a local
-            advisory catalog, and file integrity on watched paths. No MDM lock/wipe, no
-            subscriptions.
+            Exposure for the machines you enroll: what is exploitable now (installed
+            packages against the security advisories your distribution publishes), what is unpatched,
+            and what changed. No MDM lock/wipe, no subscriptions.
           </>
         }
         actions={!readOnly ? (
@@ -70,11 +67,15 @@ export default async function HomePage() {
           tone={online === fleet.length && fleet.length > 0 ? "good" : "neutral"}
         />
         <StatCard
-          title="High+ advisories"
-          value={serious}
-          subtitle="Open critical or high findings"
+          title="Fix these"
+          value={serious ?? "?"}
+          subtitle={
+            serious === null
+              ? "Findings unavailable from the control plane"
+              : "Open critical, high or KEV findings with a fix"
+          }
           icon={ShieldAlert}
-          tone={serious > 0 ? "critical" : "good"}
+          tone={serious === null ? "neutral" : serious > 0 ? "critical" : "good"}
         />
         <StatCard
           title="Pending patches"

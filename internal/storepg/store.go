@@ -39,11 +39,13 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 		INSERT INTO devices (
 			id, hostname, platform, os_name, os_version, arch, serial, hardware_model, cpu, memory_mb,
 			disk_encryption, firewall, ip_addresses, username, uptime_seconds, software, pending_updates,
-			patch_inventory, fim, fim_baseline, last_seen, connected, isolated, cert_fingerprint, transport, agent_public_key_pem, updated_at
+			patch_inventory, fim, fim_baseline, last_seen, connected, isolated, cert_fingerprint, transport, agent_public_key_pem, updated_at,
+			distro, distro_release, package_manager
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
 			$11,$12,$13::jsonb,$14,$15,$16::jsonb,$17::jsonb,
-			$18,$19::jsonb,$20::jsonb,$21::timestamptz,$22,$23,$24,$25,$26,now()
+			$18,$19::jsonb,$20::jsonb,$21::timestamptz,$22,$23,$24,$25,$26,now(),
+			$27,$28,$29
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			hostname=EXCLUDED.hostname,
@@ -71,11 +73,14 @@ func (s *Store) UpsertDevice(ctx context.Context, d presence.Device) error {
 			cert_fingerprint=COALESCE(NULLIF(EXCLUDED.cert_fingerprint,''), devices.cert_fingerprint),
 			agent_public_key_pem=COALESCE(NULLIF(EXCLUDED.agent_public_key_pem,''), devices.agent_public_key_pem),
 			transport=EXCLUDED.transport,
+			distro=CASE WHEN EXCLUDED.distro <> '' THEN EXCLUDED.distro ELSE devices.distro END,
+			distro_release=CASE WHEN EXCLUDED.distro <> '' THEN EXCLUDED.distro_release ELSE devices.distro_release END,
+			package_manager=CASE WHEN EXCLUDED.distro <> '' THEN EXCLUDED.package_manager ELSE devices.package_manager END,
 			updated_at=now()
 	`, d.ID, d.Hostname, d.Platform, d.OSName, d.OSVersion, d.Arch, d.Serial, d.HardwareModel, d.CPU, d.MemoryMb,
 		d.DiskEncryption, d.Firewall, string(ips), d.Username, d.UptimeSeconds, string(sw), string(pend),
 		d.PatchInventory, string(fim), string(base), lastSeen, d.Connected, d.Isolated, d.CertFingerprint, d.Transport,
-		d.AgentPublicKeyPEM)
+		d.AgentPublicKeyPEM, d.Distro, d.DistroRelease, d.PackageManager)
 	return err
 }
 

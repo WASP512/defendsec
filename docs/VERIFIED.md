@@ -310,3 +310,104 @@ Skipped and counted, not guessed: Ubuntu jammy 114 definitions without a CVE + 1
 | `GET /v1/feeds` | linux, Postgres 16.15 | green | not checked | called on a real apid |
 | Feed-age banner | any | logic unit-tested | not checked | none (not seen in a browser) |
 | systemd service + timer | linux | none | none | none |
+
+## Slice 4 — distro-aware matcher (migration 021)
+
+Branch `scout/4-matcher`, stacked on `scout/3-feeds`. **The exit measurement (zero findings on a
+fully patched Ubuntu 22.04 and a fully patched Rocky 9 host) is PENDING.** There are no such hosts on
+this box. The CEO was asked (via `bot-dm`, delivery reported "ambiguous") to have grumpy provide two VMs
+on titan, or to run `defendsec-agentd -print-inventory` on existing ones and drop the JSON in
+`workspace/measure/{ubuntu-2204,rocky-9}.json`. Until those files exist this slice is not closed. What was
+run instead is below, and each item says what it does and does not show.
+
+### Toolchain
+
+`protoc` 3.21.12 (Maven Central `com.google.protobuf:protoc`, SHA-1 matched the `.sha1` beside it),
+`protoc-gen-go` v1.35.2, `protoc-gen-go-grpc` v1.5.1: the versions in the generated headers. `make proto`
+on the unchanged proto left `git status` clean (byte-identical output); after the field additions only
+`agent.pb.go` changed.
+
+### Commands (this box, Postgres 16.15 user-space, `go test -p 1`)
+
+| Command | Result |
+| --- | --- |
+| `go build ./...`, `go vet ./...`, `GOOS=windows go vet ./...`, `gofmt -l` | green |
+| `CGO_ENABLED=0 GOARCH=arm64 go build ./cmd/defendsec-agentd ./cmd/defendsec-feeds` | green |
+| `go test -p 1 ./...` with `TEST_DATABASE_URL` | only the known `TestQuarantinePathMovesFile` EXDEV failure (`/tmp` vs scratch on different devices; same as slice 0) |
+| `go test -v` per package, with the DB | vuln 24 pass, hostinv 9, storepg 75, control 120; 0 fail, 0 skip |
+| `npm run lint` / `npm test` / `npx tsc --noEmit` / `npm run build` | 0 problems / 81 pass / clean / built |
+
+Mutation check: changing `>=` to `>` in the "reached the fix" comparison fails four matcher tests
+(Debian, RHEL family, several fixed ranges, source version).
+
+### Test vector
+
+`{"1:8.9p1-3ubuntu0.11", "9.8p1", true}` no longer exists in the Go suite (changed to "not vulnerable"/
+"unknown" in Phase 0.1, `internal/vuln/vuln_test.go`, `compare_test.go`). The last place that still asserted
+"vulnerable" was `lib/advisories.test.ts`, deleted with the catalogue. Backport regression cases added in
+`internal/vuln/match_test.go`: Ubuntu 22.04 openssh (patched / one update behind), Debian 12 openssh and
+glibc binNMU, RHEL 9 with Rocky and Alma 9.4 mapped to `rhel`, epoch handling, openSUSE Leap 15.6,
+not_affected / will_not_fix / affected / introduced, Ubuntu Pro-only fixes, no source field (old agent),
+coverage states, upstream fallback only for unmapped software.
+
+### Real runs
+
+**1. This host (hermesagent, Debian 13 trixie), real feeds.** Nine feeds synced from the live upstreams
+into scratch database `slice4` (2m29s; snapshot 1). `defendsec-agentd -print-inventory` reported 615
+packages (the old collector would have stopped at 80). `defendsec-feeds match`:
+`coverage covered; 407 packages distro-mapped, 0 upstream, 26,556 advisories considered, 4,803
+marked not_affected; 5 findings with a fix (bind9-dnsutils ×4, libbrotli1 ×1), 1,143 unfixed, 307
+informational`. Exit 2. These five are **not independently confirmed**: `apt-cache` shows installed ==
+candidate, but the apt lists on this box date from 2026-10-18 and cannot be refreshed without root, so the
+feed may simply be newer than apt's view. (The first run before the `unfixed` kind existed printed 1,148
+"findings", because Debian's tracker lists open CVEs with no fix; that is why the kind exists.)
+
+**2. Synthetic "everything patched" inventories from the real ranges.** Each package set to the highest
+fixed version any loaded range names, then matched. Ubuntu 22.04: 51,376 ranges → 3,984 packages → **0
+findings**; same without Pro-only ranges (3,169 packages) → **0 findings**, 289 unfixed (fixes that exist
+only in Ubuntu Pro); RHEL 9 (as Rocky 9.4): 279,367 ranges → 2,924 packages → **0 findings**. This is
+true by construction. It shows the comparators and the distro/epoch/source handling cope with 330,000 real
+fixed-version strings, and says **nothing** about what a real host's package list looks like.
+
+**3. Whole pipeline, real binaries.** `defendsec-apid` (scratch database `slice4`) + `defendsec-agentd`
+enrolled over mTLS from this box, inventory reported (`software=615`) → matcher → `vuln_findings` →
+`GET /v1/findings`, `/v1/findings/{id}`, `/v1/findings/summary` returned the five findings with advisory
+id, range id, snapshot id, feed name and feed date (e.g. `feed debian`, fetched 2026-10-23T20:55 -06:00),
+the detail returned the advisory, the matched range and the nine feeds with SHA-256 digests. The built
+console (`next start`, cookie from the admin token) rendered `/advisories` (5 rows), `/devices/{id}`
+(5 finding rows, one "no fix to install" block, policy "4 high, critical or KEV findings with a fix
+available: Failing", "Matched 615 packages against debian 13 advisories; 407 are covered") and
+`/findings/{id}` (evidence table). Acknowledging the four serious findings through `POST /api/findings`
+(existing triage keys) flipped the policy to Passing and back on reopen. With apid stopped, the console
+showed "Findings unavailable" on both pages, not an empty list. HTML was fetched with `curl`; **no browser
+was used**.
+
+### Not verified
+
+- **The exit measurement** (see top). No real Ubuntu 22.04 or Rocky 9 host has been matched.
+- **`rpm` collection never ran on an rpm host** (no `rpm` here). `ParseRPMQuery` / `ParseSourceRPM` are tested
+  on hand-written text in the shape of `rpm -qa --queryformat` output; whether rpm renders
+  `%|EPOCH?{%{EPOCH}:}|` as expected on Rocky 9 is unchecked. If it does not, openssl-libs & co. would be
+  mis-compared (the epoch test documents why this matters).
+- `-print-inventory` and the new collector ran only on Debian/dpkg. Windows agent path compiled
+  (`GOOS=windows go vet`), not run; Windows hosts report no distro and are shown as not assessed.
+- Ubuntu Pro detection is a heuristic (any `+esm`/`~esm` package). Not tried on a Pro host.
+- Re-matching on a new feed snapshot: `refreshFindings` is covered by an integration test (host re-matched
+  after a new snapshot with unchanged packages; left alone when nothing changed). The 10-minute timer
+  around it (`RunFindingsRefresh`) was never observed firing on a long-running apid.
+- Third-party repository packages that share a source name with a distro package are matched against the
+  distro (e.g. NodeSource `nodejs` on Debian showed as "affected, no fix").
+- Performance: `defendsec-feeds match` wall time including connect and migrations, ~1.2 million ranges
+  loaded: 615 packages 0.95 s, 3,984 packages 3.2 s. No timing at fleet scale, no query plans inspected.
+- CI has not run; the branch is not opened as a PR.
+
+## Feature × platform × evidence matrix — additions from slice 4
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Distro-aware matcher (`internal/vuln`) | any | 24 tests incl. backport regressions, mutation-checked | not checked | Debian 13 only (real feeds); **Ubuntu 22.04 and Rocky 9: PENDING** |
+| Agent: distro, release, package manager, source packages | linux dpkg | parser tests, green | not checked | run on hermesagent (615 packages) |
+| Agent: same, rpm | linux rpm | parser tests on hand-written output | not checked | **not run** |
+| Findings storage + `/v1/findings` API | linux, Postgres 16.15 | storepg + control integration tests, green | not checked | real apid + real agent |
+| Console findings (advisories, host, detail, policy) | any | model logic unit-tested | not checked | rendered by a built console via curl; not in a browser |
+| Zero findings on a fully patched host | Ubuntu 22.04, Rocky 9 | synthetic only (by construction) | not checked | **PENDING** |

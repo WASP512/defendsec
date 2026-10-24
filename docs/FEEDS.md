@@ -116,6 +116,17 @@ variable wins over the file). Every variable is documented in `feeds.env.example
 any feed is more than 7 days old or has never synced**, amber if the age cannot be established
 (status unreadable, no feed ever synced, or a recent sync had errors), plain otherwise.
 
+## Matching an inventory by hand
+
+```
+defendsec-agentd -print-inventory > inv.json       # on the host; reads the package db, contacts nothing
+defendsec-feeds match inv.json                       # read-only: stores nothing, raises nothing
+defendsec-feeds match --json --all inv.json          # full result, including unfixed/informational
+```
+
+Exit status: 0 no findings with a fix available, 2 at least one, 3 not assessed (no feed covers
+the host's distro and release). See [MATCHING.md](MATCHING.md).
+
 ## Air-gapped installs
 
 On the connected install: `defendsec-feeds sync` then `defendsec-feeds export feeds.tar`.

@@ -6,6 +6,7 @@
 //	defendsec-feeds sync   [--dry-run] [--only a,b] [--force]
 //	defendsec-feeds export [--only a,b] <bundle.tar>
 //	defendsec-feeds import [--dry-run] [--force] [--trust-key pub.pem] <bundle.tar>
+//	defendsec-feeds match  [--json] [--all] <inventory.json>
 //	defendsec-feeds status
 //	defendsec-feeds list
 //
@@ -51,6 +52,10 @@ func main() {
 	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "defendsec-feeds:", err)
+		var ee exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
 		os.Exit(1)
 	}
 }
@@ -61,6 +66,7 @@ commands:
   sync     fetch every enabled feed (conditionally) and load what changed
   export   write a signed bundle of the cached feeds for an air-gapped install
   import   verify a signed bundle and load it
+  match    match a package inventory against the loaded feeds (read-only)
   status   show per-feed state
   list     show every known feed and which are enabled
   version  print the build commit
@@ -105,6 +111,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return cmdExport(cfg, cargs, stdout, stderr)
 	case "import":
 		return cmdImport(ctx, cfg, cargs, stdout, stderr)
+	case "match":
+		return cmdMatch(ctx, cargs, stdout, stderr)
 	case "status":
 		return cmdStatus(ctx, cfg, cargs, stdout, stderr)
 	case "list":

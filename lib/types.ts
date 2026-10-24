@@ -29,16 +29,7 @@ export type FimEvent = {
   sample: boolean;
 };
 
-export type Severity = "critical" | "high" | "medium" | "low";
-
-export type Advisory = {
-  id: string;
-  cve: string;
-  package: string;
-  below: string;
-  severity: Severity;
-  summary: string;
-};
+export type Severity = "critical" | "high" | "medium" | "low" | "unknown";
 
 export type FindingStatus = "open" | "acknowledged";
 
@@ -46,16 +37,6 @@ export type FindingTriage = {
   key: string;
   status: FindingStatus;
   updatedAt: string;
-};
-
-export type Finding = {
-  key: string;
-  advisory: Advisory;
-  packageName: string;
-  version: string;
-  deviceId: string;
-  hostname: string;
-  status: FindingStatus;
 };
 
 export type PatchInventory = "ok" | "unsupported" | "error";

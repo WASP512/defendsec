@@ -1,8 +1,21 @@
 import { supportedOs } from "./supported-os.ts";
 import type { Device, FindingTriage, PolicyResult, PolicyStatus } from "./types";
 import { ONLINE_WINDOW_MS } from "./types";
-import { findingsForDevice } from "./advisories";
 import { SAMPLE_KEEP_ONLINE } from "./demo";
+import { coverageNotice, seriousOpen, type DeviceFindingsSummary } from "./findings-model.ts";
+
+/**
+ * What the control plane says about a host's findings. `available: false` means
+ * it could not be asked, which is not the same as "no findings".
+ */
+export type VulnInput =
+  | { available: false }
+  | { available: true; summary: DeviceFindingsSummary | undefined };
+
+/** The id apid knows a host by: the mTLS device id when there is one. */
+export function apidId(device: Pick<Device, "id" | "mtlsDeviceId">): string {
+  return device.mtlsDeviceId || device.id;
+}
 
 export function isOnline(
   device: Pick<Device, "sample" | "hostname" | "lastSeen">,
@@ -55,7 +68,8 @@ export const POLICY_DEFS = [
   {
     id: "vulns",
     name: "No high/critical advisories",
-    description: "Installed software is not older than the local advisory floor.",
+    description:
+      "No finding with a fix available that is rated high or critical, or is on the CISA KEV list, matched against the distro's own advisories.",
   },
   {
     id: "patches",
@@ -98,18 +112,41 @@ function patchStatus(device: Device): PolicyResult {
   };
 }
 
+function vulnPolicy(vulns: VulnInput, triages: FindingTriage[]): { status: PolicyStatus; detail: string } {
+  if (!vulns.available) {
+    return { status: "unknown", detail: "Findings unavailable: the control plane could not be reached" };
+  }
+  if (!vulns.summary) {
+    return { status: "unknown", detail: "Not assessed yet: no match has run for this host" };
+  }
+  const notice = coverageNotice({
+    deviceId: vulns.summary.deviceId,
+    distro: vulns.summary.distro,
+    release: vulns.summary.release,
+    coverage: vulns.summary.coverage,
+    packages: 0,
+    distroMapped: 0,
+    upstream: 0,
+    undecidable: 0,
+    notAffected: 0,
+    snapshotId: null,
+    matchedAt: vulns.summary.matchedAt,
+  });
+  if (notice) return { status: "unknown", detail: notice.title };
+  const n = seriousOpen(vulns.summary, triages);
+  return n === 0
+    ? { status: "pass", detail: "No high, critical or KEV findings with a fix available" }
+    : { status: "fail", detail: `${n} high, critical or KEV finding${n === 1 ? "" : "s"} with a fix available` };
+}
+
 export function evaluateDevice(
   device: Device,
   _fimEvents: unknown[] = [],
   triages: FindingTriage[] = [],
+  vulns: VulnInput = { available: false },
 ): PolicyResult[] {
   void _fimEvents;
   const online = isOnline(device);
-  const serious = findingsForDevice(device, triages).filter(
-    (f) =>
-      f.status === "open" &&
-      (f.advisory.severity === "critical" || f.advisory.severity === "high"),
-  );
   const drifted = fimDriftPaths(device);
   return [
     {
@@ -156,11 +193,7 @@ export function evaluateDevice(
       id: "vulns",
       name: "No high/critical advisories",
       description: POLICY_DEFS[4].description,
-      status: statusFrom(serious.length === 0),
-      detail:
-        serious.length === 0
-          ? "No high or critical matches in the local catalog"
-          : serious.map((f) => `${f.advisory.cve} (${f.packageName})`).join(", "),
+      ...vulnPolicy(vulns, triages),
     },
     patchStatus(device),
     {
@@ -185,6 +218,7 @@ export function policySummary(
   devices: Device[],
   _fimEvents: unknown[] = [],
   triages: FindingTriage[] = [],
+  vulns: Map<string, DeviceFindingsSummary> | null = null,
 ) {
   // Each device is evaluated once. Evaluating it once per policy repeated the
   // advisory matching seven times per host, which at 10,000 hosts made this
@@ -193,7 +227,10 @@ export function policySummary(
     POLICY_DEFS.map((def) => [def.id, { passing: 0, failing: 0, unknown: 0 }]),
   );
   for (const device of devices) {
-    for (const result of evaluateDevice(device, _fimEvents, triages)) {
+    const input: VulnInput = vulns
+      ? { available: true, summary: vulns.get(apidId(device)) }
+      : { available: false };
+    for (const result of evaluateDevice(device, _fimEvents, triages, input)) {
       const c = counts.get(result.id);
       if (!c) continue;
       if (result.status === "pass") c.passing++;

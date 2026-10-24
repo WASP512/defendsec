@@ -28,6 +28,12 @@ message HeartbeatResponse {
 message SoftwareItem {
   string name = 1;
   string version = 2;
+  // Source package the binary was built from (dpkg Source:, rpm SOURCERPM), and
+  // its version when the package manager reports one that differs from the
+  // binary's. Optional: agents older than the distro-aware matcher leave both
+  // empty and the server falls back to the binary name and version.
+  string source_package = 3;
+  string source_version = 4;
 }
 
 message PendingUpdate {
@@ -68,6 +74,12 @@ message InventoryReport {
   string patch_inventory = 12;
   repeated FimFile fim = 13;
   repeated ScaResult sca_results = 14;
+  // os-release ID and VERSION_ID ("ubuntu"/"22.04", "rocky"/"9.4"), and the
+  // package manager that produced `software` ("dpkg" or "rpm"). Optional:
+  // empty from older agents and on platforms without os-release.
+  string distro = 15;
+  string distro_release = 16;
+  string package_manager = 17;
 }
 
 message Hello {

@@ -3,6 +3,7 @@ import { EmptyState, PageHeader } from "@/components/console-ui";
 import { ensureStore } from "@/lib/store";
 import { fleetAggregates } from "@/lib/fleet-aggregates";
 import { loadFleet } from "@/lib/mtls-agents";
+import { getFindingsSummary } from "@/lib/findings";
 import { ShieldQuestion } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function PoliciesPage() {
   const store = await ensureStore();
   const fleet = await loadFleet(store.devices);
-  const { policies } = fleetAggregates(fleet, store.triages);
+  const { policies } = fleetAggregates(fleet, store.triages, await getFindingsSummary());
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">

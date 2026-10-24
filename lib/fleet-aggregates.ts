@@ -1,18 +1,23 @@
-import { allFindings } from "./advisories.ts";
 import { fleetVersion } from "./mtls-agents.ts";
 import { policySummary } from "./policies.ts";
+import { seriousOpen, type DeviceFindingsSummary } from "./findings-model.ts";
 import type { Device, FindingTriage } from "./types.ts";
 
-// Fleet-wide aggregates for the overview, Policies and Advisories pages.
+// Fleet-wide aggregates for the overview and Policies pages.
 //
-// They match every host's software against the advisory catalog, which at
-// 10,000 hosts takes seconds. The inputs change only when the fleet export
-// is rewritten (at most every 30 seconds) or someone triages a finding, so
-// the result is reused until one of those changes (roadmap 5.5).
+// Policy evaluation walks every host, which at 10,000 hosts takes seconds. The
+// inputs change only when the fleet export is rewritten (at most every 30
+// seconds), when someone triages a finding, or when the control plane re-matches
+// a host, so the result is reused until one of those changes (roadmap 5.5).
+//
+// Findings are not computed here: apid matches each host against the distro's
+// advisory ranges and this takes its per-host summary (GET /v1/findings/summary).
 
 type Aggregates = {
   policies: ReturnType<typeof policySummary>;
-  findings: ReturnType<typeof allFindings>;
+  /** Open high/critical/KEV findings with a fix available, fleet-wide. Null if
+   *  the control plane could not be asked. */
+  serious: number | null;
 };
 
 let cache: { key: string; value: Aggregates } | null = null;
@@ -32,7 +37,18 @@ function revalidate(key: string, compute: () => void) {
   });
 }
 
-function keyFor(fleet: Device[], triages: FindingTriage[]): string {
+function vulnKey(vulns: Map<string, DeviceFindingsSummary> | null): string {
+  if (!vulns) return "unavailable";
+  let latest = "";
+  for (const v of vulns.values()) if (v.matchedAt > latest) latest = v.matchedAt;
+  return `${vulns.size}@${latest}`;
+}
+
+function keyFor(
+  fleet: Device[],
+  triages: FindingTriage[],
+  vulns: Map<string, DeviceFindingsSummary> | null,
+): string {
   // Hosts from the console's own store are few; their last-seen times are
   // part of the key so a check-in is reflected immediately.
   const local = fleet
@@ -40,18 +56,27 @@ function keyFor(fleet: Device[], triages: FindingTriage[]): string {
     .map((d) => `${d.id}@${d.lastSeen}`)
     .join(",");
   const tri = triages.map((t) => `${t.key}=${t.status}`).join(",");
-  return `${fleetVersion()}|${fleet.length}|${local}|${tri}`;
+  return `${fleetVersion()}|${fleet.length}|${local}|${vulnKey(vulns)}|${tri}`;
 }
 
 function sameTriage(a: string, b: string): boolean {
   return a.slice(a.lastIndexOf("|")) === b.slice(b.lastIndexOf("|"));
 }
 
-export function fleetAggregates(fleet: Device[], triages: FindingTriage[]): Aggregates {
-  const key = keyFor(fleet, triages);
+export function fleetAggregates(
+  fleet: Device[],
+  triages: FindingTriage[],
+  vulns: Map<string, DeviceFindingsSummary> | null,
+): Aggregates {
+  const key = keyFor(fleet, triages, vulns);
   if (cache?.key === key) return cache.value;
   const compute = () => {
-    cache = { key, value: { policies: policySummary(fleet, [], triages), findings: allFindings(fleet, triages) } };
+    let serious: number | null = null;
+    if (vulns) {
+      serious = 0;
+      for (const v of vulns.values()) serious += seriousOpen(v, triages);
+    }
+    cache = { key, value: { policies: policySummary(fleet, [], triages, vulns), serious } };
   };
   // A triage change must show at once — the operator just made it — so
   // only a fleet refresh is served stale.
@@ -61,22 +86,4 @@ export function fleetAggregates(fleet: Device[], triages: FindingTriage[]): Aggr
   }
   compute();
   return cache!.value;
-}
-
-let findingsCache: { key: string; value: ReturnType<typeof allFindings> } | null = null;
-
-// fleetFindings is allFindings against a given catalog (the Advisories page
-// uses the ingested one), cached the same way. The catalog is part of the
-// key by size and its ids at each end, which change on every ingest.
-export function fleetFindings(
-  fleet: Device[],
-  triages: FindingTriage[],
-  advisories: Parameters<typeof allFindings>[2] & object,
-): ReturnType<typeof allFindings> {
-  const cat = `${advisories.length}:${advisories[0]?.id ?? ""}:${advisories[advisories.length - 1]?.id ?? ""}`;
-  const key = `${keyFor(fleet, triages)}|${cat}`;
-  if (findingsCache?.key === key) return findingsCache.value;
-  const value = allFindings(fleet, triages, advisories);
-  findingsCache = { key, value };
-  return value;
 }
