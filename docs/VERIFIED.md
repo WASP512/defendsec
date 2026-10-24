@@ -192,3 +192,48 @@ Empty on purpose. As of this baseline there is **no** row with a "real host" run
 | `npm test` | 0 | `# tests 71 / # pass 71 / # fail 0` |
 
 Not run in this slice: `npm run build`, any Go command (no Go file changed). Not verified: the README's feature claims were carried over from the previous README, not re-tested; dependency licence compatibility with AGPL-3.0 has not been audited.
+
+## Slice 2 — advisory schema (migration 019)
+
+- Branch `scout/2-advisory-schema`, stacked on `scout/1-direction` (slice 1 is not merged and not pushed).
+- Changed: `db/migrations/019_advisory_ranges.sql` (new), `internal/storepg/advisories.go` (new: types, `RecordFeedSnapshot`, `GetFeedSnapshot`, `UpsertAdvisoryWithRanges`, `ListAdvisoryRanges`, `GetAdvisory`), `internal/storepg/store.go` (`ListAdvisories` now `WHERE package <> ''`, nothing else), tests, this file.
+- Not changed: matching behaviour, `lib/advisories.ts`, `scripts/ingest-osv.py`, the admin API.
+
+### Postgres used
+
+A real PostgreSQL **16.15** (same major as CI's `postgres:16`), run in user space on this box: the `io.zonky.test.postgres:embedded-postgres-binaries-linux-amd64:16.15.0` jar from Maven Central (jar SHA-1 `f2f03e89deb63c0dbac75450bb713ca37c1e82b1`, matches the `.sha1` Maven publishes), `initdb --auth=trust`, listening on `127.0.0.1:54329` only. This is a test database with no data of value; it is not the console's database and does not substitute for a real install.
+
+### Commands
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `gofmt -l db internal cmd` | 0 | no output |
+| `go build ./...` | 0 | green |
+| `go vet ./...` | 0 | green |
+| `GOOS=windows go vet ./...` | 0 | green |
+| `go test ./...` (no `TEST_DATABASE_URL`) | 1 | everything `ok` except the known slice-0 environmental failure `TestQuarantinePathMovesFile` (EXDEV, `TMPDIR` not on `/tmp`'s filesystem); new DB tests report SKIP |
+| `TMPDIR=/tmp go test -count=1 ./internal/agentcmd` | 0 | `ok` (as in slice 0) |
+| `TEST_DATABASE_URL=postgres://…@127.0.0.1:54329/postgres go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/...` (the CI `postgres-integration` command) | 0 | per test+subtest: storepg 87 pass / 0 fail / 0 skip; db/migrations 5 pass / 0 fail / 0 skip; control 145 pass / 0 fail / 0 skip |
+| `TEST_DATABASE_URL=… go test ./...` | 1 | same single `TestQuarantinePathMovesFile` failure; every other package `ok` |
+
+### What the migration was shown to do (against real Postgres 16.15)
+
+- **Fresh database**: `TestAdvisoryRangesFreshDatabase` applies all 19 migrations twice into an empty throwaway database; the three `advisory_ranges` indexes exist, 0 ranges, 0 snapshots.
+- **Existing install**: `TestAdvisoryRangesUpgradeKeepsExistingAdvisories` applies 001–018, inserts three legacy rows the old way (two with a floor, one with an empty floor), then applies the full set three times. All three advisories survive; exactly two ranges exist (the empty-floor row has nothing to mirror) and neither is duplicated by the re-runs; each is `ecosystem='legacy'`, `distro/release/introduced` NULL, `fixed` = the old `below`, `fix_state='fixed'`. A legacy-style `INSERT … ON CONFLICT DO UPDATE` (the `ingest-osv.py` shape) moves the mirrored range; deleting an advisory cascades.
+- **Constraints**: `TestAdvisoryRangesConstraints` — unknown `fix_state`, `fixed` without a version, EPSS 1.5, CVSS 10.5, a non-array `feeds`, a duplicate range, a same-bounds range with a different state, and a range for a missing advisory are all rejected.
+- **Store**: round trip of every new advisory column, snapshot feeds (including instant-preserving `fetched_at`), full replace of the range set, rollback leaves old state intact on a failed upsert, lookup by binary and source package and by distro/release (a NULL release matches every release; distro-agnostic ranges only when asked), and the legacy `UpsertAdvisory`/`ListAdvisories` path unchanged.
+
+### Not verified
+
+- **No real install was upgraded.** No console database, no production-sized `advisories` table: timing of the trigger/backfill on 100k+ rows is unmeasured. The migration runs inside `Apply`'s single transaction on every start; the backfill is a no-op after the first run, but that was shown only on a three-row table.
+- Migration was run on PostgreSQL 16.15 only. Not on 14/15/17 (identity columns need ≥ 10; the test helper's forced database drop needs ≥ 13).
+- No CI result: the branch is not on GitHub.
+- Nothing populates the new columns yet (feed sync is slice 3); `ListAdvisoryRanges` has no caller in product code (matcher is slice 4). Query plans for the lookup were not inspected (`EXPLAIN` not run); the indexes exist and the semantics are tested, performance is not.
+- The `legacy` mirror trigger and the `package`/`below` columns are transitional and should be dropped when slice 4 moves the matcher and `ingest-osv.py` is replaced.
+
+## Feature × platform × evidence matrix — additions from slice 2
+
+| Feature | Platform | Unit | CI | Real host |
+| --- | --- | --- | --- | --- |
+| Migration 019 (advisory ranges, snapshots) fresh + upgrade | linux, Postgres 16.15 (user-space) | 3 new migration tests + 2 existing, green against real PG | not checked | none |
+| Advisory store (`UpsertAdvisoryWithRanges`, `ListAdvisoryRanges`, snapshots) | linux, Postgres 16.15 (user-space) | green (unit validation + integration) | not checked | none |

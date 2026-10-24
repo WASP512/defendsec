@@ -486,7 +486,10 @@ func (s *Store) UpsertAdvisory(ctx context.Context, id, cve, pkg, below, severit
 }
 
 func (s *Store) ListAdvisories(ctx context.Context) ([]map[string]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, cve, package, below, severity, summary, source FROM advisories ORDER BY severity, package`)
+	// Legacy view: only single-floor advisories. Rows written by
+	// UpsertAdvisoryWithRanges carry their versions in advisory_ranges and
+	// have an empty package/below.
+	rows, err := s.pool.Query(ctx, `SELECT id, cve, package, below, severity, summary, source FROM advisories WHERE package <> '' ORDER BY severity, package`)
 	if err != nil {
 		return nil, err
 	}
