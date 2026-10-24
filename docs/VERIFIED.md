@@ -777,7 +777,7 @@ screenshots of every surface the card asks for are in `docs/screenshots/`:
 
 ### Not verified
 
-- **Branch CI** has not been checked yet (updated below once it has).
+- **Branch CI** is green on `60d8e7f` (all six jobs: go, postgres-integration, node, isolation, provisioning, secrets-scan; run 40066538275). This file was edited after that run, so the head moved by a docs-only commit; its run is in the handoff.
 - **Ranking and the red callout on real KEV data.** The real host has no KEV finding, so KEV ordering, the KEV callout and
   `awaiting_vendor` rows are seen only on synthetic data and in tests. No real Rocky/Alma host was matched in this slice.
 - **The trend on real history.** It has one real day. The multi-month shape in the screenshot is synthetic.
@@ -801,9 +801,9 @@ screenshots of every surface the card asks for are in `docs/screenshots/`:
 
 | Feature | Platform | Unit | CI | Real host |
 | --- | --- | --- | --- | --- |
-| Ranking KEV → EPSS → CVSS (`internal/exposure`, SQL, `compareRank`) | any | Go + npm tests, 4 mutation checks | see below | ranked a real host's 5 fixable findings; KEV not present |
-| `/v1/exposure/{summary,findings,advisory,trend}` | linux, Postgres 16 | storepg + control integration (titan PG) | see below | called through a real apid on a real database |
-| Keyset paging | linux, Postgres 16 | page sizes 1/3/5/200, no gap or repeat | see below | 1,143 advisories, page 2 has no overlap with page 1 |
-| Resolution recorded from inventory | dpkg, rpm | integration tests incl. through apid | see below | not observed on a real host |
-| Trend from first_seen/resolved_at | linux, Postgres 16 | integration test with recurrence | see below | one real day |
-| Console: Exposure, Fleet cards, drawer | any | model logic unit-tested | see below | rendered in a browser on real and synthetic data |
+| Ranking KEV → EPSS → CVSS (`internal/exposure`, SQL, `compareRank`) | any | Go + npm tests, 4 mutation checks | green (run 40066538275) | ranked a real host's 5 fixable findings; KEV not present |
+| `/v1/exposure/{summary,findings,advisory,trend}` | linux, Postgres 16 | storepg + control integration (titan PG) | green (run 40066538275) | called through a real apid on a real database |
+| Keyset paging | linux, Postgres 16 | page sizes 1/3/5/200, no gap or repeat | green (run 40066538275) | 1,143 advisories, page 2 has no overlap with page 1 |
+| Resolution recorded from inventory | dpkg, rpm | integration tests incl. through apid | green (run 40066538275) | not observed on a real host |
+| Trend from first_seen/resolved_at | linux, Postgres 16 | integration test with recurrence | green (run 40066538275) | one real day |
+| Console: Exposure, Fleet cards, drawer | any | model logic unit-tested | green (run 40066538275) | rendered in a browser on real and synthetic data |
