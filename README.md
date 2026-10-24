@@ -110,7 +110,9 @@ The server installer handles each distribution's differences:
 
 ## Start here
 
-Most people run the server as a Proxmox LXC: one command, then a browser.
+The quickest path is meant to be a Proxmox LXC: one command, then a browser. That script has not
+been run on a Proxmox host yet (see [Honest status](#honest-status)); the server installer on Ubuntu
+22.04 and Rocky 9.8 has.
 
 1. **Create the server.** On the Proxmox host, as root. It installs the v0.1.0 release (prebuilt
    and checksummed, nothing is compiled) in a new Debian 12 container, and starts the first
@@ -198,6 +200,10 @@ drop the detection and response settings; where they disagree with this README, 
   inventory and posture checks. Treat any Windows deployment as an experiment. The Windows agent is
   inventory and posture only; its service and MSI stay until the Datto RMM collector covers Windows
   hosts ([docs/WINDOWS.md](docs/WINDOWS.md)).
+- **Only two server installs have been run: Ubuntu 22.04 and Rocky 9.8** (SELinux enforcing), from a
+  local copy of the release. The Proxmox container script `create-proxmox-ct.sh` (Debian 12) has only
+  been syntax-checked, and Debian 12, Fedora, openSUSE and arm64 installs have not been run. The
+  download-from-GitHub and verify-a-published-release paths are first exercised by the v0.1.0 tag.
 - **The Datto RMM collector, the Microsoft 365 collector and Autotask have not been run against a
   real account or tenant.** They are tested against fakes and fixtures. Surface findings, identity
   findings and tickets are real code paths with synthetic evidence only
