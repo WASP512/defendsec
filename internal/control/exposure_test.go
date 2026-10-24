@@ -163,6 +163,9 @@ func TestExposureAPIThroughApid(t *testing.T) {
 		h.FirstSeen.IsZero() || h.ResolvedAt != nil || h.Key != dev+":"+advKEV+":"+strings.ToLower("openssl-"+advKEV) {
 		t.Errorf("host row = %+v", h)
 	}
+	if h.FirstSeen.Location() != time.UTC || h.LastSeen.Location() != time.UTC {
+		t.Errorf("host row times must be UTC whatever the server's zone, got %v and %v", h.FirstSeen.Location(), h.LastSeen.Location())
+	}
 	if rec := getExposure(t, s, "/v1/exposure/advisory?id=NOPE-"+id, nil); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown advisory: %d", rec.Code)
 	}

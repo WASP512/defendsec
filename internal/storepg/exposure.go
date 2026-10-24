@@ -295,6 +295,11 @@ func scanExposureGroup(row pgx.Row) (ExposureGroup, exposureCursor, error) {
 		&c.K1, &c.K2, &c.K3, &c.K4, &c.K5, &c.K6); err != nil {
 		return g, c, err
 	}
+	g.FirstSeen = g.FirstSeen.UTC()
+	if g.ResolvedAt != nil {
+		t := g.ResolvedAt.UTC()
+		g.ResolvedAt = &t
+	}
 	g.KEVAdded = dateText(kevAdded)
 	g.AwaitingSince = dateText(awaitingSince)
 	g.Hosts = make([]HostRef, 0, len(ids))

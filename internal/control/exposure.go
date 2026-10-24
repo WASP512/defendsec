@@ -245,8 +245,8 @@ func (s *Server) exposureAdvisory(w http.ResponseWriter, r *http.Request) {
 		resp.Hosts = append(resp.Hosts, exposureHostRow{
 			FindingID: f.ID, Key: f.Key, DeviceID: f.DeviceID, Hostname: f.Hostname, Kind: f.Kind,
 			Package: f.Package, Installed: f.Installed, Fixed: f.Fixed, FixState: f.FixState, Reason: f.Reason, UpstreamFixedOn: f.UpstreamFixedOn,
-			Feed: f.Feed, FeedDate: f.FeedDate, SnapshotID: f.SnapshotID, RangeID: f.RangeID,
-			FirstSeen: f.FirstSeen, LastSeen: f.LastSeen, ResolvedAt: f.ResolvedAt,
+			Feed: f.Feed, FeedDate: utcPtr(f.FeedDate), SnapshotID: f.SnapshotID, RangeID: f.RangeID,
+			FirstSeen: f.FirstSeen.UTC(), LastSeen: f.LastSeen.UTC(), ResolvedAt: utcPtr(f.ResolvedAt),
 			Resolution: f.Resolution, ResolvedInstalled: f.ResolvedInstalled,
 		})
 	}
@@ -261,6 +261,16 @@ func (s *Server) exposureAdvisory(w http.ResponseWriter, r *http.Request) {
 		resp.Snapshots = append(resp.Snapshots, out)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// utcPtr is t in UTC: the console reads dates off the front of these strings,
+// so they must not depend on the server's zone.
+func utcPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := t.UTC()
+	return &u
 }
 
 type exposureTrendResponse struct {

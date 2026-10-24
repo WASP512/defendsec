@@ -48,7 +48,7 @@ const nav = [
   { href: "/devices", label: "Hosts", icon: Monitor },
   { href: "/alerts", label: "Alerts", icon: Siren },
   { href: "/detection", label: "Detection", icon: Radar },
-  { href: "/advisories", label: "Advisories", icon: ShieldAlert },
+  { href: "/advisories", label: "Exposure", icon: ShieldAlert },
   { href: "/patches", label: "Patches", icon: Package },
   { href: "/versions", label: "Versions", icon: History },
   { href: "/integrity", label: "Integrity", icon: FileWarning },
