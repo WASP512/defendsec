@@ -403,7 +403,6 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 	s.syncDevice(merged)
 	endBatch := s.beginAlertBatch(id)
 	defer endBatch()
-	s.processFimAlerts(events)
 	s.processDriftAlerts(merged)
 	s.processScaAlerts(merged, toScaResults(merged.ScaResults))
 	s.resolveUnknownSca(merged)
