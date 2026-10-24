@@ -743,3 +743,13 @@ func (c *Client) Each(ctx context.Context, path string, q url.Values, fn func(js
 		}
 	}
 }
+
+// NotAfter is when the certificate expires, so a status page can say so before
+// the sign-in starts failing.
+func (c *Certificate) NotAfter() time.Time {
+	crt, err := x509.ParseCertificate(c.der)
+	if err != nil {
+		return time.Time{}
+	}
+	return crt.NotAfter
+}

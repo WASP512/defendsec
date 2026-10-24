@@ -104,6 +104,9 @@ type Server struct {
 
 	// rmmr is the Datto RMM collector's state (rmm.go).
 	rmmr rmmRunner
+
+	// m365r is the Microsoft 365 identity collector's state (m365.go).
+	m365r m365Runner
 }
 
 // SetAnchoring configures checkpoint anchoring. Called at startup rather than

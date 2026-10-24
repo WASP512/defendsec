@@ -305,7 +305,7 @@ func CheckLegacyAuth(sd SecurityDefaults, sdErr error, pols []CAPolicy, caErr er
 		}
 		return res
 	}
-	var enforcing, reportOnly []string
+	enforcing, reportOnly := []string{}, []string{}
 	var full []string
 	var partial []map[string]any
 	var exclusions bool
