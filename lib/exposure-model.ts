@@ -310,6 +310,8 @@ export type Rankable = Pick<ExposureGroup, "advisoryId" | "severity" | "kev" | "
   eol?: ExposureEol | null;
   repo?: ExposureRepo | null;
   source?: ExposureSource;
+  /** A surface row's finding; only its condition id is read (the reason text of an upcoming expiry). */
+  surface?: Pick<SurfaceRow, "id"> | null;
 };
 
 /** True for a row that is a repository-health finding. */
