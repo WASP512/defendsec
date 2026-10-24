@@ -5,7 +5,7 @@ import { SeverityBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { getFindingDetail } from "@/lib/findings";
-import { feedLabel, fixLabel } from "@/lib/findings-model";
+import { eolStageLabel, feedLabel, fixLabel, originLabel } from "@/lib/findings-model";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,15 @@ export default async function FindingDetailPage({ params }: { params: Promise<{ 
     ["Installed", finding.installed],
     ["Fix", fixLabel(finding)],
     ["Why", finding.reason],
-    ["Basis", finding.basis === "distro" ? "The distribution's own advisory" : "Upstream version floor (software the distribution does not ship)"],
+    ["Basis", finding.basis === "distro" ? "The distribution's own advisory" : finding.basis === "lifecycle" ? "Upstream release calendar (endoflife.date): software from outside the distribution, which nobody else is patching" : "Upstream version floor (software the distribution does not ship)"],
+    ...(finding.eol
+      ? ([
+          ["Release", `${finding.eol.productLabel} ${finding.eol.cycle}: ${eolStageLabel(finding.eol)}`],
+          ["Installed from", originLabel(finding)],
+          ["Packages", finding.eol.packages.join(", ")],
+          ["Evidence for", finding.controls?.length ? finding.controls.join(", ") : "—"],
+        ] as [string, React.ReactNode][])
+      : []),
     ["Open since", finding.firstSeen],
     ["Last confirmed", finding.lastSeen],
     ["Closed", finding.resolvedAt ?? "still open"],

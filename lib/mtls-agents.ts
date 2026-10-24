@@ -1,3 +1,4 @@
+import { warmOsCalendar } from "./os-calendar";
 import { readFile, stat } from "node:fs/promises";
 import { dataPath } from "./data-paths";
 import type { Device, FimEvent, FimFile, PatchInventory, Platform, SoftwareItem, PendingUpdate } from "./types";
@@ -11,6 +12,7 @@ type MtlsFile = {
     platform?: string;
     osName?: string;
     osVersion?: string;
+    osEdition?: string;
     arch?: string;
     uptimeSeconds?: number;
     lastSeen: string;
@@ -87,6 +89,9 @@ export function fleetVersion(): string {
 let devicesCache: { key: string; devices: Device[] } | null = null;
 
 export async function loadMtlsDevices(): Promise<Device[]> {
+  // Every page that judges a host's OS reads the fleet through here, so the
+  // release calendar the Windows judgement needs is loaded here too.
+  await warmOsCalendar();
   const parsed = await loadMtlsFile();
   if (devicesCache && devicesCache.key === fleetVersion() && fleetVersion() !== "") return devicesCache.devices;
   const devices = mapMtlsDevices(parsed);
@@ -102,6 +107,7 @@ function mapMtlsDevices(parsed: MtlsFile): Device[] {
     platform: asPlatform(item.platform),
     osName: item.osName ?? "Unknown",
     osVersion: item.osVersion ?? "",
+    osEdition: item.osEdition ?? "",
     arch: item.arch ?? "",
     serial: item.serial ?? item.certFingerprint?.slice(0, 16) ?? "",
     hardwareModel: item.hardwareModel || "mTLS gRPC agent",
@@ -149,6 +155,7 @@ export function mergeDevices(fromStore: Device[], mtls: Device[]) {
       mtlsDeviceId: live.id,
       osName: useInv ? live.osName || device.osName : device.osName,
       osVersion: useInv ? live.osVersion || device.osVersion : device.osVersion,
+      osEdition: live.osEdition || device.osEdition,
       arch: useInv ? live.arch || device.arch : device.arch,
       serial: useInv ? live.serial || device.serial : device.serial,
       hardwareModel: live.hardwareModel || device.hardwareModel,

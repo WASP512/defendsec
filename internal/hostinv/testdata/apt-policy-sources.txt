@@ -1,0 +1,22 @@
+Package files:
+ 100 /var/lib/dpkg/status
+     release a=now
+ 500 https://deb.nodesource.com/node_22.x nodistro/main amd64 Packages
+     release o=. nodistro,a=nodistro,n=nodistro,l=. nodistro,c=main,b=amd64
+     origin deb.nodesource.com
+ 500 http://security.debian.org trixie-security/main amd64 Packages
+     release v=13,o=Debian,a=stable-security,n=trixie-security,l=Debian-Security,c=main,b=amd64
+     origin security.debian.org
+ 500 http://security.debian.org trixie-security/contrib amd64 Packages
+     release v=13,o=Debian,a=stable-security,n=trixie-security,l=Debian-Security,c=contrib,b=amd64
+     origin security.debian.org
+ 500 http://deb.debian.org/debian trixie-updates/main amd64 Packages
+     release v=13-updates,o=Debian,a=stable-updates,n=trixie-updates,l=Debian,c=main,b=amd64
+     origin deb.debian.org
+ 500 http://deb.debian.org/debian trixie/main amd64 Packages
+     release v=13.7,o=Debian,a=stable,n=trixie,l=Debian,c=main,b=amd64
+     origin deb.debian.org
+ 500 http://deb.debian.org/debian trixie/contrib amd64 Packages
+     release v=13.7,o=Debian,a=stable,n=trixie,l=Debian,c=contrib,b=amd64
+     origin deb.debian.org
+Pinned packages:

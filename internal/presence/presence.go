@@ -36,6 +36,10 @@ type Software struct {
 	// Source:, rpm SOURCERPM). Empty from agents that do not report them.
 	SourcePackage string `json:"sourcePackage,omitempty"`
 	SourceVersion string `json:"sourceVersion,omitempty"`
+	// Origin and OriginRepo say where the package came from (apt Origin: or rpm
+	// Vendor; the repository). Empty from agents that do not report them.
+	Origin     string `json:"origin,omitempty"`
+	OriginRepo string `json:"originRepo,omitempty"`
 }
 
 type Update struct {
@@ -107,7 +111,9 @@ type Device struct {
 	Platform     string `json:"platform"`
 	OSName       string `json:"osName"`
 	OSVersion    string `json:"osVersion"`
-	Arch         string `json:"arch"`
+	// OSEdition is the Windows EditionID; empty from other platforms and older agents.
+	OSEdition string `json:"osEdition,omitempty"`
+	Arch      string `json:"arch"`
 	// Distro and DistroRelease are os-release ID and VERSION_ID; PackageManager
 	// is "dpkg" or "rpm". They pick the advisory feed and version ordering.
 	Distro          string `json:"distro,omitempty"`
@@ -233,6 +239,9 @@ func mergeHeartbeat(old, neu Device) Device {
 	}
 	if neu.OSVersion != "" {
 		out.OSVersion = neu.OSVersion
+	}
+	if neu.OSEdition != "" {
+		out.OSEdition = neu.OSEdition
 	}
 	if neu.Arch != "" {
 		out.Arch = neu.Arch

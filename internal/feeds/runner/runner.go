@@ -21,6 +21,7 @@ import (
 	"defendsec/internal/feeds/alma"
 	"defendsec/internal/feeds/bundle"
 	"defendsec/internal/feeds/debian"
+	"defendsec/internal/feeds/endoflife"
 	"defendsec/internal/feeds/epss"
 	"defendsec/internal/feeds/fetch"
 	"defendsec/internal/feeds/kev"
@@ -29,6 +30,7 @@ import (
 	"defendsec/internal/feeds/rocky"
 	"defendsec/internal/feeds/suse"
 	"defendsec/internal/feeds/ubuntu"
+	"defendsec/internal/lifecycle"
 	"defendsec/internal/sign"
 	"defendsec/internal/storepg"
 )
@@ -228,6 +230,11 @@ func (r *Runner) process(ctx context.Context, items []*item, results []Result) (
 		start := time.Now()
 		st, had := status[it.spec.Name]
 		changed := needs(it)
+		if !changed && it.spec.Kind == KindEOL && r.eolCalendarIncomplete(ctx) {
+			// The document is unchanged but this build keeps products the stored
+			// calendar lacks (an upgrade added the Windows ones): load it again.
+			changed = true
+		}
 		enrich := it.spec.Kind == KindKEV || it.spec.Kind == KindEPSS
 		if !changed && !(enrich && rangesLoaded) {
 			// Confirmed current and already loaded: only refresh the status row.
@@ -244,6 +251,8 @@ func (r *Runner) process(ctx context.Context, items []*item, results []Result) (
 			err = r.loadKEV(ctx, it, res, st, had, snapID)
 		case KindEPSS:
 			err = r.loadEPSS(ctx, it, res, st, had, snapID)
+		case KindEOL:
+			err = r.loadEOL(ctx, it, res, st, had, snapID)
 		default:
 			err = r.loadRanges(ctx, it, res, st, had, snapID)
 		}
@@ -621,6 +630,68 @@ func (r *Runner) loadEPSS(ctx context.Context, it *item, res *Result, prev store
 		return fmt.Errorf("apply epss: %w", err)
 	}
 	res.Note = strings.TrimSpace(res.Note + fmt.Sprintf(" score_date=%s model=%s advisories_updated=%d", meta.ScoreDate.Format("2006-01-02"), meta.ModelVersion, n))
+	return nil
+}
+
+// eolCalendarIncomplete reports whether the stored calendar lacks a product this
+// build keeps. An unchanged download would otherwise never fill it in.
+func (r *Runner) eolCalendarIncomplete(ctx context.Context) bool {
+	if r.Store == nil {
+		return false
+	}
+	have, err := r.Store.EOLProducts(ctx)
+	if err != nil {
+		return false
+	}
+	set := map[string]bool{}
+	for _, p := range have {
+		set[p] = true
+	}
+	for _, want := range lifecycle.OSProducts {
+		if !set[want] {
+			return true
+		}
+	}
+	return false
+}
+
+// loadEOL parses the endoflife.date calendar and replaces the stored one. Only
+// the products the lifecycle mapping table can produce are kept.
+func (r *Runner) loadEOL(ctx context.Context, it *item, res *Result, prev storepg.FeedStatus, had bool, snapID int64) error {
+	f, err := openDecompressed(it.path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	cat, err := endoflife.Parse(f, lifecycle.FeedProducts())
+	if err != nil {
+		return fmt.Errorf("parse endoflife: %w", err)
+	}
+	res.Skipped = cat.Stats.Skipped
+	res.Records = int64(cat.Releases())
+	res.Advisories = len(cat.Products)
+	if err := r.shrinkGuard("endoflife", res.Records, prev, had); err != nil {
+		return err
+	}
+	if r.Store == nil {
+		res.Note = strings.TrimSpace(res.Note + " schema=" + cat.SchemaVersion + " generated=" + cat.GeneratedAt)
+		return nil
+	}
+	rows := make([]storepg.EOLRow, 0, res.Records)
+	for _, p := range cat.Products {
+		for _, rel := range p.Releases {
+			rows = append(rows, storepg.EOLRow{
+				Product: p.Name, Label: p.Label, Cycle: rel.Cycle,
+				ReleaseDate: rel.ReleaseDate, EoasFrom: rel.EoasFrom, EolFrom: rel.EolFrom, EoesFrom: rel.EoesFrom,
+				IsEol: rel.IsEol, IsLTS: rel.IsLTS, Latest: rel.Latest, Link: rel.Link,
+			})
+		}
+	}
+	n, err := r.Store.ApplyEOL(ctx, rows, snapID)
+	if err != nil {
+		return fmt.Errorf("apply endoflife: %w", err)
+	}
+	res.Note = strings.TrimSpace(res.Note + fmt.Sprintf(" schema=%s generated=%s products=%d releases=%d", cat.SchemaVersion, cat.GeneratedAt, len(cat.Products), n))
 	return nil
 }
 

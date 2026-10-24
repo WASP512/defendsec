@@ -48,6 +48,8 @@ export type Device = {
   platform: Platform;
   osName: string;
   osVersion: string;
+  /** Windows EditionID ("ServerStandard", "EnterpriseS"); empty elsewhere and from older agents. */
+  osEdition?: string;
   arch: string;
   serial: string;
   hardwareModel: string;

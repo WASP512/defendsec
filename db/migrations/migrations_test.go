@@ -42,6 +42,7 @@ func TestEmbeddedMigrationsContainRequiredSchema(t *testing.T) {
 		"022_awaiting_vendor.sql",
 		"023_surface.sql",
 		"024_exposure.sql",
+		"025_app_eol.sql",
 	}
 	if len(names) != len(want) {
 		t.Fatalf("embedded migrations = %v, want %v", names, want)
@@ -60,7 +61,7 @@ func TestEmbeddedMigrationsContainRequiredSchema(t *testing.T) {
 		}
 		schema.Write(body)
 	}
-	for _, relation := range []string{"meta", "devices", "audit_log", "advisories", "alerts", "saved_queries", "audit_checkpoints", "users", "user_sessions", "feed_snapshots", "advisory_ranges", "vuln_findings", "host_vuln_state", "vuln_finding_intervals", "surface_assets", "surface_scans", "surface_observations", "surface_findings"} {
+	for _, relation := range []string{"meta", "devices", "audit_log", "advisories", "alerts", "saved_queries", "audit_checkpoints", "users", "user_sessions", "feed_snapshots", "advisory_ranges", "vuln_findings", "host_vuln_state", "vuln_finding_intervals", "surface_assets", "surface_scans", "surface_observations", "surface_findings", "eol_releases"} {
 		if !strings.Contains(schema.String(), "CREATE TABLE IF NOT EXISTS "+relation) {
 			t.Errorf("embedded migrations do not create %s", relation)
 		}

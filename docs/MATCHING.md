@@ -25,6 +25,7 @@ Added to the existing inventory report; every field is optional, so older agents
 | `package_manager` | `dpkg` or `rpm` |
 | `software[].name`, `.version` | `dpkg-query` / `rpm -qa` (rpm versions carry the epoch) |
 | `software[].source_package`, `.source_version` | dpkg `Source:` field; rpm `SOURCERPM` |
+| `software[].origin`, `.origin_repo` | dpkg: the `Origin:` and address of the apt repository that carries the installed version (`apt-cache policy`); rpm: `Vendor` and `Packager`. Used only by application end-of-life ([EOL.md](EOL.md)) |
 
 dpkg lists only packages in state `ii` (installed). An rpm installed in several versions (the
 kernel) is reported once, at the newest. The full list is reported, not a prefix: a clean result
@@ -76,6 +77,12 @@ contacts nothing, for offline matching and for support requests.
 7. **Coverage.** Each run records whether a feed could speak for the host: `covered`,
    `no_feed` (distro known, no feed loaded for that release) or `no_distro`. A host with no
    findings and no coverage was not assessed; the console says so.
+
+## Application end-of-life
+
+Software from outside the distribution (a third-party repository, or a host with no package manager) is judged against its
+upstream's support calendar, and the distribution's own packages never are. The agent reports where each package came from
+(`origin`, `origin_repo`). Findings are kind `eol`; see [EOL.md](EOL.md).
 
 ## What each finding records
 

@@ -40,7 +40,9 @@ var ErrBadExposureQuery = errors.New("bad exposure query")
 func bucketKinds(bucket string) ([]string, error) {
 	switch bucket {
 	case "", BucketFix:
-		return []string{"finding"}, nil
+		// Upgrading end-of-life software is work for this week as much as
+		// installing a patch is: both have something to do.
+		return []string{"finding", "eol"}, nil
 	case BucketWatch:
 		return []string{"unfixed", "awaiting_vendor"}, nil
 	}
@@ -122,6 +124,23 @@ type ExposureGroup struct {
 	// date Red Hat shipped the fix ("fixed by Red Hat on <date>; awaiting
 	// Rocky/Alma"); nil when none applies or the feed gave no date.
 	AwaitingSince *string `json:"awaitingSince"`
+	// EOL is set on an end-of-life group (advisory id "EOL:<product>:<cycle>").
+	EOL *ExposureEOL `json:"eol"`
+}
+
+// ExposureEOL describes the release an end-of-life group is about.
+type ExposureEOL struct {
+	Product      string `json:"product"`
+	ProductLabel string `json:"productLabel"`
+	Cycle        string `json:"cycle"`
+	// Stage is "eol" (security support ended) or "eoas" (active support
+	// ended); Date is the day that stage began.
+	Stage string `json:"stage"`
+	Date  string `json:"date"`
+	// UpgradeTo is the release to move to; empty when none is supported.
+	UpgradeTo string `json:"upgradeTo"`
+	// Origins are the repositories or vendors the packages came from.
+	Origins []string `json:"origins"`
 }
 
 // ExposurePage is one page of the ranked list.
@@ -202,6 +221,7 @@ func isNumericText(s string) bool {
 const exposureRankedSQL = `
 	SELECT advisory_id, cve, summary, severity, kev, kev_added, epss, cvss, kinds, host_count, finding_count,
 	       host_ids, host_names, packages, fixed, first_seen, resolved_at, awaiting_since,
+	       eol_product, eol_cycle, eol_stage, eol_date, eol_label, eol_upgrade, eol_origins,
 	       CASE WHEN kev THEN 0 ELSE 1 END AS k1,
 	       (CASE WHEN kev THEN -COALESCE(kev_added - DATE '1970-01-01', 0) ELSE 0 END)::text AS k2,
 	       (-COALESCE(epss, -1))::text AS k3,
@@ -224,7 +244,12 @@ const exposureRankedSQL = `
 	         (array_agg(DISTINCT f.fixed) FILTER (WHERE f.fixed <> ''))[1:3] AS fixed,
 	         min(f.first_seen) AS first_seen,
 	         max(f.resolved_at) AS resolved_at,
-	         max(f.upstream_fixed_on) FILTER (WHERE f.kind = 'awaiting_vendor') AS awaiting_since
+	         max(f.upstream_fixed_on) FILTER (WHERE f.kind = 'awaiting_vendor') AS awaiting_since,
+	         max(f.eol_product) AS eol_product, max(f.eol_cycle) AS eol_cycle, max(f.eol_stage) AS eol_stage,
+	         max(f.eol_date) AS eol_date,
+	         COALESCE(max(f.eol_detail->>'productLabel'), '') AS eol_label,
+	         COALESCE(max(f.eol_detail->>'upgradeTo'), '') AS eol_upgrade,
+	         COALESCE((array_agg(DISTINCT f.origin) FILTER (WHERE f.origin <> ''))[1:3], ARRAY[]::text[]) AS eol_origins
 	  FROM vuln_findings f
 	  JOIN devices d ON d.id = f.device_id AND NOT d.revoked
 	  LEFT JOIN advisories a ON a.id = f.advisory_id
@@ -288,12 +313,25 @@ func (s *Store) ListExposure(ctx context.Context, q ExposureQuery) (ExposurePage
 func scanExposureGroup(row pgx.Row) (ExposureGroup, exposureCursor, error) {
 	var g ExposureGroup
 	var c exposureCursor
-	var kevAdded, awaitingSince *time.Time
-	var ids, names []string
+	var kevAdded, awaitingSince, eolDate *time.Time
+	var ids, names, eolOrigins []string
+	var eolProduct, eolCycle, eolStage, eolLabel, eolUpgrade string
 	if err := row.Scan(&g.AdvisoryID, &g.CVE, &g.Summary, &g.Severity, &g.KEV, &kevAdded, &g.EPSS, &g.CVSS,
 		&g.Kinds, &g.HostCount, &g.FindingCount, &ids, &names, &g.Packages, &g.Fixed, &g.FirstSeen, &g.ResolvedAt, &awaitingSince,
+		&eolProduct, &eolCycle, &eolStage, &eolDate, &eolLabel, &eolUpgrade, &eolOrigins,
 		&c.K1, &c.K2, &c.K3, &c.K4, &c.K5, &c.K6); err != nil {
 		return g, c, err
+	}
+	if eolProduct != "" {
+		d := ""
+		if t := dateText(eolDate); t != nil {
+			d = *t
+		}
+		if eolOrigins == nil {
+			eolOrigins = []string{}
+		}
+		g.EOL = &ExposureEOL{Product: eolProduct, ProductLabel: eolLabel, Cycle: eolCycle, Stage: eolStage,
+			Date: d, UpgradeTo: eolUpgrade, Origins: eolOrigins}
 	}
 	g.FirstSeen = g.FirstSeen.UTC()
 	if g.ResolvedAt != nil {
@@ -433,10 +471,14 @@ type ExposureSummary struct {
 		SilentList []SilentHost `json:"silentList"`
 	} `json:"hosts"`
 	Fixable struct {
+		// Findings, Advisories and Hosts count both kinds of fixable work:
+		// a patch to install and software past end of life to upgrade.
 		Findings   int           `json:"findings"`
 		Advisories int           `json:"advisories"`
 		Hosts      int           `json:"hosts"`
 		KEV        ExposureCount `json:"kev"`
+		// EOL is the part of the above that is end-of-life software.
+		EOL ExposureCount `json:"eol"`
 	} `json:"fixable"`
 	Watch struct {
 		Unfixed        ExposureCount `json:"unfixed"`
@@ -497,9 +539,9 @@ func (s *Store) ExposureSummary(ctx context.Context, now time.Time) (ExposureSum
 
 	if err := s.pool.QueryRow(ctx, `
 		SELECT
-		  count(*) FILTER (WHERE f.kind = 'finding'),
-		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind = 'finding'),
-		  count(DISTINCT f.device_id) FILTER (WHERE f.kind = 'finding'),
+		  count(*) FILTER (WHERE f.kind IN ('finding', 'eol')),
+		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind IN ('finding', 'eol')),
+		  count(DISTINCT f.device_id) FILTER (WHERE f.kind IN ('finding', 'eol')),
 		  count(*) FILTER (WHERE f.kind = 'finding' AND f.kev),
 		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind = 'finding' AND f.kev),
 		  count(*) FILTER (WHERE f.kind = 'unfixed'),
@@ -507,14 +549,17 @@ func (s *Store) ExposureSummary(ctx context.Context, now time.Time) (ExposureSum
 		  count(*) FILTER (WHERE f.kind = 'awaiting_vendor'),
 		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind = 'awaiting_vendor'),
 		  count(*) FILTER (WHERE f.kind IN ('unfixed', 'awaiting_vendor') AND f.kev),
-		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind IN ('unfixed', 'awaiting_vendor') AND f.kev)
+		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind IN ('unfixed', 'awaiting_vendor') AND f.kev),
+		  count(*) FILTER (WHERE f.kind = 'eol'),
+		  count(DISTINCT f.advisory_id) FILTER (WHERE f.kind = 'eol')
 		FROM vuln_findings f JOIN devices d ON d.id = f.device_id AND NOT d.revoked
 		WHERE f.resolved_at IS NULL`).Scan(
 		&out.Fixable.Findings, &out.Fixable.Advisories, &out.Fixable.Hosts,
 		&out.Fixable.KEV.Findings, &out.Fixable.KEV.Advisories,
 		&out.Watch.Unfixed.Findings, &out.Watch.Unfixed.Advisories,
 		&out.Watch.AwaitingVendor.Findings, &out.Watch.AwaitingVendor.Advisories,
-		&out.Watch.KEV.Findings, &out.Watch.KEV.Advisories); err != nil {
+		&out.Watch.KEV.Findings, &out.Watch.KEV.Advisories,
+		&out.Fixable.EOL.Findings, &out.Fixable.EOL.Advisories); err != nil {
 		return out, err
 	}
 
@@ -614,16 +659,16 @@ func (s *Store) ExposureTrend(ctx context.Context, from, to, now time.Time) (Exp
 		), spans AS (
 		  SELECT f.kind, f.kev, f.first_seen AS opened, f.resolved_at AS closed
 		  FROM vuln_findings f JOIN devices d ON d.id = f.device_id AND NOT d.revoked
-		  WHERE f.kind IN ('finding', 'unfixed', 'awaiting_vendor')
+		  WHERE f.kind IN ('finding', 'eol', 'unfixed', 'awaiting_vendor')
 		  UNION ALL
 		  SELECT i.kind, i.kev, i.opened_at, i.closed_at
 		  FROM vuln_finding_intervals i JOIN devices d ON d.id = i.device_id AND NOT d.revoked
-		  WHERE i.kind IN ('finding', 'unfixed', 'awaiting_vendor')
+		  WHERE i.kind IN ('finding', 'eol', 'unfixed', 'awaiting_vendor')
 		)
 		SELECT days.day,
-		       count(spans.kind) FILTER (WHERE spans.kind = 'finding'),
+		       count(spans.kind) FILTER (WHERE spans.kind IN ('finding', 'eol')),
 		       count(spans.kind) FILTER (WHERE spans.kind = 'finding' AND spans.kev),
-		       count(spans.kind) FILTER (WHERE spans.kind <> 'finding')
+		       count(spans.kind) FILTER (WHERE spans.kind NOT IN ('finding', 'eol'))
 		FROM days
 		LEFT JOIN spans ON spans.opened <= days.asof AND (spans.closed IS NULL OR spans.closed > days.asof)
 		GROUP BY days.day ORDER BY days.day`, start, end, now.UTC())

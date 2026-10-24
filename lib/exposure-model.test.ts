@@ -7,6 +7,7 @@ import {
   closeDrawerHref,
   compareRank,
   drawerHref,
+  eolOfHosts,
   exposureApiPath,
   filterHref,
   fixedLabel,
@@ -349,4 +350,66 @@ test("ExposureGroup rows from the wire satisfy Rankable", () => {
     fixed: ["2"], firstSeen: "2026-10-01T00:00:00Z", resolvedAt: null, awaitingSince: null,
   };
   assert.equal(isRanked([g]), true);
+});
+
+// ---- end-of-life rows (slice 10) ----------------------------------------------------------
+
+const eolPhp80 = {
+  product: "php",
+  productLabel: "PHP",
+  cycle: "8.0",
+  stage: "eol" as const,
+  date: "2023-11-26",
+  upgradeTo: "8.4",
+  origins: ["deb.sury.org"],
+};
+
+test("end-of-life rows rank among the unscored: after every scored finding, by severity against the unscored", () => {
+  const rows = [
+    row("C-unscored-medium"),
+    row("EOL:nodejs:22", { severity: "low", eol: { ...eolPhp80, product: "nodejs", cycle: "22", stage: "eoas" } }),
+    row("EOL:php:8.0", { severity: "high", eol: eolPhp80 }),
+    row("D-unscored-high", { severity: "high" }),
+    row("B-scored", { epss: 0.0002, cvss: 4 }),
+    row("A-kev", { kev: true, kevAdded: "2026-10-01", epss: 0.5, cvss: 8 }),
+  ];
+  // The same order the Go test checks against the database.
+  assert.deepEqual(sorted(rows), ["A-kev", "B-scored", "D-unscored-high", "EOL:php:8.0", "C-unscored-medium", "EOL:nodejs:22"]);
+  assert.ok(isRanked([...rows].sort(compareRank)));
+});
+
+test("rankReason for an end-of-life row says what the calendar says, never CVSS or a missing score", () => {
+  const why = rankReason(row("EOL:php:8.0", { severity: "high", eol: eolPhp80 }));
+  assert.equal(why.headline, "Past end of security support since 2023-11-26");
+  assert.match(why.text, /no one patches it any more/);
+  assert.match(why.text, /installed from deb\.sury\.org, not the distribution/);
+  assert.match(why.text, /ranks with the unscored findings by severity \(high\)/);
+  assert.doesNotMatch(why.text, /CVSS|EPSS|No exploitation signal/);
+
+  const active = rankReason(row("EOL:php:8.2", { severity: "low", eol: { ...eolPhp80, cycle: "8.2", stage: "eoas", date: "2024-12-31", origins: [] } }));
+  assert.equal(active.headline, "Past end of active support since 2024-12-31");
+  assert.match(active.text, /security fixes continue/);
+  assert.doesNotMatch(active.text, /installed from/);
+
+  // a vulnerability row is unaffected
+  assert.equal(rankReason(row("A", { epss: 0.5 })).headline, "EPSS 0.50");
+});
+
+test("fixedLabel for an end-of-life row is the upgrade, not a fixed version", () => {
+  assert.equal(fixedLabel({ fixed: [], eol: eolPhp80 }), "upgrade to PHP 8.4");
+  assert.equal(fixedLabel({ fixed: [], eol: { ...eolPhp80, upgradeTo: "" } }), "upgrade needed; no newer supported release is listed");
+  assert.equal(fixedLabel({ fixed: ["1.2"] }), "fixed in 1.2");
+});
+
+test("eolOfHosts reads the release from the host findings when the drawer is opened without the list row", () => {
+  const detail = {
+    product: "php", productLabel: "PHP", cycle: "8.0", stage: "eol" as const, stageFrom: "2023-11-26",
+    packages: ["php8.0-cli"], origin: "deb.sury.org", upgradeTo: "8.4",
+  };
+  const got = eolOfHosts([{ eol: detail, origin: "deb.sury.org" }, { eol: { ...detail, origin: "LP-PPA-ondrej-php" }, origin: "LP-PPA-ondrej-php" }]);
+  assert.deepEqual(got, {
+    product: "php", productLabel: "PHP", cycle: "8.0", stage: "eol", date: "2023-11-26", upgradeTo: "8.4",
+    origins: ["LP-PPA-ondrej-php", "deb.sury.org"],
+  });
+  assert.equal(eolOfHosts([{ eol: null }, {}]), null);
 });

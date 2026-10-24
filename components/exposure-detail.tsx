@@ -3,9 +3,10 @@ import { Badge } from "@/components/ui/badge";
 import { SeverityBadge } from "@/components/status-badge";
 import { FindingActions } from "@/components/finding-actions";
 import { WhyRanksHere } from "@/components/exposure-list";
-import { feedLabel } from "@/lib/findings-model";
+import { eolStageLabel, feedLabel, originLabel, upgradeLabel } from "@/lib/findings-model";
 import {
   ageLabel,
+  eolOfHosts,
   hostStatus,
   resolutionLabel,
   watchLabel,
@@ -38,6 +39,7 @@ export function ExposureDetail({
     kevAdded: adv?.kevAdded ?? group?.kevAdded ?? null,
     epss: adv?.epss ?? group?.epss ?? null,
     cvss: adv?.cvssScore ?? group?.cvss ?? null,
+    eol: group?.eol ?? eolOfHosts(detail.hosts),
   } as const;
   const resolved = detail.status === "resolved";
   const kinds = [...new Set(detail.hosts.map((h) => h.kind))];
@@ -88,7 +90,14 @@ export function ExposureDetail({
             </>
           ) : null}
         </dl>
-        {!adv ? (
+        {!adv && subject.eol ? (
+          <p className="text-sm text-muted-foreground" data-eol-basis>
+            An end-of-life finding comes from the upstream release calendar (endoflife.date), not from an advisory. It
+            applies only to software installed from outside the distribution: the distribution&apos;s own packages
+            follow its support lifecycle.
+          </p>
+        ) : null}
+        {!adv && !subject.eol ? (
           <p className="text-sm text-muted-foreground">
             The advisory record is no longer in the database (a feed re-sync removed it); the findings below keep what
             they matched.
@@ -117,14 +126,17 @@ export function ExposureDetail({
                     </Badge>
                     {h.kind === "awaiting_vendor" ? <Badge variant="outline">awaiting vendor</Badge> : null}
                     {h.kind === "unfixed" ? <Badge variant="outline">no fix published</Badge> : null}
+                    {h.kind === "eol" && h.eol ? <Badge variant="outline">{eolStageLabel(h.eol)}</Badge> : null}
                   </div>
                   {!readOnly && status !== "resolved" ? (
                     <FindingActions findingKey={h.key} status={status === "acknowledged" ? "acknowledged" : "open"} />
                   ) : null}
                 </div>
                 <p className="text-sm">
-                  {h.package}: installed <code>{h.installed}</code>
-                  {h.fixed ? (
+                  {h.kind === "eol" && h.eol ? h.eol.packages.join(", ") : h.package}: installed <code>{h.installed}</code>
+                  {h.kind === "eol" && h.eol ? (
+                    <> · {upgradeLabel(h.eol)}</>
+                  ) : h.fixed ? (
                     <>
                       {" "}
                       · fixed in <code>{h.fixed.replace(/^0:/, "")}</code>
@@ -135,6 +147,17 @@ export function ExposureDetail({
                 </p>
                 {h.kind === "awaiting_vendor" && h.reason ? (
                   <p className="text-sm text-muted-foreground">{h.reason}</p>
+                ) : null}
+                {h.kind === "eol" && h.eol ? (
+                  <div className="space-y-0.5 text-sm" data-eol-evidence>
+                    <p>
+                      Installed from <span className="font-medium">{originLabel(h)}</span>, not the distribution.
+                    </p>
+                    <p className="text-muted-foreground">{h.reason}</p>
+                    {h.controls?.length ? (
+                      <p className="text-muted-foreground">Evidence for: {h.controls.join(", ")}</p>
+                    ) : null}
+                  </div>
                 ) : null}
                 <p className="text-xs text-muted-foreground">{ageLabel(h.firstSeen, h.resolvedAt)}</p>
                 {resolution ? <p className="text-sm" data-resolution={h.resolution || "unrecorded"}>{resolution}</p> : null}

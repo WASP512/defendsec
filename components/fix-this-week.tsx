@@ -71,9 +71,10 @@ function FixRow({ group, rank }: { group: ExposureGroup; rank: number }) {
             href={`/advisories?advisory=${encodeURIComponent(group.advisoryId)}`}
             className="font-medium underline-offset-2 hover:underline"
           >
-            {group.cve || group.advisoryId}
+            {group.eol ? `${group.eol.productLabel} ${group.eol.cycle}` : group.cve || group.advisoryId}
           </Link>
           <SeverityBadge severity={group.severity} />
+          {group.eol ? <Badge variant="outline">{group.eol.stage === "eol" ? "End of life" : "Past active support"}</Badge> : null}
           {group.kev ? <Badge variant="destructive">KEV</Badge> : null}
         </div>
         <p className="text-sm">
@@ -101,6 +102,9 @@ function FixRow({ group, rank }: { group: ExposureGroup; rank: number }) {
 export function FixThisWeekCard({ summary }: { summary: ExposureSummary }) {
   const { fixable, hosts } = summary;
   const rows = summary.fixThisWeek;
+  // fixable counts patches to install and end-of-life releases to upgrade.
+  const eolN = fixable.eol?.advisories ?? 0;
+  const vulnN = fixable.advisories - eolN;
   return (
     <Card data-fix-this-week>
       <CardHeader>
@@ -108,7 +112,7 @@ export function FixThisWeekCard({ summary }: { summary: ExposureSummary }) {
         <CardDescription>
           {fixable.advisories === 0
             ? "Nothing with a fix to install."
-            : `${plural(fixable.advisories, "vulnerability", "vulnerabilities")} with a fix to install, across ${plural(fixable.hosts, "host")}. The top ${rows.length}, most urgent first:`}
+            : `${plural(vulnN, "vulnerability", "vulnerabilities")} with a fix to install${eolN > 0 ? ` and ${plural(eolN, "end-of-life release")} to upgrade` : ""}, across ${plural(fixable.hosts, "host")}. The top ${rows.length}, most urgent first:`}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

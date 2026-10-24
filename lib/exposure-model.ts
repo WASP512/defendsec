@@ -7,7 +7,8 @@
 // compareRank below states the same rule so the console can check that a page
 // it was handed is in rank order and say why each row sits where it does.
 
-import type { FindingKind, FindingSeverity } from "./findings-model.ts";
+import { upgradeLabel } from "./findings-model.ts";
+import type { EolDetail, FindingKind, FindingSeverity } from "./findings-model.ts";
 import type { FindingTriage } from "./types.ts";
 
 /** One advisory with the hosts it affects: a row of the ranked list. */
@@ -32,6 +33,22 @@ export type ExposureGroup = {
   resolvedAt: string | null;
   /** YYYY-MM-DD Red Hat shipped the fix an awaiting_vendor finding is waiting for. */
   awaitingSince: string | null;
+  /** Set on an end-of-life row (advisory id "EOL:<product>:<cycle>"). */
+  eol?: ExposureEol | null;
+};
+
+/** The release an end-of-life row is about. */
+export type ExposureEol = {
+  product: string;
+  productLabel: string;
+  cycle: string;
+  /** "eol": security support ended. "eoas": active support ended. */
+  stage: "eol" | "eoas";
+  /** YYYY-MM-DD the stage began. */
+  date: string;
+  upgradeTo: string;
+  /** The repositories or vendors the packages came from. */
+  origins: string[];
 };
 
 export type ExposureBucket = "fix" | "watch";
@@ -69,6 +86,11 @@ export type ExposureHostRow = {
   resolvedAt: string | null;
   resolution: "" | "fixed" | "package_removed" | "no_longer_affected";
   resolvedInstalled: string;
+  /** End-of-life rows: where the packages came from, the release, the control tags. */
+  origin?: string;
+  originRepo?: string;
+  eol?: EolDetail | null;
+  controls?: string[];
 };
 
 export type ExposureAdvisoryResponse = {
@@ -108,7 +130,8 @@ export type ExposureSummary = {
     silent: number;
     silentList: { deviceId: string; hostname: string; lastSeen: string }[];
   };
-  fixable: { findings: number; advisories: number; hosts: number; kev: ExposureCount };
+  /** findings, advisories and hosts count patches to install and software to upgrade; eol is the upgrade part. */
+  fixable: { findings: number; advisories: number; hosts: number; kev: ExposureCount; eol?: ExposureCount };
   watch: { unfixed: ExposureCount; awaitingVendor: ExposureCount; kev: ExposureCount };
   sca: { total: number; hosts: number; bySeverity: Record<string, number> };
   fixThisWeek: ExposureGroup[];
@@ -133,7 +156,9 @@ export type ExposureTrend = {
 
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
-export type Rankable = Pick<ExposureGroup, "advisoryId" | "severity" | "kev" | "kevAdded" | "epss" | "cvss">;
+export type Rankable = Pick<ExposureGroup, "advisoryId" | "severity" | "kev" | "kevAdded" | "epss" | "cvss"> & {
+  eol?: ExposureEol | null;
+};
 
 // Higher first; a missing score goes last (and is not the same as zero).
 function byScoreDesc(a: number | null, b: number | null): number {
@@ -149,6 +174,10 @@ function byScoreDesc(a: number | null, b: number | null): number {
  * high to low; then CVSS high to low; then the vendor's severity label; then
  * the advisory id, so the order is total. A missing score ranks after any
  * score, including 0. Mirrors internal/exposure.Compare.
+ *
+ * An end-of-life row has no EPSS or CVSS, so it ranks among the unscored: after
+ * every scored finding, and by its severity label (high past security support,
+ * low past active support) against the other unscored ones.
  */
 export function compareRank(a: Rankable, b: Rankable): number {
   if (a.kev !== b.kev) return a.kev ? -1 : 1;
@@ -204,7 +233,21 @@ export type RankReason = {
 export function rankReason(g: Rankable): RankReason {
   let headline: string;
   const details: string[] = [];
-  if (g.kev) {
+  if (g.eol) {
+    // No CVE and no score: the release calendar is the signal, and saying so
+    // is better than printing "no exploitation signal" as if it were missing.
+    const e = g.eol;
+    const since = e.date ? ` since ${e.date}` : "";
+    headline = e.stage === "eol" ? `Past end of security support${since}` : `Past end of active support${since}`;
+    details.push(
+      e.stage === "eol"
+        ? "no one patches it any more, so every future flaw stays open"
+        : "security fixes continue until its end of life",
+    );
+    details.push("no exploitation score applies");
+    if (e.origins.length > 0) details.push(`installed from ${e.origins.join(", ")}, not the distribution`);
+    details.push(`ranks with the unscored findings by severity (${g.severity})`);
+  } else if (g.kev) {
     headline = g.kevAdded
       ? `Exploited in the wild since ${g.kevAdded}`
       : "Exploited in the wild (CISA KEV; listing date not recorded)";
@@ -293,6 +336,19 @@ export function watchLabel(g: Pick<ExposureGroup, "kinds" | "awaitingSince">): s
   return parts.join(" · ");
 }
 
+/**
+ * The release an opened end-of-life row is about, read from its host findings:
+ * the drawer can be opened on a link, without the list row that carries it.
+ * Null when none of the rows is an end-of-life finding.
+ */
+export function eolOfHosts(hosts: Pick<ExposureHostRow, "eol" | "origin">[]): ExposureEol | null {
+  const first = hosts.find((h) => h.eol);
+  if (!first?.eol) return null;
+  const e = first.eol;
+  const origins = [...new Set(hosts.map((h) => h.eol?.origin ?? h.origin ?? "").filter(Boolean))].sort();
+  return { product: e.product, productLabel: e.productLabel, cycle: e.cycle, stage: e.stage, date: e.stageFrom, upgradeTo: e.upgradeTo ?? "", origins };
+}
+
 /** "3 hosts: alpha, bravo, charlie" or "12 hosts: alpha, bravo, charlie and 9 more". */
 export function hostsLabel(g: Pick<ExposureGroup, "hostCount" | "hosts">): string {
   const n = g.hostCount;
@@ -302,7 +358,8 @@ export function hostsLabel(g: Pick<ExposureGroup, "hostCount" | "hosts">): strin
 }
 
 /** What the fixed versions of a group say, one or several. */
-export function fixedLabel(g: Pick<ExposureGroup, "fixed">): string {
+export function fixedLabel(g: Pick<ExposureGroup, "fixed"> & { eol?: ExposureEol | null }): string {
+  if (g.eol) return upgradeLabel({ productLabel: g.eol.productLabel, upgradeTo: g.eol.upgradeTo });
   if (g.fixed.length === 0) return "no fix recorded";
   return `fixed in ${g.fixed.join(", ")}`;
 }

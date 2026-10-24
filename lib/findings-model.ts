@@ -7,11 +7,36 @@
 
 import type { FindingStatus, FindingTriage } from "./types.ts";
 
-/** finding: a fix is available (fixable). awaiting_vendor: fixed upstream by
+/** finding: a fix is available (fixable). eol: software from outside the
+ *  distribution that its upstream no longer supports; the fix is an upgrade,
+ *  so it is work for this week like a patch. awaiting_vendor: fixed upstream by
  *  Red Hat but not yet released by the rebuild the host runs (Rocky, AlmaLinux),
  *  so there is nothing to install yet. unfixed: affected, no fix published.
  *  informational: the distro will not fix it, or is still investigating. */
-export type FindingKind = "finding" | "awaiting_vendor" | "unfixed" | "informational";
+export type FindingKind = "finding" | "eol" | "awaiting_vendor" | "unfixed" | "informational";
+
+/** What an end-of-life finding says: the release past support, where its
+ *  packages came from, and what to upgrade to. */
+export type EolDetail = {
+  product: string;
+  productLabel: string;
+  cycle: string;
+  /** "eol": security support ended. "eoas": active support ended; security fixes continue. */
+  stage: "eol" | "eoas";
+  /** YYYY-MM-DD the stage began. */
+  stageFrom: string;
+  eolFrom?: string;
+  eoasFrom?: string;
+  eoesFrom?: string;
+  packages: string[];
+  /** The repository or vendor the packages came from, as the agent read it. */
+  origin: string;
+  originRepo?: string;
+  upgradeTo?: string;
+  upgradeToSupportedUntil?: string;
+  latest?: string;
+  link?: string;
+};
 
 export type FindingSeverity = "critical" | "high" | "medium" | "low" | "unknown";
 
@@ -30,7 +55,7 @@ export type VulnFinding = {
   feed: string;
   feedDate: string | null;
   kind: FindingKind;
-  basis: "distro" | "upstream";
+  basis: "distro" | "upstream" | "lifecycle";
   package: string;
   sourcePackage: string;
   installed: string;
@@ -45,6 +70,11 @@ export type VulnFinding = {
   firstSeen: string;
   lastSeen: string;
   resolvedAt: string | null;
+  /** End-of-life findings only: where the packages came from, the release, the control tags. */
+  origin?: string;
+  originRepo?: string;
+  eol?: EolDetail | null;
+  controls?: string[];
 };
 
 export type Coverage = "covered" | "no_feed" | "no_distro";
@@ -61,6 +91,12 @@ export type HostVulnState = {
   notAffected: number;
   snapshotId: number | null;
   matchedAt: string;
+  /** Application end-of-life: of eolMapped packages the mapping table knows,
+   *  eolDistro are the distribution's own (not judged) and eolUnknown had no
+   *  readable origin (not assessed, never "clean"). */
+  eolMapped?: number;
+  eolDistro?: number;
+  eolUnknown?: number;
 };
 
 export type FindingsResponse = {
@@ -184,14 +220,49 @@ export function coverageNotice(state: HostVulnState | null): CoverageNotice | nu
   return null;
 }
 
+/**
+ * What the application end-of-life check examined on a host, so an empty list
+ * is read next to it. Null when the host has no mapped software or the control
+ * plane predates the check.
+ */
+export function eolAssessmentNote(s: Pick<HostVulnState, "eolMapped" | "eolDistro" | "eolUnknown"> | null): string | null {
+  const mapped = s?.eolMapped ?? 0;
+  if (!s || mapped === 0) return null;
+  const distro = s.eolDistro ?? 0;
+  const unknown = s.eolUnknown ?? 0;
+  const parts = [`${mapped} installed ${mapped === 1 ? "package is" : "packages are"} application software the lifecycle table knows`];
+  if (distro > 0) parts.push(`${distro} from the distribution (judged by its own support lifecycle, not upstream's)`);
+  if (unknown > 0) parts.push(`${unknown} with no readable origin (not assessed)`);
+  return parts.join("; ");
+}
+
 /** "ubuntu-jammy, fetched 2026-10-20" */
 export function feedLabel(f: Pick<VulnFinding, "feed" | "feedDate">): string {
   const date = f.feedDate ? f.feedDate.slice(0, 10) : "date unknown";
   return `${f.feed || "unknown feed"}, fetched ${date}`;
 }
 
+/** "upgrade to PHP 8.4 (security support until 2028-12-31)" for an end-of-life finding. */
+export function upgradeLabel(e: Pick<EolDetail, "productLabel" | "upgradeTo" | "upgradeToSupportedUntil">): string {
+  if (!e.upgradeTo) return "upgrade needed; no newer supported release is listed";
+  return `upgrade to ${e.productLabel} ${e.upgradeTo}` + (e.upgradeToSupportedUntil ? ` (security support until ${e.upgradeToSupportedUntil})` : "");
+}
+
+/** "end of life since 2023-11-26" / "past active support since 2024-12-31". */
+export function eolStageLabel(e: Pick<EolDetail, "stage" | "stageFrom">): string {
+  const since = e.stageFrom ? ` since ${e.stageFrom}` : "";
+  return e.stage === "eol" ? `end of life${since}` : `past active support${since}`;
+}
+
+/** "deb.sury.org (https://packages.sury.org/php)": where a package came from. */
+export function originLabel(f: { origin?: string; originRepo?: string }): string {
+  if (!f.origin) return "unknown";
+  return f.originRepo ? `${f.origin} (${f.originRepo})` : f.origin;
+}
+
 /** "fixed in 1:8.9p1-3ubuntu0.10" / "no fix published". */
-export function fixLabel(f: Pick<VulnFinding, "fixed" | "kind" | "fixState">): string {
+export function fixLabel(f: Pick<VulnFinding, "fixed" | "kind" | "fixState"> & { eol?: EolDetail | null }): string {
+  if (f.kind === "eol" && f.eol) return upgradeLabel(f.eol);
   if (f.kind === "awaiting_vendor") return `fixed upstream in ${f.fixed}, not yet released for this distribution`;
   if (f.fixed) return `fixed in ${f.fixed}`;
   if (f.fixState === "will_not_fix") return "the distro will not fix this";
