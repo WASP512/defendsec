@@ -19,9 +19,9 @@ function observedLine(check: string, o: Record<string, unknown>): string {
   const n = (k: string) => (typeof o[k] === "number" ? (o[k] as number) : 0);
   switch (check) {
     case "mfa":
-      return `${n("usersInReport")} users in the report: ${n("registered")} registered, ${n("notRegistered")} not (${n("administratorsWithoutMFA")} of them administrators); ${n("guestsSkipped")} guests left out.`;
+      return `${n("usersInReport")} users in the report: ${n("registered")} registered, ${n("notRegistered")} not (${n("administratorsWithoutMFA")} of them administrators); ${n("guestsSkipped")} guest(s) left out.`;
     case "admin-roles":
-      return `${n("globalAdmins")} Global Administrators (limit ${n("globalAdminLimit")}); ${n("otherPrivilegedHolders")} accounts hold another administrator role; ${n("globalAdminGroups")} groups hold Global Administrator (members not expanded).`;
+      return `${n("globalAdmins")} Global Administrators (limit ${n("globalAdminLimit")}); ${n("otherPrivilegedHolders")} account(s) hold another administrator role; ${n("globalAdminGroups")} group(s) hold Global Administrator (members not expanded).`;
     case "legacy-auth":
       return o.securityDefaultsEnabled === true
         ? "Security defaults are on, which blocks legacy authentication."
