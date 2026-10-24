@@ -14,8 +14,22 @@ import (
 // is example.com / RFC 5737 data.
 func surfaceBundle(t *testing.T) *Bundle {
 	t.Helper()
+	return surfaceBundleDigests(t, DigestV2, DigestV2, DigestV2, nil)
+}
+
+// surfaceBundleDigests is surfaceBundle with the digest version of each of the
+// three scans chosen (a v1 scan carries no Seen, as scans recorded before slice
+// 7c did) and an optional change to the scans before they are chained.
+func surfaceBundleDigests(t *testing.T, v1, v2, v3 int, edit func(scans []SurfaceScan)) *Bundle {
+	t.Helper()
 	b, key := testBundle(t)
 	t0 := time.Date(2026, 10, 20, 6, 0, 0, 0, time.UTC)
+	// The finding as the control plane stored it after scan 3, which saw it.
+	stored := SurfaceFinding{
+		AssetID: 7, AssetKind: "domain", AssetValue: "example.com", Check: "dmarc", FindingID: "dmarc.p_none", Subject: "example.com",
+		Severity: "medium", Title: "DMARC policy is p=none", Evidence: map[string]any{"record": "v=DMARC1; p=none"},
+		FirstScan: 3, LastScan: 3,
+	}
 	scan := func(id int64, at time.Time, finding, change string) SurfaceScan {
 		s := SurfaceScan{
 			ScanID: id, AssetID: 7, AssetKind: "domain", AssetValue: "example.com", TriggeredBy: "schedule",
@@ -29,6 +43,9 @@ func surfaceBundle(t *testing.T) *Bundle {
 		if change != "" {
 			s.Changes = append(s.Changes, SurfaceChange{FindingID: finding, Subject: "example.com", Severity: "medium", Change: change})
 		}
+		if change == SurfaceOpened {
+			s.Seen = []SurfaceSeen{SeenFromFinding(stored)}
+		}
 		return s
 	}
 	scans := []SurfaceScan{
@@ -37,10 +54,23 @@ func surfaceBundle(t *testing.T) *Bundle {
 		scan(3, t0.Add(48*time.Hour), "dmarc.p_none", SurfaceOpened),
 	}
 
+	versions := []int{v1, v2, v3}
+	for i := range scans {
+		if versions[i] == DigestV1 {
+			scans[i].Seen = nil
+		}
+	}
+	if edit != nil {
+		edit(scans)
+	}
 	var entries []auditchain.Entry
 	prev := auditchain.Genesis
 	for i, s := range scans {
-		d, _ := json.Marshal(SurfaceScanEntry{ScanID: s.ScanID, AssetID: s.AssetID, Digest: ScanDigest(s), FinishedAt: s.FinishedAt.Format(time.RFC3339Nano)})
+		ev := versions[i]
+		if ev == DigestV1 {
+			ev = 0 // an entry written before slice 7c has no version
+		}
+		d, _ := json.Marshal(SurfaceScanEntry{Version: ev, ScanID: s.ScanID, AssetID: s.AssetID, Digest: ScanDigestVersion(versions[i], s), FinishedAt: s.FinishedAt.Format(time.RFC3339Nano)})
 		e := auditchain.Link(prev, auditchain.Entry{
 			Seq: int64(i + 1), At: s.FinishedAt.Add(time.Second), Actor: "system:surface-scanner", Action: SurfaceScanAction, Detail: string(d),
 		})
@@ -59,12 +89,11 @@ func surfaceBundle(t *testing.T) *Bundle {
 	b.Surface = &SurfaceScope{
 		Assets: []SurfaceAsset{{ID: 7, Kind: "domain", Value: "example.com", Authorised: true, AuthorisedBy: "tester"}},
 		Scans:  scans,
-		Findings: []SurfaceFinding{{
-			AssetID: 7, AssetKind: "domain", AssetValue: "example.com", Check: "dmarc", FindingID: "dmarc.p_none", Subject: "example.com",
-			Severity: "medium", Title: "DMARC policy is p=none", Evidence: map[string]any{"record": "v=DMARC1; p=none"},
-			FirstScan: 3, LastScan: 3,
-			Intervals: []SurfaceInterval{{OpenedAt: t0, ClosedAt: &t1}, {OpenedAt: t2}},
-		}},
+		Findings: []SurfaceFinding{func() SurfaceFinding {
+			f := stored
+			f.Intervals = []SurfaceInterval{{OpenedAt: t0, ClosedAt: &t1}, {OpenedAt: t2}}
+			return f
+		}()},
 		Provenance: SurfaceProvenance,
 	}
 	return b
@@ -90,7 +119,7 @@ func TestVerifySurfaceAttestedScansAndIntervals(t *testing.T) {
 	if r.Surface.ScansAttested != 3 || r.Surface.ScansUnattested != 0 || r.Surface.FindingsVerified != 1 {
 		t.Fatalf("%+v", r.Surface)
 	}
-	if c := check(t, r, "surface findings"); !strings.Contains(c.Detail, "1 with open and closed dates recomputed") {
+	if c := check(t, r, "surface findings"); !strings.Contains(c.Detail, "1 with open and closed dates recomputed") || !strings.Contains(c.Detail, "0 with dates only") {
 		t.Fatalf("%+v", c)
 	}
 }

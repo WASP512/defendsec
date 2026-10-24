@@ -365,6 +365,20 @@ function effective(g: Rankable): Rankable {
   return g;
 }
 
+/**
+ * Which kind of row wins a tie on everything the ranking measures: a
+ * vulnerability (0), software past end of life (1), a repository (2), an
+ * identity finding (3), an external surface finding (4). A stated rule, not the
+ * byte order of the ids. Mirrors exposure.TieRank (and k6 in the SQL).
+ */
+export function tieRank(g: Rankable): number {
+  if (isSurfaceRow(g)) return 4;
+  if (isIdentityRow(g)) return 3;
+  if (isRepoRow(g)) return 2;
+  if (g.eol && g.eol.stage in EOL_SCORE) return 1;
+  return 0;
+}
+
 // Higher first; a missing score goes last (and is not the same as zero).
 function byScoreDesc(a: number | null, b: number | null): number {
   if (a === null && b === null) return 0;
@@ -378,7 +392,8 @@ function byScoreDesc(a: number | null, b: number | null): number {
  * among KEV, the most recently listed first (an undated entry last); then the
  * critical and high external surface findings (live for anyone on the internet,
  * no foothold or exploit needed); then EPSS high to low; then CVSS high to low;
- * then the vendor's severity label; then the row id, so the order is total. A
+ * then the vendor's severity label; then the kind of row (tieRank: vulnerability,
+ * end-of-life, repository, identity, surface); then the row id, so the order is total. A
  * missing score ranks after any score, including 0. A medium or low surface
  * finding has no EPSS and the CVSS-equivalent of its severity, so it sits with
  * the vulnerabilities that have no EPSS score. Mirrors internal/exposure.Compare.
@@ -411,6 +426,8 @@ export function compareRank(a0: Rankable, b0: Rankable): number {
   if (c !== 0) return c;
   const s = (SEVERITY_RANK[a.severity] ?? 4) - (SEVERITY_RANK[b.severity] ?? 4);
   if (s !== 0) return s;
+  const t = tieRank(a0) - tieRank(b0);
+  if (t !== 0) return t;
   return a.advisoryId < b.advisoryId ? -1 : a.advisoryId > b.advisoryId ? 1 : 0;
 }
 
@@ -437,6 +454,14 @@ export type RankReason = {
   /** headline and details as one line. */
   text: string;
 };
+
+/**
+ * Surface findings in the urgent band that are a deadline and not an open door: the
+ * condition has not happened yet. Their reason must not say "live". Today that is a
+ * certificate that expires within 7 days (internal/surface/tlscheck.go); an expired one
+ * (tls.expired) is live and keeps the "live" wording.
+ */
+export const UPCOMING_SURFACE_IDS: ReadonlySet<string> = new Set(["tls.expires_soon"]);
 
 /**
  * Why a row ranks where it does. The headline is the strongest signal the row
@@ -489,7 +514,12 @@ export function rankReason(g: Rankable): RankReason {
     }
   } else if (isSurfaceRow(g)) {
     // No KEV, EPSS or CVSS exists for a DNS or TLS finding; say what its place does rest on.
-    if (rankBand(g) === 1) {
+    if (rankBand(g) === 1 && g.surface && UPCOMING_SURFACE_IDS.has(g.surface.id)) {
+      // Not in effect yet: the certificate is still valid today. Saying "live" would be wrong,
+      // and the urgency is a deadline, not an open door.
+      headline = "Not yet in effect, but with a deadline: every visitor is refused when it lapses, and no attacker is needed";
+      details.push(`${g.severity} severity`, "ranks after exploited vulnerabilities and before every other vulnerability, because the lapse is days away");
+    } else if (rankBand(g) === 1) {
       headline = "Live for anyone on the internet: no foothold or exploit needed";
       details.push(`${g.severity} severity`, "ranks after exploited vulnerabilities and before every other vulnerability");
     } else {

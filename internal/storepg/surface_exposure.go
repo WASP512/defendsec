@@ -37,7 +37,8 @@ type SurfaceExposureSummary struct {
 	BySeverity map[string]int `json:"bySeverity"`
 	// Info are open observations that are never counted as findings.
 	Info int `json:"info"`
-	// AssetsAffected is how many assets have at least one open finding.
+	// AssetsAffected is how many assets have at least one open ranked finding
+	// (critical to low); an asset with only info findings is not affected.
 	AssetsAffected int `json:"assetsAffected"`
 	// LastScanAt is the most recent scan of any authorised asset.
 	LastScanAt *time.Time `json:"lastScanAt"`
@@ -61,17 +62,21 @@ func (s *Store) SurfaceExposureSummary(ctx context.Context) (SurfaceExposureSumm
 		t := out.LastScanAt.UTC()
 		out.LastScanAt = &t
 	}
+	// One query, one rule: which severities rank is exposure.SurfaceScore's call,
+	// for the counts, the info bucket and the assets affected alike.
 	rows, err := s.pool.Query(ctx, `
-		SELECT sf.severity, count(*), count(DISTINCT sf.asset_id)
+		SELECT sf.severity, sf.asset_id, count(*)
 		FROM surface_findings sf JOIN surface_assets a ON a.id = sf.asset_id AND a.removed_at IS NULL
-		WHERE sf.resolved_at IS NULL GROUP BY sf.severity`)
+		WHERE sf.resolved_at IS NULL GROUP BY sf.severity, sf.asset_id`)
 	if err != nil {
 		return out, err
 	}
+	affected := map[int64]bool{}
 	for rows.Next() {
 		var sev string
-		var n, assets int
-		if err := rows.Scan(&sev, &n, &assets); err != nil {
+		var asset int64
+		var n int
+		if err := rows.Scan(&sev, &asset, &n); err != nil {
 			rows.Close()
 			return out, err
 		}
@@ -81,17 +86,13 @@ func (s *Store) SurfaceExposureSummary(ctx context.Context) (SurfaceExposureSumm
 		}
 		out.BySeverity[sev] += n
 		out.Findings += n
+		affected[asset] = true
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return out, err
 	}
-	if err := s.pool.QueryRow(ctx, `
-		SELECT count(DISTINCT sf.asset_id)
-		FROM surface_findings sf JOIN surface_assets a ON a.id = sf.asset_id AND a.removed_at IS NULL
-		WHERE sf.resolved_at IS NULL AND sf.severity <> 'info'`).Scan(&out.AssetsAffected); err != nil {
-		return out, err
-	}
+	out.AssetsAffected = len(affected)
 	err = s.pool.QueryRow(ctx, `
 		SELECT count(*) FROM (
 		  SELECT DISTINCT ON (o.asset_id, o.check_group) o.assessed
@@ -246,6 +247,12 @@ func (s *Store) surfaceTrend(ctx context.Context, start, end, now time.Time, poi
 	if err := s.pool.QueryRow(ctx, `SELECT min(started_at) FROM surface_scans`).Scan(&since); err != nil {
 		return nil, err
 	}
+	if since != nil {
+		// pgx hands back the process's local zone; every other timestamp the API
+		// returns is UTC, and a client comparing them as strings must not meet "-06:00".
+		u := since.UTC()
+		since = &u
+	}
 	rows, err := s.pool.Query(ctx, `
 		WITH days AS (
 		  SELECT d::date AS day, LEAST((d + interval '1 day') AT TIME ZONE 'UTC', $3::timestamptz) AS asof
@@ -296,12 +303,21 @@ func (s *Store) surfaceTrend(ctx context.Context, start, end, now time.Time, poi
 // never declared an asset. See internal/evidence/surface.go for what the
 // section proves and what it does not.
 func (s *Store) ExportSurfaceEvidence(ctx context.Context) (*evidence.SurfaceScope, error) {
+	// One snapshot for every read: a scan recorded while the export runs must
+	// show up whole (its rows, its findings, its intervals) or not at all,
+	// never as observations of one scan beside findings of the next.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
 	sc := &evidence.SurfaceScope{
 		Assets: []evidence.SurfaceAsset{}, Scans: []evidence.SurfaceScan{}, Findings: []evidence.SurfaceFinding{},
 		Provenance: evidence.SurfaceProvenance,
 	}
 	kinds := map[int64][2]string{}
-	rows, err := s.pool.Query(ctx, `
+	rows, err := tx.Query(ctx, `
 		SELECT id, kind, value, label, authorised, authorised_by, authorised_at, removed_at IS NOT NULL
 		FROM surface_assets ORDER BY id`)
 	if err != nil {
@@ -329,15 +345,15 @@ func (s *Store) ExportSurfaceEvidence(ctx context.Context) (*evidence.SurfaceSco
 	}
 
 	scanIdx := map[int64]int{}
-	rows, err = s.pool.Query(ctx, `
-		SELECT id, asset_id, triggered_by, started_at, finished_at, changes FROM surface_scans ORDER BY id`)
+	rows, err = tx.Query(ctx, `
+		SELECT id, asset_id, triggered_by, started_at, finished_at, changes, seen FROM surface_scans ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var sn evidence.SurfaceScan
-		var changes []byte
-		if err := rows.Scan(&sn.ScanID, &sn.AssetID, &sn.TriggeredBy, &sn.StartedAt, &sn.FinishedAt, &changes); err != nil {
+		var changes, seen []byte
+		if err := rows.Scan(&sn.ScanID, &sn.AssetID, &sn.TriggeredBy, &sn.StartedAt, &sn.FinishedAt, &changes, &seen); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -351,6 +367,17 @@ func (s *Store) ExportSurfaceEvidence(ctx context.Context) (*evidence.SurfaceSco
 				return nil, fmt.Errorf("scan %d changes: %w", sn.ScanID, err)
 			}
 		}
+		// seen is NULL for a scan chained before slice 7c: it carries none, and is
+		// verified under the v1 digest. A v2 scan that saw nothing has [].
+		if seen != nil {
+			if err := json.Unmarshal(seen, &sn.Seen); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan %d seen: %w", sn.ScanID, err)
+			}
+			if sn.Seen == nil {
+				sn.Seen = []evidence.SurfaceSeen{}
+			}
+		}
 		scanIdx[sn.ScanID] = len(sc.Scans)
 		sc.Scans = append(sc.Scans, sn)
 	}
@@ -359,7 +386,7 @@ func (s *Store) ExportSurfaceEvidence(ctx context.Context) (*evidence.SurfaceSco
 		return nil, err
 	}
 
-	rows, err = s.pool.Query(ctx, `
+	rows, err = tx.Query(ctx, `
 		SELECT scan_id, check_group, assessed, reason, observed, observed_at FROM surface_observations ORDER BY scan_id, check_group, id`)
 	if err != nil {
 		return nil, err
@@ -388,7 +415,7 @@ func (s *Store) ExportSurfaceEvidence(ctx context.Context) (*evidence.SurfaceSco
 		subject string
 	}
 	past := map[fkey][]evidence.SurfaceInterval{}
-	rows, err = s.pool.Query(ctx, `
+	rows, err = tx.Query(ctx, `
 		SELECT asset_id, finding_id, subject, opened_at, closed_at FROM surface_finding_intervals ORDER BY opened_at, id`)
 	if err != nil {
 		return nil, err
@@ -408,7 +435,7 @@ func (s *Store) ExportSurfaceEvidence(ctx context.Context) (*evidence.SurfaceSco
 		return nil, err
 	}
 
-	rows, err = s.pool.Query(ctx, `
+	rows, err = tx.Query(ctx, `
 		SELECT asset_id, check_group, finding_id, subject, severity, title, detail, fix, evidence, controls,
 		       first_seen, resolved_at, COALESCE(first_scan_id, 0), COALESCE(last_scan_id, 0)
 		FROM surface_findings ORDER BY asset_id, check_group, finding_id, subject`)
