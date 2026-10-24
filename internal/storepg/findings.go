@@ -418,3 +418,61 @@ func (s *Store) GetFindingDetail(ctx context.Context, id int64) (FindingDetail, 
 	}
 	return d, nil
 }
+
+// DeviceFindingsSummary is one host's standing, compact enough to fetch for a
+// whole fleet. SeriousKeys are the triage keys of its open findings that are
+// critical, high or on the KEV list, so a caller can drop the acknowledged ones
+// without fetching every finding; capped at SummaryKeyCap.
+type DeviceFindingsSummary struct {
+	DeviceID      string    `json:"deviceId"`
+	Distro        string    `json:"distro"`
+	Release       string    `json:"release"`
+	Coverage      string    `json:"coverage"`
+	Open          int       `json:"open"`
+	KEV           int       `json:"kev"`
+	Unfixed       int       `json:"unfixed"`
+	Informational int       `json:"informational"`
+	SeriousKeys   []string  `json:"seriousKeys"`
+	MatchedAt     time.Time `json:"matchedAt"`
+}
+
+// SummaryKeyCap bounds SeriousKeys per host.
+const SummaryKeyCap = 200
+
+const findingsSummarySQL = `
+	SELECT s.device_id, s.distro, s.release, s.coverage, s.matched_at,
+	       COALESCE(a.open, 0), COALESCE(a.kev, 0), COALESCE(a.unfixed, 0), COALESCE(a.info, 0),
+	       COALESCE(a.keys, ARRAY[]::text[])
+	FROM host_vuln_state s
+	LEFT JOIN (
+	  SELECT f.device_id,
+	         count(*) FILTER (WHERE f.kind = 'finding') AS open,
+	         count(*) FILTER (WHERE f.kind = 'finding' AND f.kev) AS kev,
+	         count(*) FILTER (WHERE f.kind = 'unfixed') AS unfixed,
+	         count(*) FILTER (WHERE f.kind = 'informational') AS info,
+	         (array_agg(f.device_id || ':' || f.advisory_id || ':' || lower(f.family) ORDER BY f.advisory_id)
+	            FILTER (WHERE f.kind = 'finding' AND (f.kev OR f.severity IN ('critical', 'high'))))[1:` + "200" + `] AS keys
+	  FROM vuln_findings f WHERE f.resolved_at IS NULL GROUP BY f.device_id
+	) a ON a.device_id = s.device_id
+	WHERE ($1 = '' OR s.device_id = $1)
+	ORDER BY s.device_id`
+
+// FindingsSummary returns one row per host that has been matched, or just the
+// one named by deviceID.
+func (s *Store) FindingsSummary(ctx context.Context, deviceID string) ([]DeviceFindingsSummary, error) {
+	rows, err := s.pool.Query(ctx, findingsSummarySQL, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DeviceFindingsSummary{}
+	for rows.Next() {
+		var d DeviceFindingsSummary
+		if err := rows.Scan(&d.DeviceID, &d.Distro, &d.Release, &d.Coverage, &d.MatchedAt,
+			&d.Open, &d.KEV, &d.Unfixed, &d.Informational, &d.SeriousKeys); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}

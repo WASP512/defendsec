@@ -5,12 +5,14 @@ import { listAlerts } from "@/lib/alerts";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/console-ui";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
-import { PolicyBadge, OnlineBadge, SeverityBadge } from "@/components/status-badge";
+import { PolicyBadge, OnlineBadge } from "@/components/status-badge";
 import { FindingActions } from "@/components/finding-actions";
 import { ensureStore } from "@/lib/store";
 import { loadFleet, loadMtlsFimEvents } from "@/lib/mtls-agents";
-import { evaluateDevice, fimDriftPaths, isOnline } from "@/lib/policies";
-import { findingsForDevice } from "@/lib/advisories";
+import { apidId, evaluateDevice, fimDriftPaths, isOnline, type VulnInput } from "@/lib/policies";
+import { getFindings, getFindingsSummary } from "@/lib/findings";
+import { coverageNotice, findingStatus } from "@/lib/findings-model";
+import { CoverageBanner, FindingSummary } from "@/components/finding-summary";
 import {
   formatBytesMb,
   formatUptime,
@@ -38,8 +40,18 @@ export default async function DeviceDetailPage({
   if (!device) notFound();
   const mtlsId = device.mtlsDeviceId || "";
   const fimEvents = [...(await loadMtlsFimEvents()), ...store.fimEvents];
-  const policies = evaluateDevice(device, fimEvents, store.triages);
-  const findings = findingsForDevice(device, store.triages);
+  const [findingsResult, summaries] = await Promise.all([
+    getFindings({ deviceId: apidId(device), limit: 1000 }),
+    getFindingsSummary(apidId(device)),
+  ]);
+  const vulns: VulnInput = summaries
+    ? { available: true, summary: summaries.get(apidId(device)) }
+    : { available: false };
+  const policies = evaluateDevice(device, fimEvents, store.triages, vulns);
+  const findings = findingsResult?.findings ?? [];
+  const fixable = findings.filter((f) => f.kind === "finding");
+  const noFix = findings.filter((f) => f.kind !== "finding");
+  const notice = findingsResult ? coverageNotice(findingsResult.state) : null;
   const drifts = fimDriftPaths(device);
   const events = fimEvents.filter(
     (event) => event.deviceId === device.id || (mtlsId && event.deviceId === mtlsId),
@@ -157,34 +169,54 @@ export default async function DeviceDetailPage({
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Advisories</h2>
-        {findings.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No catalog matches for reported software.</p>
-        ) : (
+        {findingsResult === null ? (
+          <CoverageBanner
+            notice={{
+              tone: "amber",
+              title: "Findings unavailable",
+              detail: "The control plane could not be reached, so this host's findings cannot be shown. This is not a clean result.",
+            }}
+          />
+        ) : null}
+        {notice ? <CoverageBanner notice={notice} /> : null}
+        {findingsResult && !notice ? (
+          <p className="text-sm text-muted-foreground" data-match-summary>
+            Matched {findingsResult.state?.packages ?? 0} packages against {findingsResult.state?.distro}{" "}
+            {findingsResult.state?.release} advisories
+            {findingsResult.state?.matchedAt ? ` (${relativeTime(findingsResult.state.matchedAt)})` : ""};{" "}
+            {findingsResult.state?.distroMapped ?? 0} are covered by the distribution&apos;s feed.
+          </p>
+        ) : null}
+        {findingsResult && !notice && fixable.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No findings with a fix available.</p>
+        ) : null}
+        {fixable.length > 0 ? (
           <ul className="divide-y rounded-xl border">
-            {findings.map((finding) => (
-              <li key={finding.key} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{finding.advisory.cve}</span>
-                    <SeverityBadge severity={finding.advisory.severity} />
-                    {finding.status === "acknowledged" ? (
-                      <Badge variant="outline">acknowledged</Badge>
-                    ) : (
-                      <Badge>open</Badge>
-                    )}
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {finding.packageName} {finding.version} is below {finding.advisory.below}.{" "}
-                    {finding.advisory.summary}
-                  </p>
-                </div>
-                {!readOnly ? (
-                  <FindingActions findingKey={finding.key} status={finding.status} />
-                ) : null}
-              </li>
-            ))}
+            {fixable.map((finding) => {
+              const status = findingStatus(finding.key, store.triages);
+              return (
+                <li key={finding.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+                  <FindingSummary finding={finding} status={status} />
+                  {!readOnly ? <FindingActions findingKey={finding.key} status={status} /> : null}
+                </li>
+              );
+            })}
           </ul>
-        )}
+        ) : null}
+        {noFix.length > 0 ? (
+          <details className="rounded-xl border">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+              {noFix.length} with no fix to install (no fix published, or the distribution will not fix)
+            </summary>
+            <ul className="divide-y border-t">
+              {noFix.map((finding) => (
+                <li key={finding.id} className="px-4 py-3">
+                  <FindingSummary finding={finding} status={findingStatus(finding.key, store.triages)} />
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
       </section>
 
       <section className="space-y-3">

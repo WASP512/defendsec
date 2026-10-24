@@ -110,6 +110,22 @@ func TestVulnPipelineThroughApid(t *testing.T) {
 		t.Fatalf("first finding = %+v", first)
 	}
 
+	// The fleet summary the console's policy view reads.
+	var sum findingsSummaryResponse
+	if rec := getJSON(t, s, "/v1/findings/summary", &sum); rec.Code != http.StatusOK {
+		t.Fatalf("summary: %d %s", rec.Code, rec.Body.String())
+	}
+	var mine *storepg.DeviceFindingsSummary
+	for i := range sum.Devices {
+		if sum.Devices[i].DeviceID == dev.ID {
+			mine = &sum.Devices[i]
+		}
+	}
+	if mine == nil || mine.Coverage != "covered" || mine.Open != 2 || mine.KEV != 1 ||
+		len(mine.SeriousKeys) != 1 || mine.SeriousKeys[0] != dev.ID+":"+kev+":openssh" {
+		t.Fatalf("summary row = %+v", mine)
+	}
+
 	// The JSON a console reads: camelCase, with the evidence fields present.
 	var raw struct{ Findings []map[string]any }
 	getJSON(t, s, "/v1/findings?deviceId="+dev.ID+"&kind=finding", &raw)

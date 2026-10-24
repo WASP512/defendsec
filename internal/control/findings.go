@@ -14,6 +14,7 @@ import (
 //
 //	GET /v1/findings?deviceId=&kind=finding|unfixed|informational&resolved=1&limit=
 //	GET /v1/findings/{id}
+//	GET /v1/findings/summary
 //
 // Findings are computed by the matcher when a host reports inventory and when a
 // new feed snapshot lands; these endpoints only read what it stored. Every
@@ -44,6 +45,10 @@ func (s *Server) HandleFindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/findings"), "/")
+	if rest == "summary" {
+		s.handleFindingsSummary(w, r)
+		return
+	}
 	if rest != "" {
 		s.handleFindingDetail(w, r, rest)
 		return
@@ -88,6 +93,28 @@ func (s *Server) HandleFindings(w http.ResponseWriter, r *http.Request) {
 			resp.State = &st
 		}
 	}
+	if snap, ok, err := s.pg.LatestFeedSnapshot(r.Context()); err == nil && ok {
+		resp.LatestSnapshotID = &snap.ID
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type findingsSummaryResponse struct {
+	Devices          []storepg.DeviceFindingsSummary `json:"devices"`
+	LatestSnapshotID *int64                          `json:"latestSnapshotId"`
+	GeneratedAt      string                          `json:"generatedAt"`
+}
+
+// handleFindingsSummary serves GET /v1/findings/summary: per matched host, its
+// coverage and counts, for the fleet views.
+func (s *Server) handleFindingsSummary(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.pg.FindingsSummary(r.Context(), r.URL.Query().Get("deviceId"))
+	if err != nil {
+		s.log.Warn("findings summary", "err", err)
+		http.Error(w, "could not read findings", http.StatusInternalServerError)
+		return
+	}
+	resp := findingsSummaryResponse{Devices: rows, GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
 	if snap, ok, err := s.pg.LatestFeedSnapshot(r.Context()); err == nil && ok {
 		resp.LatestSnapshotID = &snap.ID
 	}

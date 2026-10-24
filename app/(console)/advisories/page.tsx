@@ -1,16 +1,12 @@
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
-import { SeverityBadge } from "@/components/status-badge";
 import { FindingActions } from "@/components/finding-actions";
+import { CoverageBanner, FindingSummary } from "@/components/finding-summary";
 import { ActivityItem, ActivityList, EmptyState, PageHeader } from "@/components/console-ui";
-import { ensureStore } from "@/lib/store";
-import { severityRank } from "@/lib/advisories";
-import { fleetFindings } from "@/lib/fleet-aggregates";
-import { loadAdvisories } from "@/lib/advisories-db";
-
-import { loadFleet } from "@/lib/mtls-agents";
-import { getFeedStatus } from "@/lib/feeds";
 import { FeedAgeBanner } from "@/components/feed-age-banner";
+import { ensureStore } from "@/lib/store";
+import { getFeedStatus } from "@/lib/feeds";
+import { getFindings, getFindingsSummary } from "@/lib/findings";
+import { findingStatus } from "@/lib/findings-model";
 import { listAlerts } from "@/lib/alerts";
 import { isReadOnlySession } from "@/lib/auth";
 import { ShieldCheck } from "lucide-react";
@@ -20,22 +16,18 @@ export const dynamic = "force-dynamic";
 export default async function AdvisoriesPage() {
   const store = await ensureStore();
   const readOnly = await isReadOnlySession();
-  const [advisories, feedStatus, vulnAlerts] = await Promise.all([
-    loadAdvisories(),
+  const [feedStatus, result, summaries, vulnAlerts] = await Promise.all([
     getFeedStatus(),
-    listAlerts({ kind: "vuln", status: "open", limit: 500 }).catch(() => [] as Awaited<
-      ReturnType<typeof listAlerts>
-    >),
+    getFindings({ kind: "finding", limit: 500 }),
+    getFindingsSummary(),
+    listAlerts({ kind: "vuln", status: "open", limit: 500 }).catch(
+      () => [] as Awaited<ReturnType<typeof listAlerts>>,
+    ),
   ]);
-  const alertBySource = new Map(
-    vulnAlerts.map((alert) => [`${alert.deviceId}:${alert.sourceId}`, alert]),
-  );
-  // Copied before sorting: the cached array is shared between requests.
-  const findings = [...fleetFindings(await loadFleet(store.devices), store.triages, advisories)].sort(
-    (a, b) =>
-      severityRank(a.advisory.severity) - severityRank(b.advisory.severity) ||
-      a.hostname.localeCompare(b.hostname),
-  );
+  const alertBySource = new Map(vulnAlerts.map((alert) => [`${alert.deviceId}:${alert.sourceId}`, alert]));
+  const findings = result?.findings ?? [];
+  const unassessed = summaries ? [...summaries.values()].filter((s) => s.coverage !== "covered").length : 0;
+  const unfixed = summaries ? [...summaries.values()].reduce((n, s) => n + s.unfixed, 0) : 0;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -43,37 +35,59 @@ export default async function AdvisoriesPage() {
         title="Advisories"
         description={
           <>
-          CVE matches from the advisories catalog (synced by <code>defendsec-feeds</code>, or the bundled fallback).
-          High/critical matches also raise <code>vuln</code> alerts on inventory report.
+            Installed packages matched against the advisories your distribution publishes
+            (synced by <code>defendsec-feeds</code>), using the distribution&apos;s own fixed versions, so a
+            backported fix is not reported as a vulnerability. Most urgent first: CISA KEV, then severity,
+            then EPSS. KEV and critical findings also raise <code>vuln</code> alerts.
           </>
         }
       />
       <FeedAgeBanner status={feedStatus} />
-      {findings.length === 0 ? (
+      {result === null ? (
+        <CoverageBanner
+          notice={{
+            tone: "amber",
+            title: "Findings unavailable",
+            detail:
+              "The control plane could not be reached, or it is older than the findings API. An empty page here would not mean the fleet is clean.",
+          }}
+        />
+      ) : null}
+      {unassessed > 0 ? (
+        <CoverageBanner
+          notice={{
+            tone: "amber",
+            title: `${unassessed} host${unassessed === 1 ? "" : "s"} not assessed`,
+            detail:
+              "No advisory feed covers these hosts' distribution and release, or the agent did not report one, so they have no findings because nothing was checked. Open a host to see which.",
+          }}
+        />
+      ) : null}
+      {result?.truncated ? (
+        <p className="text-sm text-muted-foreground">Showing the first {result.total} findings, most urgent first.</p>
+      ) : null}
+      {result !== null && findings.length === 0 ? (
         <EmptyState
-          title="No advisory matches"
-          description="Reported software does not match the current vulnerability catalog."
+          title="No findings with a fix available"
+          description={
+            unfixed > 0
+              ? `No assessed host has a vulnerability with a fix to install. ${unfixed} finding${unfixed === 1 ? " has" : "s have"} no fix published yet; they are listed on each host.`
+              : "No assessed host has a vulnerability with a fix to install."
+          }
           icon={ShieldCheck}
         />
       ) : (
         <ActivityList>
           {findings.map((finding) => {
-            const alert = alertBySource.get(`${finding.deviceId}:${finding.advisory.id}`);
+            const status = findingStatus(finding.key, store.triages);
+            const alert = alertBySource.get(`${finding.deviceId}:${finding.advisoryId}`);
             return (
               <ActivityItem
-                key={`${finding.deviceId}-${finding.advisory.id}-${finding.packageName}`}
-                tone={finding.advisory.severity === "critical" || finding.advisory.severity === "high" ? "critical" : "warning"}
+                key={finding.id}
+                tone={finding.kev || finding.severity === "critical" || finding.severity === "high" ? "critical" : "warning"}
                 title={
-                  <>
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{finding.advisory.cve || finding.advisory.id}</span>
-                    <SeverityBadge severity={finding.advisory.severity} />
-                    {finding.status === "acknowledged" ? (
-                      <Badge variant="outline">acknowledged</Badge>
-                    ) : (
-                      <Badge>open</Badge>
-                    )}
+                  <div className="space-y-1">
+                    <FindingSummary finding={finding} status={status} showHost />
                     {alert ? (
                       <Link
                         href={`/alerts?kind=vuln&deviceId=${finding.deviceId}`}
@@ -83,20 +97,8 @@ export default async function AdvisoriesPage() {
                       </Link>
                     ) : null}
                   </div>
-                  <p className="text-sm">
-                    {finding.packageName} {finding.version} on{" "}
-                    <Link href={`/devices/${finding.deviceId}`} className="underline">
-                      {finding.hostname}
-                    </Link>{" "}
-                    (patched floor {finding.advisory.below})
-                  </p>
-                  <p className="text-sm text-muted-foreground">{finding.advisory.summary}</p>
-                </div>
-                  </>
                 }
-                actions={!readOnly ? (
-                  <FindingActions findingKey={finding.key} status={finding.status} />
-                ) : null}
+                actions={!readOnly ? <FindingActions findingKey={finding.key} status={status} /> : null}
               />
             );
           })}

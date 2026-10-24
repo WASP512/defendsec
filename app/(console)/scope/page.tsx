@@ -25,7 +25,7 @@ export default function ScopePage() {
         <h2 className="text-lg font-semibold">This repo (security inventory)</h2>
         <p>
           Enroll secret, Python agent, host list, pending updates, hashed paths, snapshot
-          policies, and CVE-shaped matches against <code>lib/advisories.ts</code>. No native
+          policies, and CVE matches computed by the control plane against advisories the distribution itself publishes. No native
           modules and no vendor account.
         </p>
       </section>
