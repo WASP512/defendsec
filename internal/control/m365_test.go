@@ -412,7 +412,7 @@ func TestM365FromEnv(t *testing.T) {
 
 	env(good, "")
 	src, cr, err := m365FromEnv(set)
-	if err != nil || src == nil || !cr.Configured || cr.Method != "certificate" || len(cr.Thumbprint) != 64 || cr.NotAfter == nil || len(cr.Warnings) != 0 {
+	if err != nil || src == nil || !cr.Configured || cr.Method != "certificate" || len(cr.Thumbprint) != 64 || len(cr.ThumbprintSHA1) != 40 || cr.NotAfter == nil || len(cr.Warnings) != 0 {
 		t.Errorf("certificate: %v %+v", err, cr)
 	}
 
