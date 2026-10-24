@@ -289,3 +289,19 @@ JOIN LATERAL (
 
 UPDATE host_vuln_state SET eol_mapped = 4, eol_distro = 1, eol_unknown = 0
 WHERE device_id IN (SELECT device_id FROM vuln_findings WHERE kind = 'eol');
+
+-- ---- Supported OS for Windows, by edition and build (slice 10) ------------------------------------
+-- The real endoflife.date rows (fetched 2026-10-24) for the four cycles below, and Windows hosts that
+-- share builds: Server 2016 and Windows 10 LTSB 2016 are both build 14393 and get opposite answers.
+INSERT INTO eol_releases (product, cycle, label, eoas_from, eol_from, eoes_from, is_lts, latest, snapshot_id) VALUES
+  ('windows-server', '2019',          'Microsoft Windows Server', '2024-01-09', '2029-01-09', NULL,         true,  '10.0.17763', 1),
+  ('windows-server', '2016',          'Microsoft Windows Server', '2022-01-11', '2027-01-12', '2030-01-12', true,  '10.0.14393', 1),
+  ('windows',        '10-22h2',       'Microsoft Windows',        '2025-10-14', '2025-10-14', '2028-10-10', false, '10.0.19045', 1),
+  ('windows',        '10-1607-e-lts', 'Microsoft Windows',        '2021-10-12', '2026-10-13', '2029-10-13', true,  '10.0.14393', 1)
+ON CONFLICT (product, cycle) DO NOTHING;
+
+UPDATE devices SET os_edition = 'ServerStandard' WHERE id = 'demo-dc-01';
+INSERT INTO devices (id, hostname, platform, os_name, os_version, os_edition, distro, distro_release, package_manager, last_seen, enrolled_at, software)
+VALUES
+  ('demo-pc-02', 'demo-pc-02', 'windows', 'Microsoft Windows 10 Pro', '10.0.19045', 'Professional', '', '', '', now() - interval '6 minutes', now() - interval '120 days', '[]'::jsonb),
+  ('demo-pc-03', 'demo-pc-03', 'windows', 'Microsoft Windows 10 Enterprise 2016 LTSB', '10.0.14393', 'EnterpriseS', '', '', '', now() - interval '8 minutes', now() - interval '120 days', '[]'::jsonb);

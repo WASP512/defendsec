@@ -310,6 +310,7 @@ func TestEOLRanksNextToHighVulnerabilities(t *testing.T) {
 		{"B-scored", "CVE-2099-1001", "medium", false, "", f64(0.0002), f64(4.0)},
 		{"C-unscored-medium", "CVE-2099-1002", "medium", false, "", nil, nil},
 		{"D-unscored-high", "CVE-2099-1003", "high", false, "", nil, nil},
+		{"E-cvss-only-5", "CVE-2099-1004", "medium", false, "", nil, f64(5.0)},
 	}
 	seedExposure(t, s, adv)
 	expoHost(t, s, "dev-1", "host-1")
@@ -333,9 +334,10 @@ func TestEOLRanksNextToHighVulnerabilities(t *testing.T) {
 		order = append(order, g.AdvisoryID)
 	}
 	// KEV, then past-security-support PHP 8.0 above the EPSS-scored (0.0002) CVE,
-	// then past-active-support Node 22 (2.0 equivalent) above the CVEs with no
-	// score at all, which keep their severity order.
-	want := []string{"A-kev", "EOL:php:8.0", "B-scored", "EOL:nodejs:22", "D-unscored-high", "C-unscored-medium"}
+	// then the CVSS-only 5.0 CVE, then past-active-support Node 22 (2.0
+	// equivalent) below it but above the CVEs with no score at all, which keep
+	// their severity order.
+	want := []string{"A-kev", "EOL:php:8.0", "B-scored", "E-cvss-only-5", "EOL:nodejs:22", "D-unscored-high", "C-unscored-medium"}
 	if strings.Join(order, ",") != strings.Join(want, ",") {
 		t.Errorf("order = %v\nwant    %v", order, want)
 	}

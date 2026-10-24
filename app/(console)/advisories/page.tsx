@@ -89,7 +89,7 @@ export default async function AdvisoriesPage({ searchParams }: { searchParams: S
 
       {query.advisory ? (
         <ExposureDrawer
-          title={surfaceDetail ? surfaceDetail.detail.finding.title : group?.cve || vulnDetail?.advisory?.cve || query.advisory}
+          title={surfaceDetail ? surfaceDetail.detail.finding.title : group?.cve || (group?.eol ? `${group.eol.productLabel} ${group.eol.cycle}` : "") || vulnDetail?.advisory?.cve || query.advisory}
           description={
             surfaceDetail
               ? "What the scan saw, how long it has been open, and how to fix it."

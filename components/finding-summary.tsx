@@ -28,7 +28,7 @@ export function FindingSummary({
     <div className="space-y-1" data-finding-kind={finding.kind}>
       <div className="flex flex-wrap items-center gap-2">
         <Link href={`/findings/${finding.id}`} className="font-medium underline-offset-2 hover:underline">
-          {finding.cve || finding.advisoryId}
+          {finding.cve || (finding.eol ? `${finding.eol.productLabel} ${finding.eol.cycle}` : finding.advisoryId)}
         </Link>
         <SeverityBadge severity={finding.severity} />
         {finding.kev ? <Badge variant="destructive">KEV</Badge> : null}
