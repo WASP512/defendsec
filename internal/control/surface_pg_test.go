@@ -382,3 +382,55 @@ func TestSurfaceScanCooldownAndConcurrency(t *testing.T) {
 		t.Fatal("the schedule is not subject to the manual cooldown")
 	}
 }
+
+// A scan that fails (here: authorisation withdrawn while it ran, so recording is
+// refused) is written to the ledger, for the schedule and for a manual scan alike.
+func TestFailedSurfaceScansAreWrittenToTheLedger(t *testing.T) {
+	s, pg := pgServer(t)
+	ctx := context.Background()
+	name := uniqueName("failscan", "example.com")
+	zone := surface.NewFakeResolver()
+	zone.Add(name+". 300 IN A 192.0.2.80", name+`. 300 IN TXT "v=spf1 -all"`, name+". 300 IN SOA ns."+name+". h."+name+". 1 7200 3600 1209600 300")
+	a, err := pg.CreateSurfaceAsset(ctx, storepg.SurfaceAssetInput{Kind: "domain", Value: name, Authorised: true, AuthorisedBy: "t", CreatedBy: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pg.RemoveSurfaceAsset(ctx, a.ID) })
+	sc := refusingScanner(zone)
+	sc.Dial = func(context.Context, string, string) (net.Conn, error) {
+		_ = pg.SetSurfaceAssetAuthorised(ctx, a.ID, false, "revoker") // withdrawn mid-scan
+		return nil, errors.New("connection refused")
+	}
+	s.SetSurfaceScanner(sc)
+	s.surf.cooldown = time.Millisecond
+
+	count := func() int {
+		rows, err := pg.ListAudit(ctx, 500)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, r := range rows {
+			if r["action"] == "surface_scan_failed" && strings.Contains(fmt.Sprint(r["detail"]), name) {
+				n++
+			}
+		}
+		return n
+	}
+	s.scanDueSurfaceAssets(ctx) // other tests' assets in this database may be scanned too; only ours is looked at
+	if got := count(); got != 1 {
+		t.Fatalf("the failed scheduled scan is in the ledger %d times, want 1", got)
+	}
+
+	if err := pg.SetSurfaceAssetAuthorised(ctx, a.ID, true, "t"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	rec := surfReq(t, s.HandleSurfaceScan, "POST", "/v1/surface/scan", "admin-token", map[string]any{"assetId": a.ID, "wait": true})
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"failed"`) {
+		t.Fatalf("manual scan: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := count(); got != 2 {
+		t.Fatalf("the failed manual scan is in the ledger too: %d", got)
+	}
+}

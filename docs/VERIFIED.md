@@ -867,6 +867,8 @@ screenshots of every surface the card asks for are in `docs/screenshots/`:
 - `internal/control/exposure_surface_pg_test.go` (1, through apid's handlers on a fake resolver): scan, list (critical SPF `+all`
   above medium DMARC), drawer with the raw observation, 400/404 for bad keys, summary and trend, fix the zone and scan again
   (the finding leaves the list and appears in Resolved), signed export, `Verify` on the bundle.
+- `internal/control/surface_pg_test.go`: a scan that fails (authorisation withdrawn while it ran) is written to the ledger as
+  `surface_scan_failed`, for the schedule and for a manual scan; removing the schedule's call makes the test fail.
 - `lib/exposure-model.test.ts` / `lib/surface-exposure.test.ts`: the same order as the Go test (`compareRank` mixed order,
   `isRanked`), the reason text, the card text ("External surface: 5 findings (1 high) across 3 assets, last scanned 2 hours
   ago", never "0 findings" for an unscanned surface), the Fix this week description and empty text, intervals, the observation
@@ -890,6 +892,24 @@ now present), unattested counted as attested: each made at least one test fail.
   `exposure-surface-drawer-dmarc-reopened.png` (two intervals: closed 28 days, open 20 days),
   `exposure-resolved-mixed.png`, `fleet-surface-card-and-trend.png` (the surface bar chart on its own scale beside the
   vulnerability chart). They contain only seeded data.
+- **Lab port check on a real host (the check 7a left pending).** Lab VM 120 (`defendsec-ubuntu2204`, Ubuntu 22.04.5, a DHCP
+  address on the private LAN), declared as an `ip` asset and confirmed through the admin API by the operator's instruction
+  (the lab VMs are the scanner's designated test target), a real `defendsec-apid` on a fresh database with the schedule off, the real
+  scanner (no fake resolver or dialer):
+  1. Baseline scan, nothing listening but SSH: 1 finding, `ports.open 22/tcp` **info**; Fix this week empty; summary
+     "0 findings, 1 informational note".
+  2. A throwaway listener (a Python script that accepts and closes) started on 5432 as setup, scan: **new
+     `ports.open 5432/tcp`, severity high**, "PostgreSQL (5432/tcp) is reachable", ranked first in Fix this week
+     (`fixable.total` 1, `surface.findings` 1). `ss -ltn` on the VM showed the listener.
+  3. Listener killed (`ss -ltn` showed only 22 afterwards), scan: **resolved 1, open 1**; the finding left the fix list and
+     appeared under Resolved with `resolvedAt`; an independent connect from this host got `Connection refused` on 5432 and
+     succeeded on 22.
+  4. The signed evidence export of that database (`defendsec-verify`): audit chain intact (9 entries), "3 scans: 3 attested",
+     "2 findings: 2 with open and closed dates recomputed from attested scans and matched", exit 0. The 5432 finding's
+     interval is `06:34:23Z` to `06:35:39Z`, exactly the two scans. The same bundle with that closed date moved by an hour:
+     **exit 1**, "the bundle claims … to 07:35:39Z, the attested scans give … to 06:35:39Z".
+  Only the TCP port check was exercised on a real host (the VM has no domain); DNS, email and TLS checks stay verified by
+  fixtures and the 7a real run. The listener process was killed afterwards (its script remains in `/tmp` on the VM).
 - **Evidence export through `defendsec-verify`.** The control test's bundle (`DEFENDSEC_TEST_BUNDLE_OUT=…`, never set in
   CI) was run through the built binary. On the shared test database the output was: `ok surface scans 166 scans: 2 attested …,
   164 unattested …`, `ok surface findings 258 findings: 6 with open and closed dates recomputed from attested scans and
@@ -902,7 +922,7 @@ now present), unattested counted as attested: each made at least one test fail.
 ### Not verified
 
 - **No real domain was scanned in this slice** and the scanner is unchanged, so the 7a real run is not repeated. The lab VM
-  port check from 7a is still pending (needs the VMs started).
+  port check from 7a is done (see Real runs); only VM 120 was used, VM 121 (Rocky) was not scanned.
 - **The ranking rule is a judgement, not a measurement.** Critical and high surface findings above every non-KEV
   vulnerability (so a non-KEV CVE with EPSS 0.9 ranks below an exposed RDP port) and the CVSS-equivalents (medium 5.0, low
   2.0) were chosen to match the examples in the card and the principle of slice 5; nobody has compared them with a real
@@ -914,6 +934,8 @@ now present), unattested counted as attested: each made at least one test fail.
 - **Evidence size at scale** is unmeasured: observations are never pruned, so the section grows with every scan (the demo-scale
   test bundle with 166 scans is 0.6 MB). The digest is defined by the code in `internal/evidence/surface.go` (length-prefixed
   fields, JSON re-encoded by Go's `encoding/json`); there is no independent implementation of the verifier.
+- **Surface observations are still never pruned.** Not built on purpose: deleting an attested scan's observations makes
+  the scan fail its digest, so retention needs a design that archives or folds scans (see SURFACE.md).
 - **Surface findings and `acknowledged`.** The console's acknowledge action exists for host findings only; a surface row has
   none.
 - **Hotspots.** `internal/storepg/exposure.go` (list SQL, summary, trend), `lib/exposure-model.ts` (ranking, types) and

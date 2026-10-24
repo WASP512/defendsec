@@ -145,6 +145,13 @@ public suffix list and IDNA. `govulncheck` is clean.
 
 ## Known limits
 
+- A scan that fails (the scheduled one or a manual one) is written to the ledger as `surface_scan_failed` with the asset and a
+  shortened error, so a failing schedule is visible. (Slice 7a wrote nothing.)
+- **Observations are never pruned**, and cannot simply be: each attested scan's digest covers its observations, so deleting
+  them makes the scan fail verification. A retention policy would have to archive whole scans (for instance as a signed
+  bundle) before removing rows, or fold old scans into a chained summary. Until then the table grows by one row per check
+  group per scan.
+
 - One vantage point: the scanner's own network connection. A port that is closed from here may be
   open from elsewhere.
 - DKIM selectors cannot be enumerated; a selector nobody declared is invisible.
