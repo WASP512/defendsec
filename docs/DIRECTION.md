@@ -94,6 +94,18 @@ Removed in slice 6, after the feed pipeline and matcher are merged (see rule 4 b
 Until slice 6 lands, this code is still in the tree and still builds. It is not maintained and
 not promoted, and new work on it is out of scope.
 
+### Archive branch
+
+The branch `archive/action-governance` was pushed from `main` at commit
+`390ecafa0f53a4ea101625a891a2e70635d72cbb` (the merge of slice 7c), unchanged and before the first
+deletion of slice 6. It holds the policy engine (`internal/policy`), command signing
+(`internal/sign`), two-person approval, break-glass, host classes, the MCP propose/approve
+interface (`internal/mcp`, `internal/control/{mcp,agents,autonomy,approvals}.go`), playbooks and
+the detection pipeline, in the state they were last built and tested in, so that the governance
+work can be reused with the Hermes bot fleet. Recover with
+`git checkout -b <name> archive/action-governance`. It is not maintained and nothing builds from it
+in CI.
+
 ## Feed sources
 
 Feeds are fetched in **bulk or from mirrors**, never per-package live queries. Each fetch is
