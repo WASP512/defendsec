@@ -265,3 +265,58 @@ func TestEOLScoreRanksOnlyKnownStages(t *testing.T) {
 		t.Fatal("an unknown stage must not rank")
 	}
 }
+
+// Identity findings (slice 12) rank by severity under the surface rules: after
+// KEV, before every non-KEV vulnerability when critical or high, and among the
+// scored vulnerabilities when medium or low. Nothing but severity is read.
+func TestIdentityFindingsJoinTheOrder(t *testing.T) {
+	idf := func(id, sev string) Item {
+		return Item{AdvisoryID: IdentityKeyPrefix + id, Severity: sev, Identity: true}
+	}
+	sf := func(id, sev string) Item {
+		return Item{AdvisoryID: SurfaceKeyPrefix + id, Severity: sev, Surface: true}
+	}
+	want := []Item{
+		{AdvisoryID: "kev", KEV: true, KEVAdded: d("2021-01-01"), EPSS: f(0.001), CVSS: f(1)},
+		idf("000000000005", "critical"), // a Global Administrator with no MFA; the older finding first
+		idf("000000000009", "critical"),
+		sf("000000000002", "critical"), // same band and score: identity: sorts before surface:
+		idf("000000000001", "high"),    // an administrator with no MFA, a rule forwarding outside
+		sf("000000000001", "high"),
+		{AdvisoryID: "epss-0.9", EPSS: f(0.9), CVSS: f(2)}, // a non-KEV CVE with a high EPSS ranks below an account takeover risk
+		{AdvisoryID: "cvss-only-9.8", CVSS: f(9.8), Severity: "critical"},
+		idf("000000000003", "medium"), // a user with no MFA: with the medium vulnerabilities (5.0)
+		{AdvisoryID: "cvss-only-4.3", CVSS: f(4.3), Severity: "medium"},
+		idf("000000000004", "low"), // 2.0
+		{AdvisoryID: "cvss-only-1.0", CVSS: f(1.0), Severity: "low"},
+	}
+	got := append([]Item(nil), want...)
+	for i := range got {
+		j := (i*5 + 2) % len(got)
+		got[i], got[j] = got[j], got[i]
+	}
+	sort.Slice(got, func(i, j int) bool { return Compare(got[i], got[j]) < 0 })
+	for i := range want {
+		if got[i].AdvisoryID != want[i].AdvisoryID {
+			t.Fatalf("position %d = %s, want %s\nfull order: %v", i, got[i].AdvisoryID, want[i].AdvisoryID, ids(got))
+		}
+	}
+}
+
+func TestIdentityIgnoresVulnerabilityFieldsAndBands(t *testing.T) {
+	odd := Item{AdvisoryID: IdentityKeyPrefix + "000000000001", Severity: "medium", Identity: true, KEV: true, EPSS: f(0.99), CVSS: f(10)}
+	vuln := Item{AdvisoryID: "v", EPSS: f(0.01), CVSS: f(1)}
+	if Compare(odd, vuln) <= 0 || Band(odd) != BandRest {
+		t.Fatalf("a medium identity finding must rank after a vulnerability with an EPSS score (band %d)", Band(odd))
+	}
+	for sev, band := range map[string]int{"critical": BandUrgent, "high": BandUrgent, "medium": BandRest, "low": BandRest} {
+		if b := Band(Item{AdvisoryID: IdentityKeyPrefix + "1", Severity: sev, Identity: true}); b != band {
+			t.Errorf("identity %s in band %d, want %d", sev, b, band)
+		}
+	}
+	kev := Item{AdvisoryID: "z", KEV: true, KEVAdded: d("2019-01-01"), EPSS: f(0.001), CVSS: f(1)}
+	crit := Item{AdvisoryID: IdentityKeyPrefix + "000000000001", Severity: "critical", Identity: true}
+	if Compare(kev, crit) >= 0 {
+		t.Fatal("an exploited-in-the-wild vulnerability must rank above an identity finding")
+	}
+}
