@@ -26,6 +26,7 @@ TARGETS=(
   "./cmd/defendsec-agentd linux amd64"
   "./cmd/defendsec-verify linux amd64"
   "./cmd/defendsec-web linux amd64"
+  "./cmd/defendsec-feeds linux amd64"
   "./cmd/defendsec-verify darwin arm64"
   "./cmd/defendsec-agentd windows amd64"
 )

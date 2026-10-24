@@ -316,9 +316,15 @@ DEFENDSEC_DATA_DIR="$PWD/data" DATABASE_URL=postgres://... ./scripts/backup.sh
 
 ---
 
-## Advisory ingest (optional)
+## Vulnerability feeds
 
-The packaged server ships a local advisory catalog. To refresh from OSV on a timer, see [../scripts/ingest-osv.timer.md](../scripts/ingest-osv.timer.md) and `packaging/systemd/defendsec-ingest-osv.timer`. This is **not** enabled automatically.
+`defendsec-feeds` mirrors CISA KEV, EPSS and the distro advisories into the database, and moves them
+onto air-gapped installs as signed bundles. It replaces the old OSV ingest script, which sent the
+fleet's package names to `api.osv.dev` and is gone. Setup, the feed list, the bundle format and the
+known gaps are in [FEEDS.md](FEEDS.md); the units are `packaging/systemd/defendsec-feeds.service`
+and `.timer`, configured by `/etc/defendsec/feeds.env`. The timer is **not** enabled automatically.
+`GET /v1/feeds` on the admin API reports each feed's age; the Advisories page turns red when any
+feed is more than seven days old.
 
 ---
 

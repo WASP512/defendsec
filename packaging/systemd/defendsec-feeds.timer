@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily DefendSec vulnerability feed sync
+
+[Timer]
+# The upstream feeds change daily. The random delay keeps a fleet of installs
+# from hitting the same mirrors in the same minute.
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=45m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

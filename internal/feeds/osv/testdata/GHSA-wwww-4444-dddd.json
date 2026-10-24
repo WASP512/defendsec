@@ -1,0 +1,1 @@
+{"id":"GHSA-wwww-4444-dddd","aliases":["CVE-2021-9999"],"summary":"Withdrawn","withdrawn":"2021-02-02T00:00:00Z","modified":"2021-02-02T00:00:00Z","affected":[{"package":{"ecosystem":"PyPI","name":"gone"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"1.0"}]}]}]}

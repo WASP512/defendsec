@@ -1,0 +1,1 @@
+{"id":"GHSA-zzzz-3333-cccc","aliases":["CVE-2022-0001"],"summary":"Bounded by last_affected, and a git range","modified":"2022-01-01T00:00:00Z","affected":[{"package":{"ecosystem":"PyPI","name":"lastaff"},"ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"last_affected":"1.4"}]},{"type":"GIT","events":[{"introduced":"0"},{"fixed":"abc123"}]}]}]}

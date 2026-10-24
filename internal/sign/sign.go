@@ -168,3 +168,53 @@ func VerifyStored(pub ed25519.PublicKey, deviceID, commandID, cmdType string, is
 	}
 	return nil
 }
+
+// Load reads an existing control key and never creates one. Tools that sign on
+// the operator's behalf (defendsec-feeds export) must not mint a fresh identity
+// when the key is missing: a bundle signed by a key nobody trusts is worse than
+// an error.
+func Load(dir string) (*Key, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "control-ed25519.key"))
+	if err != nil {
+		return nil, fmt.Errorf("control key: %w", err)
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return nil, fmt.Errorf("invalid control key PEM")
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	priv, ok := parsed.(ed25519.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("control key is not Ed25519")
+	}
+	return &Key{Private: priv, Public: priv.Public().(ed25519.PublicKey)}, nil
+}
+
+// SignBlob signs an arbitrary message under a caller-chosen domain string. The
+// domain is hashed into the signed bytes, so a signature made for one purpose
+// (a feed bundle) cannot be replayed as another (a command envelope, whose
+// domain is "defendsec-cmd-v1").
+func (k *Key) SignBlob(domain string, msg []byte) []byte {
+	return ed25519.Sign(k.Private, blobMessage(domain, msg))
+}
+
+// VerifyBlob checks a signature made by SignBlob.
+func VerifyBlob(pub ed25519.PublicKey, domain string, msg, sig []byte) error {
+	if len(sig) != ed25519.SignatureSize {
+		return fmt.Errorf("signature has %d bytes, want %d", len(sig), ed25519.SignatureSize)
+	}
+	if !ed25519.Verify(pub, blobMessage(domain, msg), sig) {
+		return fmt.Errorf("invalid signature")
+	}
+	return nil
+}
+
+func blobMessage(domain string, msg []byte) []byte {
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "%s\n%d\n", domain, len(domain))
+	b.Write(msg)
+	return b.Bytes()
+}

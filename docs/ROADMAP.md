@@ -1,3 +1,11 @@
+> **Historical record. Superseded by [DIRECTION.md](DIRECTION.md).**
+> This document logs the EDR phase of DefendSec. On 2026-10-23 DefendSec stopped being an EDR and
+> became an exposure-management tool; the live plan is in `docs/DIRECTION.md`. The body below is
+> kept unedited for the record and no longer describes the product's direction. It may refer to
+> `docs/NEXT-PHASES.md`, which was deleted (see git history).
+
+---
+
 # DefendSec — Strategic Direction and Improvement Roadmap
 
 > Companion to `docs/DEFENDSEC_WHITE_PAPER.html`. This document reviews the white paper's

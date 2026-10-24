@@ -9,9 +9,9 @@ import { fleetFindings } from "@/lib/fleet-aggregates";
 import { loadAdvisories } from "@/lib/advisories-db";
 
 import { loadFleet } from "@/lib/mtls-agents";
-import { getOsvLastIngest } from "@/lib/meta";
+import { getFeedStatus } from "@/lib/feeds";
+import { FeedAgeBanner } from "@/components/feed-age-banner";
 import { listAlerts } from "@/lib/alerts";
-import { relativeTime } from "@/lib/format";
 import { isReadOnlySession } from "@/lib/auth";
 import { ShieldCheck } from "lucide-react";
 
@@ -20,9 +20,9 @@ export const dynamic = "force-dynamic";
 export default async function AdvisoriesPage() {
   const store = await ensureStore();
   const readOnly = await isReadOnlySession();
-  const [advisories, osvLastIngest, vulnAlerts] = await Promise.all([
+  const [advisories, feedStatus, vulnAlerts] = await Promise.all([
     loadAdvisories(),
-    getOsvLastIngest(),
+    getFeedStatus(),
     listAlerts({ kind: "vuln", status: "open", limit: 500 }).catch(() => [] as Awaited<
       ReturnType<typeof listAlerts>
     >),
@@ -43,18 +43,12 @@ export default async function AdvisoriesPage() {
         title="Advisories"
         description={
           <>
-          CVE matches from the Postgres advisories catalog (OSV ingest or bundled fallback).
+          CVE matches from the advisories catalog (synced by <code>defendsec-feeds</code>, or the bundled fallback).
           High/critical matches also raise <code>vuln</code> alerts on inventory report.
           </>
         }
       />
-      <div>
-        {osvLastIngest ? (
-          <p className="text-sm text-muted-foreground">
-            Last OSV ingest: {relativeTime(osvLastIngest)} ({osvLastIngest})
-          </p>
-        ) : null}
-      </div>
+      <FeedAgeBanner status={feedStatus} />
       {findings.length === 0 ? (
         <EmptyState
           title="No advisory matches"
