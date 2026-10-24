@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - "v*"
+    # Dry run. The same workflow, run from a branch named like this, builds,
+    # signs and attests exactly as it does for a tag, and then verifies the
+    # result with the operator's script, but publishes nothing. It exists
+    # because a release workflow that has only ever run for real is a release
+    # workflow whose first failure is a public one. The signature it makes is
+    # tied to a branch ref, which verify-release.sh refuses for a real release.
+    branches:
+      - "scout/**-release-dryrun"
 
 permissions:
   contents: write
@@ -14,6 +22,11 @@ permissions:
   id-token: write
   attestations: write
 
+env:
+  # True only for a pushed v* tag. Everything that publishes keys off this.
+  PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') }}
+  VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.0.0-dryrun' }}
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -21,6 +34,22 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      # What the release says about itself has to exist before anything is
+      # built: a changelog entry and release notes for the version in
+      # package.json, and (for a real release) a tag that is that version.
+      - name: Require release notes, a changelog entry and a matching tag
+        run: |
+          pkg="$(jq -r .version package.json)"
+          notes="docs/releases/v${pkg}.md"
+          [ -s "$notes" ] || { echo "::error::$notes is missing or empty"; exit 1; }
+          grep -q "^## \[${pkg}\]" CHANGELOG.md \
+            || { echo "::error::CHANGELOG.md has no '## [${pkg}]' entry"; exit 1; }
+          if [ "$PUBLISH" = "true" ] && [ "$VERSION" != "v${pkg}" ]; then
+            echo "::error::tag ${VERSION} does not match package.json version ${pkg}"
+            exit 1
+          fi
+
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -29,10 +58,12 @@ jobs:
           node-version: "22"
           cache: npm
 
+      # Pinned: the SBOMs are part of the release, and a tool that changes
+      # between two builds changes them for reasons nobody reviewed.
       - name: Install SBOM tooling
         env:
           GOTOOLCHAIN: auto
-        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0
 
       - name: Install MSI tooling
         run: sudo apt-get update && sudo apt-get install -y wixl msitools
@@ -40,7 +71,6 @@ jobs:
       - name: Build verified release bundle
         env:
           REQUIRE_MSI: "1"
-          VERSION: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
         run: ./scripts/build-release.sh
 
@@ -66,30 +96,48 @@ jobs:
             dist/SHA256SUMS
 
       - name: Attest build provenance
+        id: attest
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/SHA256SUMS
 
+      # The attestation travels with the release so it can be verified offline,
+      # with no GitHub login (gh refuses to query the API without one).
+      - name: Add the attestation bundle to the release files
+        run: cp "${{ steps.attest.outputs.bundle-path }}" dist/SHA256SUMS.intoto.jsonl
+
       - name: Publish GitHub release
+        if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           gh release view "$TAG" >/dev/null 2>&1 \
-            || gh release create "$TAG" --generate-notes --title "DefendSec $TAG"
+            || gh release create "$TAG" --notes-file "docs/releases/${TAG}.md" --title "DefendSec $TAG"
           # Files only. A glob over dist/ would include any directory in
           # it, which gh rejects.
           find dist -maxdepth 1 -type f -print0 \
             | xargs -0 gh release upload "$TAG" --clobber
 
-      # Verified as an operator would, against the release just published, so
-      # the instructions in docs/OPERATIONS.md are known to work rather than
-      # believed to.
+      # Verified as an operator would, against the release just published, from
+      # an empty directory, strictly (a check that cannot run fails) and
+      # including the rebuild from source, so the instructions in
+      # docs/OPERATIONS.md are known to work rather than believed to.
       - name: Verify the published release the way an operator would
+        if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           mkdir -p verify-download
           gh release download "$TAG" --dir verify-download --pattern '*'
-          ./scripts/verify-release.sh --repo "${{ github.repository }}" verify-download
+          ./scripts/verify-release.sh --strict --reproduce --tag "$TAG" \
+            --repo "${{ github.repository }}" verify-download
+
+      # Dry run: the same script on the local files. Signature and provenance
+      # are checked for real (--strict); the identity is the branch this ran on.
+      - name: Verify the dry-run bundle (nothing is published)
+        if: env.PUBLISH != 'true'
+        run: |
+          ./scripts/verify-release.sh --strict --ref 'refs/heads/.*' \
+            --repo "${{ github.repository }}" dist

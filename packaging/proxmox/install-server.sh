@@ -4,9 +4,23 @@
 # Supported: Ubuntu 22.04+, Debian 12+, Fedora, RHEL 8+ (and Rocky / Alma),
 # and openSUSE Leap 16+ / Tumbleweed. The Proxmox CT target is Debian.
 #
-# Usage:
-#   sudo bash packaging/proxmox/install-server.sh
-#   sudo bash packaging/proxmox/install-server.sh --repo-url https://github.com/WASP512/defendsec.git
+# Two ways to install:
+#
+#   RELEASE (default for the copy published with a release): downloads the
+#   release's prebuilt, checksummed binaries and console from GitHub, verifies
+#   every file against the release's SHA256SUMS (and the cosign signature when
+#   cosign is installed), and installs them. Nothing is compiled, so no Go or
+#   git is needed and the binaries are the ones scripts/verify-release.sh checks.
+#
+#     sudo bash install-server.sh                      # the release this script came with
+#     sudo bash install-server.sh --release v0.1.0
+#     sudo bash install-server.sh --release-dir ./dist # a downloaded release, no network
+#
+#   SOURCE (default in a git checkout): clones the repository and builds with
+#   Go and Node on this machine. Takes 15-30 minutes.
+#
+#     sudo bash packaging/proxmox/install-server.sh
+#     sudo bash packaging/proxmox/install-server.sh --repo-ref v0.1.0
 #
 # Postgres defaults to native packages (recommended for Proxmox LXC). Optional:
 #   --postgres docker
@@ -37,6 +51,14 @@ ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 ENROLL_SECRET="${ENROLL_SECRET:-}"
 VIEWER_TOKEN="${VIEWER_TOKEN:-}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
+# Release mode. scripts/build-release.sh stamps the next line with the release
+# tag in the copy it publishes; in a git checkout it stays empty, so a checkout
+# keeps building from source.
+RELEASE_DEFAULT=""
+RELEASE="${RELEASE:-$RELEASE_DEFAULT}"
+RELEASE_DIR="${RELEASE_DIR:-}"
+RELEASE_REPO="${RELEASE_REPO:-WASP512/defendsec}"
+RELEASE_MODE=0
 # native = system postgresql (default, works in Proxmox LXC). docker = optional.
 POSTGRES_MODE="${POSTGRES_MODE:-native}"
 # Debian 12 ships Go 1.19 and Node 18, both too old to build this repo. When the
@@ -52,8 +74,11 @@ NODE_HAVE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --repo-url) REPO_URL="$2"; shift 2 ;;
-    --repo-ref) REPO_REF="$2"; shift 2 ;;
+    --repo-url) REPO_URL="$2"; RELEASE=""; RELEASE_DIR=""; shift 2 ;;
+    --repo-ref) REPO_REF="$2"; RELEASE=""; RELEASE_DIR=""; shift 2 ;;
+    --release) RELEASE="$2"; shift 2 ;;
+    --release-dir) RELEASE_DIR="$2"; shift 2 ;;
+    --from-source) RELEASE=""; RELEASE_DIR=""; shift ;;
     --install-root) INSTALL_ROOT="$2"; shift 2 ;;
     --data-dir) DATA_DIR="$2"; DOWNLOADS_DIR="${DATA_DIR}/downloads"; shift 2 ;;
     --advertise-hostname) ADVERTISE_HOSTNAME="$2"; shift 2 ;;
@@ -65,8 +90,11 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       cat <<'EOF'
 Usage: install-server.sh [options]
-  --repo-url URL             source repository
-  --repo-ref REF             source branch/tag (default: main)
+  --release TAG|latest       install this published release (prebuilt, verified)
+  --release-dir DIR          install from a downloaded release directory (no network)
+  --from-source              build from source instead of using a release
+  --repo-url URL             source repository (implies a source build)
+  --repo-ref REF             source branch/tag (default: main; implies a source build)
   --install-root PATH        source/build directory (default: /opt/defendsec)
   --data-dir PATH            state directory (default: /var/lib/defendsec)
   --advertise-hostname NAME  TLS hostname/SAN
@@ -82,9 +110,16 @@ EOF
   esac
 done
 
+if [[ -n "$RELEASE" || -n "$RELEASE_DIR" ]]; then
+  RELEASE_MODE=1
+fi
+
 STARTED_AT="$(date +%s)"
 CURRENT_STAGE=0
 TOTAL_STAGES=9
+if [[ -n "${RELEASE:-}${RELEASE_DIR:-}" ]]; then
+  TOTAL_STAGES=8
+fi
 info() {
   local now elapsed
   now="$(date +%s)"
@@ -158,7 +193,9 @@ install_packages() {
       apt-get install -y --no-install-recommends \
         ca-certificates curl wget git jq make openssl xz-utils tar \
         iptables
-      apt-get install -y --no-install-recommends wixl || true   # builds the Windows MSI; optional
+      if [[ "$RELEASE_MODE" != "1" ]]; then
+        apt-get install -y --no-install-recommends wixl || true   # builds the Windows MSI; optional
+      fi
       if [[ "$POSTGRES_MODE" == "native" ]]; then
         apt-get install -y --no-install-recommends postgresql postgresql-contrib
       else
@@ -170,7 +207,7 @@ install_packages() {
       dnf install -y ca-certificates curl wget git jq make openssl xz tar iptables-nft
       # wixl builds the Windows MSI the server offers for download; optional
       # (the MSI is also in every release).
-      dnf install -y msitools || true
+      [[ "$RELEASE_MODE" == "1" ]] || dnf install -y msitools || true
       if [[ "$POSTGRES_MODE" == "native" ]]; then
         # RHEL 8's default Postgres module is 10, end of life since 2022,
         # and RHEL 9's is 13, end of life in 2025. Select a supported stream
@@ -196,7 +233,7 @@ install_packages() {
     opensuse-leap|opensuse-tumbleweed|sles|sled)
       zypper --non-interactive --gpg-auto-import-keys refresh
       zypper --non-interactive install -y ca-certificates curl wget git jq make openssl xz tar iptables
-      zypper --non-interactive install -y msitools || true   # builds the Windows MSI; optional
+      [[ "$RELEASE_MODE" == "1" ]] || zypper --non-interactive install -y msitools || true   # builds the Windows MSI; optional
       if [[ "$POSTGRES_MODE" == "native" ]]; then
         zypper --non-interactive install -y postgresql-server postgresql
       else
@@ -369,7 +406,7 @@ ensure_node() {
 }
 
 ensure_toolchains() {
-  if [[ "$SKIP_BUILD" == "1" ]]; then
+  if [[ "$SKIP_BUILD" == "1" || "$RELEASE_MODE" == "1" ]]; then
     ensure_node
     return
   fi
@@ -421,6 +458,158 @@ clone_or_update_repo() {
     git_in_install_root remote set-url origin "$REPO_URL"
   fi
   chown -R defendsec:defendsec "$INSTALL_ROOT"
+}
+
+# ---------------------------------------------------------------------------
+# Release mode: fetch, verify and stage a published release.
+# ---------------------------------------------------------------------------
+
+RELEASE_WORK=""
+RELEASE_VERSION=""
+
+release_url() {
+  local name="$1"
+  if [[ "$RELEASE" == "latest" ]]; then
+    printf 'https://github.com/%s/releases/latest/download/%s' "$RELEASE_REPO" "$name"
+  else
+    printf 'https://github.com/%s/releases/download/%s/%s' "$RELEASE_REPO" "$RELEASE" "$name"
+  fi
+}
+
+# release_get NAME: leave the asset in $RELEASE_WORK, from the release
+# directory when one was given, from GitHub otherwise.
+release_get() {
+  local name="$1"
+  if [[ -n "$RELEASE_DIR" ]]; then
+    [[ -f "${RELEASE_DIR}/${name}" ]] || die "release directory ${RELEASE_DIR} has no ${name}"
+    cp "${RELEASE_DIR}/${name}" "${RELEASE_WORK}/${name}"
+  else
+    curl -fL --silent --show-error --retry 3 -o "${RELEASE_WORK}/${name}" "$(release_url "$name")" \
+      || die "download failed: $(release_url "$name")"
+  fi
+}
+
+# release_has NAME: optional assets (the MSI, signature files).
+release_has() {
+  local name="$1"
+  if [[ -n "$RELEASE_DIR" ]]; then
+    [[ -f "${RELEASE_DIR}/${name}" ]]
+  else
+    curl -fsIL -o /dev/null "$(release_url "$name")"
+  fi
+}
+
+# release_verify NAME: the file in $RELEASE_WORK must match the release's own
+# SHA256SUMS. A file missing from the manifest is refused, not skipped.
+release_verify() {
+  local name="$1" want got
+  want="$(awk -v n="$name" '{f=$2; sub(/^\*/, "", f); if (f == n) {print tolower($1); exit}}' "${RELEASE_WORK}/SHA256SUMS")"
+  [[ "$want" =~ ^[0-9a-f]{64}$ ]] || die "SHA256SUMS has no entry for ${name}; refusing to install it"
+  got="$(sha256sum "${RELEASE_WORK}/${name}" | awk '{print $1}')"
+  [[ "$got" == "$want" ]] || die "checksum mismatch for ${name} (release says ${want}, downloaded ${got})"
+}
+
+fetch_release() {
+  RELEASE_WORK="$(mktemp -d /var/tmp/defendsec-release.XXXXXX)"
+  if [[ -n "$RELEASE_DIR" ]]; then
+    RELEASE_DIR="$(cd "$RELEASE_DIR" && pwd)" || die "cannot read release directory"
+    info "Using the release in ${RELEASE_DIR}"
+  else
+    info "Downloading release ${RELEASE} from github.com/${RELEASE_REPO}"
+  fi
+
+  release_get SHA256SUMS
+  release_get VERSION
+  release_verify VERSION
+  RELEASE_VERSION="$(tr -d '\r\n' <"${RELEASE_WORK}/VERSION")"
+  [[ "$RELEASE_VERSION" =~ ^[A-Za-z0-9._-]+$ ]] || die "release VERSION is not a plain version string"
+  if [[ -n "$RELEASE" && "$RELEASE" != "latest" && "${RELEASE#v}" != "$RELEASE_VERSION" ]]; then
+    die "release ${RELEASE} says its version is ${RELEASE_VERSION}"
+  fi
+  echo "    Release version: ${RELEASE_VERSION}"
+
+  # The signature covers SHA256SUMS, which covers every file. It is checked
+  # when cosign is here; otherwise the install says so instead of implying it.
+  if command -v cosign >/dev/null 2>&1 && release_has SHA256SUMS.sig && release_has SHA256SUMS.pem; then
+    release_get SHA256SUMS.sig
+    release_get SHA256SUMS.pem
+    cosign verify-blob \
+      --certificate "${RELEASE_WORK}/SHA256SUMS.pem" \
+      --signature "${RELEASE_WORK}/SHA256SUMS.sig" \
+      --certificate-identity-regexp "^https://github.com/${RELEASE_REPO}/\.github/workflows/release\.yml@refs/tags/v" \
+      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+      "${RELEASE_WORK}/SHA256SUMS" >/dev/null 2>&1 \
+      || die "the SHA256SUMS signature does not verify against ${RELEASE_REPO}'s release workflow"
+    echo "    Signature: SHA256SUMS is signed by ${RELEASE_REPO}'s release workflow."
+  else
+    echo "    Signature: NOT checked (cosign is not installed, or the release has no signature)."
+    echo "               Checksums are checked against the release's own SHA256SUMS. To check the"
+    echo "               signature and provenance first, run scripts/verify-release.sh on the"
+    echo "               downloaded release, or install cosign and run this again."
+  fi
+
+  local arch="$GOARCH" name
+  for name in "defendsec-apid-linux-${arch}" "defendsec-web-linux-${arch}" "defendsec-feeds-linux-${arch}" \
+    defendsec-agentd-linux-amd64 defendsec-agentd-linux-arm64 \
+    defendsec-agentd-windows-amd64.exe defendsec-agentd-windows-arm64.exe \
+    defendsec-console.tar.gz defendsec-packaging.tar.gz update-server.sh; do
+    echo "    ${name}"
+    release_get "$name"
+    release_verify "$name"
+  done
+  if release_has defendsec-agent-windows-amd64.msi; then
+    release_get defendsec-agent-windows-amd64.msi
+    release_verify defendsec-agent-windows-amd64.msi
+  fi
+  echo "    All files match SHA256SUMS."
+}
+
+# install_release_artifacts: the release-mode equivalent of build_binaries +
+# build_console. Lays files out exactly as a source build does (bin/ and
+# current-console under INSTALL_ROOT), so everything after it is shared.
+install_release_artifacts() {
+  local arch="$GOARCH" name
+  info "Installing release ${RELEASE_VERSION} (prebuilt, nothing compiled)"
+
+  # Units, helper scripts and docs ship in one verified archive. Refuse any
+  # entry that is absolute or climbs out of the directory.
+  if tar -tzf "${RELEASE_WORK}/defendsec-packaging.tar.gz" | awk '/^\/|(^|\/)\.\.(\/|$)/ {bad=1} END {exit bad ? 0 : 1}'; then
+    die "defendsec-packaging.tar.gz contains an unsafe path"
+  fi
+  mkdir -p "$INSTALL_ROOT/bin" "$INSTALL_ROOT/packaging/proxmox"
+  tar --no-same-owner -xzf "${RELEASE_WORK}/defendsec-packaging.tar.gz" -C "$INSTALL_ROOT"
+
+  install -m 0755 "${RELEASE_WORK}/defendsec-apid-linux-${arch}" "${INSTALL_ROOT}/bin/defendsec-apid"
+  install -m 0755 "${RELEASE_WORK}/defendsec-web-linux-${arch}" "${INSTALL_ROOT}/bin/defendsec-web"
+  install -m 0755 "${RELEASE_WORK}/defendsec-feeds-linux-${arch}" "${INSTALL_ROOT}/bin/defendsec-feeds"
+  install -m 0755 "${RELEASE_WORK}/defendsec-agentd-linux-${arch}" "${INSTALL_ROOT}/bin/defendsec-agentd"
+  for name in defendsec-agentd-linux-amd64 defendsec-agentd-linux-arm64 \
+    defendsec-agentd-windows-amd64.exe defendsec-agentd-windows-arm64.exe; do
+    install -m 0755 "${RELEASE_WORK}/${name}" "${INSTALL_ROOT}/bin/${name}"
+  done
+  if [[ -f "${RELEASE_WORK}/defendsec-agent-windows-amd64.msi" ]]; then
+    install -m 0644 "${RELEASE_WORK}/defendsec-agent-windows-amd64.msi" "${INSTALL_ROOT}/bin/defendsec-agent-windows-amd64.msi"
+  fi
+  install -m 0755 "${RELEASE_WORK}/update-server.sh" "${INSTALL_ROOT}/packaging/proxmox/update-server.sh"
+  printf '%s\n' "$RELEASE_VERSION" >"${INSTALL_ROOT}/VERSION"
+
+  # Same layout update-server.sh uses: releases/<version> behind current-console.
+  local console_dir="${INSTALL_ROOT}/releases/${RELEASE_VERSION}"
+  if tar -tzf "${RELEASE_WORK}/defendsec-console.tar.gz" | awk '/^\/|(^|\/)\.\.(\/|$)/ {bad=1} END {exit bad ? 0 : 1}'; then
+    die "defendsec-console.tar.gz contains an unsafe path"
+  fi
+  rm -rf "$console_dir"
+  mkdir -p "$console_dir"
+  tar --no-same-owner --no-same-permissions -xzf "${RELEASE_WORK}/defendsec-console.tar.gz" -C "$console_dir"
+  [[ -f "${console_dir}/server.js" ]] || die "the console archive has no server.js"
+  ln -sfn "$console_dir" "${INSTALL_ROOT}/current-console"
+
+  install -m 0755 "${INSTALL_ROOT}/bin/defendsec-apid" /usr/local/bin/defendsec-apid
+  install -m 0755 "${INSTALL_ROOT}/bin/defendsec-web" /usr/local/bin/defendsec-web
+  install -m 0755 "${INSTALL_ROOT}/bin/defendsec-feeds" /usr/local/bin/defendsec-feeds
+  install -m 0755 "${INSTALL_ROOT}/bin/defendsec-agentd" /usr/local/bin/defendsec-agentd
+  chown -R defendsec:defendsec "$INSTALL_ROOT"
+  rm -rf "$RELEASE_WORK"
 }
 
 start_postgres_native() {
@@ -565,6 +754,7 @@ build_binaries() {
       export GOCACHE=$(printf %q "${DATA_DIR}/go/cache")
       go build -o bin/defendsec-apid ./cmd/defendsec-apid
       go build -o bin/defendsec-web ./cmd/defendsec-web
+      go build -o bin/defendsec-feeds ./cmd/defendsec-feeds
       go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd ./cmd/defendsec-agentd
       GOOS=linux GOARCH=amd64 go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-linux-amd64 ./cmd/defendsec-agentd
       GOOS=linux GOARCH=arm64 go build -ldflags $(printf %q "-X main.agentVersion=${release_version}") -o bin/defendsec-agentd-linux-arm64 ./cmd/defendsec-agentd
@@ -579,11 +769,13 @@ build_binaries() {
   [[ -x "${INSTALL_ROOT}/bin/defendsec-apid" ]] || die "missing prebuilt bin/defendsec-apid"
   [[ -x "${INSTALL_ROOT}/bin/defendsec-web" ]] || die "missing prebuilt bin/defendsec-web"
   [[ -x "${INSTALL_ROOT}/bin/defendsec-agentd" ]] || die "missing prebuilt bin/defendsec-agentd"
+  [[ -x "${INSTALL_ROOT}/bin/defendsec-feeds" ]] || die "missing prebuilt bin/defendsec-feeds"
   [[ -x "${INSTALL_ROOT}/bin/defendsec-agentd-linux-amd64" ]] || die "missing prebuilt amd64 agent"
   [[ -x "${INSTALL_ROOT}/bin/defendsec-agentd-linux-arm64" ]] || die "missing prebuilt arm64 agent"
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-apid" /usr/local/bin/defendsec-apid
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-web" /usr/local/bin/defendsec-web
   install -m 0755 "${INSTALL_ROOT}/bin/defendsec-agentd" /usr/local/bin/defendsec-agentd
+  install -m 0755 "${INSTALL_ROOT}/bin/defendsec-feeds" /usr/local/bin/defendsec-feeds
   if [[ ! -s "${INSTALL_ROOT}/VERSION" ]]; then
     local installed_version
     installed_version="$(git_in_install_root describe --tags --always 2>/dev/null || echo dev)"
@@ -721,7 +913,9 @@ EOF
       install -m 0644 "${INSTALL_ROOT}/packaging/agent/${pair#*:}" "${DOWNLOADS_DIR}/${pair%%:*}"
     fi
   done
-  if command -v wixl >/dev/null 2>&1 && [[ -f "${DOWNLOADS_DIR}/defendsec-agentd-windows-amd64.exe" ]]; then
+  if [[ -f "${INSTALL_ROOT}/bin/defendsec-agent-windows-amd64.msi" ]]; then
+    install -m 0644 "${INSTALL_ROOT}/bin/defendsec-agent-windows-amd64.msi" "${DOWNLOADS_DIR}/defendsec-agent-windows-amd64.msi"
+  elif command -v wixl >/dev/null 2>&1 && [[ -f "${DOWNLOADS_DIR}/defendsec-agentd-windows-amd64.exe" ]]; then
     "${INSTALL_ROOT}/scripts/build-msi.sh" "${DOWNLOADS_DIR}/defendsec-agentd-windows-amd64.exe" \
       "${DOWNLOADS_DIR}/defendsec-agent-windows-amd64.msi" "$(cat "${INSTALL_ROOT}/VERSION" 2>/dev/null || echo 0.0.0)" || true
   fi
@@ -757,6 +951,8 @@ install_systemd_units() {
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-web.service" /etc/systemd/system/defendsec-web.service
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-update.service" /etc/systemd/system/defendsec-update.service
   install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-update.path" /etc/systemd/system/defendsec-update.path
+  install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-feeds.service" /etc/systemd/system/defendsec-feeds.service
+  install -m 0644 "${INSTALL_ROOT}/packaging/systemd/defendsec-feeds.timer" /etc/systemd/system/defendsec-feeds.timer
   install -m 0755 "${INSTALL_ROOT}/packaging/proxmox/update-server.sh" /usr/local/sbin/defendsec-update
 
   mkdir -p /etc/systemd/system/defendsec-update.path.d
@@ -872,6 +1068,17 @@ EOF
   [[ -s "${DATA_DIR}/defendsec.json" ]] || die "apid is healthy but ${DATA_DIR}/defendsec.json is missing"
 }
 
+# Without advisories nothing is matched, so a server that never synced feeds
+# shows every host as not assessed. The timer keeps them current; the first sync
+# starts now, in the background (a cold sync takes a few minutes and downloads
+# roughly 300 MB), after apid has applied the database migrations.
+enable_feed_sync() {
+  info "Enabling the daily vulnerability feed sync and starting the first one"
+  systemctl enable --now defendsec-feeds.timer
+  systemctl start --no-block defendsec-feeds.service
+  echo "    First sync running: journalctl -u defendsec-feeds -f"
+}
+
 print_summary() {
   local host="${PRIMARY_IP:-$ADVERTISE_HOSTNAME}"
   cat <<EOF
@@ -892,30 +1099,51 @@ no token needed. If you miss the window, restart it with
   systemctl restart defendsec-apid
 or sign in with the admin token above. Then copy the agent command from Enroll.
 
+Vulnerability feeds: the first sync was started in the background and takes a few
+  minutes; hosts show as "not assessed" until it finishes. Progress:
+    journalctl -u defendsec-feeds -f
+  It then runs daily (systemctl list-timers defendsec-feeds.timer).
+
+Version: $(tr -d '\r\n' <"${INSTALL_ROOT}/VERSION" 2>/dev/null || echo unknown)
 Docs: ${INSTALL_ROOT}/docs/INSTALL.md
 EOF
 }
 
 info "Starting DefendSec server installer"
 echo "OS=${OS_ID} architecture=${GOARCH} Postgres=${POSTGRES_MODE}"
-echo "A first source build commonly takes 15–30 minutes. Keep this terminal open."
+if [[ "$RELEASE_MODE" == "1" ]]; then
+  echo "Installing a prebuilt release (${RELEASE:-from ${RELEASE_DIR}}); nothing is compiled, so this takes minutes."
+else
+  echo "A first source build commonly takes 15–30 minutes. Keep this terminal open."
+fi
 stage "Install operating-system packages"
 install_packages
 stage "Create service user and data directories"
 create_users_dirs
-stage "Download DefendSec source"
-clone_or_update_repo
+if [[ "$RELEASE_MODE" == "1" ]]; then
+  stage "Download and verify the release"
+  fetch_release
+else
+  stage "Download DefendSec source"
+  clone_or_update_repo
+fi
 stage "Check and install Go / Node toolchains"
 ensure_toolchains
 stage "Start and configure Postgres"
 start_postgres
-stage "Build API and agent binaries"
-build_binaries
-stage "Install JavaScript packages and build console"
-build_console
+if [[ "$RELEASE_MODE" == "1" ]]; then
+  stage "Install release binaries and console"
+  install_release_artifacts
+else
+  stage "Build API and agent binaries"
+  build_binaries
+  stage "Install JavaScript packages and build console"
+  build_console
+fi
 stage "Write configuration and agent downloads"
 seed_secrets_and_downloads
 stage "Install services and run health checks"
 install_systemd_units
+enable_feed_sync
 open_host_firewall
 print_summary

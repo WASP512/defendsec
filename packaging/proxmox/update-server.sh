@@ -150,17 +150,19 @@ prepare_release() {
     || die "release metadata tag does not match the request"
 
   local apid_name="defendsec-apid-linux-${arch}"
+  local web_name="defendsec-web-linux-${arch}"
+  local feeds_name="defendsec-feeds-linux-${arch}"
   local console_name="defendsec-console.tar.gz"
   local sums_name="SHA256SUMS"
   local name url
-  for name in "$apid_name" "$console_name" "$sums_name" \
+  for name in "$apid_name" "$web_name" "$feeds_name" "$console_name" "$sums_name" \
     "defendsec-agentd-linux-amd64" "defendsec-agentd-linux-arm64" \
     "install-agent.sh" "update-server.sh" "VERSION"; do
     url="$(asset_url "${work}/release.json" "$name")" || die "release is missing ${name}"
     download "$url" "${work}/${name}"
   done
 
-  for name in "$apid_name" "$console_name" \
+  for name in "$apid_name" "$web_name" "$feeds_name" "$console_name" \
     "defendsec-agentd-linux-amd64" "defendsec-agentd-linux-arm64" \
     "install-agent.sh" "update-server.sh" "VERSION"; do
     verify_file "${work}/${sums_name}" "$name" "${work}/${name}"
@@ -176,7 +178,7 @@ prepare_release() {
     download "$url" "${work}/${optional}"
     verify_file "${work}/${sums_name}" "$optional" "${work}/${optional}"
   done
-  printf '%s\n%s\n' "$version" "$apid_name"
+  printf '%s\n%s\n%s\n' "$version" "$apid_name" "$arch"
 }
 
 OPTIONAL_DOWNLOADS=(
@@ -192,14 +194,15 @@ apply_release() {
   exec 9>"${DATA_DIR}/update.lock"
   flock -n 9 || die "another server update is already running"
 
-  local work version apid_name release_dir previous_console="" backup_path
+  local work version apid_name arch release_dir previous_console="" backup_path
   work="$(mktemp -d "${DATA_DIR}/update-work.XXXXXX")"
   trap 'rm -f "$REQUEST_FILE"; rm -rf "$work"' EXIT
   write_status downloading "Downloading and verifying release"
   mapfile -t prepared < <(prepare_release "$REQUEST_FILE" "$work")
   version="${prepared[0]:-}"
   apid_name="${prepared[1]:-}"
-  [[ -n "$version" && -n "$apid_name" ]] || die "release preparation failed"
+  arch="${prepared[2]:-}"
+  [[ -n "$version" && -n "$apid_name" && -n "$arch" ]] || die "release preparation failed"
 
   write_status backing_up "Creating a pre-upgrade data and Postgres backup" "$version"
   backup_path="$(create_backup "$version")"
@@ -213,11 +216,17 @@ apply_release() {
   if [[ -L "${INSTALL_ROOT}/current-console" ]]; then
     previous_console="$(readlink "${INSTALL_ROOT}/current-console")"
   fi
-  cp -a /usr/local/bin/defendsec-apid /usr/local/bin/defendsec-apid.bak
-  install -m 0755 "${work}/${apid_name}" /usr/local/bin/defendsec-apid.new
+  local bin
+  for bin in defendsec-apid defendsec-web defendsec-feeds; do
+    # A server installed before a binary existed has none to back up.
+    [[ -f "/usr/local/bin/${bin}" ]] && cp -a "/usr/local/bin/${bin}" "/usr/local/bin/${bin}.bak"
+    install -m 0755 "${work}/${bin}-linux-${arch}" "/usr/local/bin/${bin}.new"
+  done
 
   write_status installing "Installing release and restarting services" "$version"
-  mv -f /usr/local/bin/defendsec-apid.new /usr/local/bin/defendsec-apid
+  for bin in defendsec-apid defendsec-web defendsec-feeds; do
+    mv -f "/usr/local/bin/${bin}.new" "/usr/local/bin/${bin}"
+  done
   ln -sfn "$release_dir" "${INSTALL_ROOT}/current-console.new"
   mv -Tf "${INSTALL_ROOT}/current-console.new" "${INSTALL_ROOT}/current-console"
 
@@ -239,26 +248,38 @@ apply_release() {
 
   systemctl restart defendsec-apid
   systemctl restart defendsec-console
+  # The HTTPS front end is part of the release too. Absent only on a server
+  # that never had it, which is not restarted into existence here.
+  local has_web=0
+  if systemctl cat defendsec-web >/dev/null 2>&1; then
+    has_web=1
+    systemctl restart defendsec-web
+  fi
 
   local healthy=0
   for _ in $(seq 1 40); do
     if systemctl is-active --quiet defendsec-apid \
       && systemctl is-active --quiet defendsec-console \
       && curl -kfsS https://127.0.0.1:47262/healthz >/dev/null \
-      && curl -fsS http://127.0.0.1:47265/login >/dev/null; then
+      && curl -fsS http://127.0.0.1:47265/login >/dev/null \
+      && { [[ "$has_web" -ne 1 ]] || { systemctl is-active --quiet defendsec-web \
+        && curl -kfsS https://127.0.0.1:47261/login >/dev/null; }; }; then
       healthy=1
       break
     fi
     sleep 1
   done
   if [[ "$healthy" -ne 1 ]]; then
-    cp -a /usr/local/bin/defendsec-apid.bak /usr/local/bin/defendsec-apid
+    for bin in defendsec-apid defendsec-web defendsec-feeds; do
+      [[ -f "/usr/local/bin/${bin}.bak" ]] && cp -a "/usr/local/bin/${bin}.bak" "/usr/local/bin/${bin}"
+    done
     if [[ -n "$previous_console" ]]; then
       ln -sfn "$previous_console" "${INSTALL_ROOT}/current-console.rollback"
       mv -Tf "${INSTALL_ROOT}/current-console.rollback" "${INSTALL_ROOT}/current-console"
     fi
     systemctl restart defendsec-apid || true
     systemctl restart defendsec-console || true
+    [[ "$has_web" -ne 1 ]] || systemctl restart defendsec-web || true
     die "release failed health checks; previous server binaries were restored"
   fi
 

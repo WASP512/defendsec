@@ -61,10 +61,10 @@ is what is **not built yet**.
 
 | Question | Today | Not built yet |
 | --- | --- | --- |
-| **What is exploitable right now?** | The control plane matches each host's packages against its own distribution's advisories (fixed versions are the distro's, so a backported fix is not a finding; Rocky/Alma hosts are matched against their own errata) and ranks the result **KEV → EPSS → CVSS** on the Exposure page, with the reason each row is where it is, the hosts, installed against fixed version and the feed snapshot it came from. The Fleet page leads with a **Fix this week** card. Findings with no fix, or fixed upstream and awaiting Rocky/Alma, are a separate watch list; an exploited one there gets a red callout. `defendsec-feeds` syncs CISA KEV, EPSS and the distro advisories and both pages show how old they are ([docs/EXPOSURE.md](docs/EXPOSURE.md), [docs/MATCHING.md](docs/MATCHING.md), [docs/FEEDS.md](docs/FEEDS.md)) | Repository health: expired keys and stale indexes (slice 11). See [VERIFIED.md](docs/VERIFIED.md) for what has been run on a real host |
-| **What is end-of-life or unpatched?** | Hardware, OS, software and pending patches per host on Linux (apt, dnf/yum, zypper) and Windows (Windows Update). A **Supported OS** policy flags hosts on releases their vendor no longer patches. **Application end-of-life** (endoflife.date): software installed from a third-party repository (Sury PHP, PGDG, NodeSource, a PPA) whose upstream has stopped patching it is a finding in Fix this week, with the origin, the end-of-life date and the release to upgrade to; the distribution's own packages are never judged, they follow its lifecycle ([docs/EOL.md](docs/EOL.md)) | Pending patches ranked by age; software installed outside the package manager on Linux |
+| **What is exploitable right now?** | The control plane matches each host's packages against its own distribution's advisories (fixed versions are the distro's, so a backported fix is not a finding; Rocky/Alma hosts are matched against their own errata) and ranks the result **KEV → EPSS → CVSS** on the Exposure page, with the reason each row is where it is, the hosts, installed against fixed version and the feed snapshot it came from. The Fleet page leads with a **Fix this week** card. Findings with no fix, or fixed upstream and awaiting Rocky/Alma, are a separate watch list; an exploited one there gets a red callout. `defendsec-feeds` syncs CISA KEV, EPSS and the distro advisories and both pages show how old they are ([docs/EXPOSURE.md](docs/EXPOSURE.md), [docs/MATCHING.md](docs/MATCHING.md), [docs/FEEDS.md](docs/FEEDS.md)) | Software installed outside the package manager on Linux. Only Ubuntu 22.04 and Rocky 9.8 have been matched on a real host ([VERIFIED.md](docs/VERIFIED.md)) |
+| **What is end-of-life or unpatched?** | Hardware, OS, software and pending patches per host on Linux (apt, dnf/yum, zypper) and Windows (Windows Update). A **Supported OS** policy flags hosts on releases their vendor no longer patches. **Application end-of-life** (endoflife.date): software installed from a third-party repository (Sury PHP, PGDG, NodeSource, a PPA) whose upstream has stopped patching it is a finding in Fix this week, with the origin, the end-of-life date and the release to upgrade to; the distribution's own packages are never judged, they follow its lifecycle ([docs/EOL.md](docs/EOL.md)). **Repository health**: expired signing keys and stale package indexes on apt, dnf and zypper hosts, and "pending updates" marked unreliable when the host's package cache is stale ([docs/REPO_HEALTH.md](docs/REPO_HEALTH.md)) | Pending patches ranked by age; software installed outside the package manager on Linux |
 | **What is misconfigured?** | 42 SCA checks in control-tagged packs. On Linux the CIS-aligned checks know each distro: its package names, SELinux on Fedora, RHEL and openSUSE, AppArmor on Ubuntu and Debian. On Windows: BitLocker, Defender, firewall, SMBv1, UAC and RDP. Firewall state is read from ufw, firewalld or plain nftables. A check the host cannot answer is reported as missing evidence | |
-| **What is exposed from the outside?** | An external surface scanner: declared domains, hostnames and IPs (each confirmed as authorised to test) are checked daily and on demand for SPF, DKIM, DMARC, MTA-STS, TLS-RPT, DNSSEC, CAA, dangling CNAMEs, certificate expiry and chain, legacy TLS and exposed ports, on the Assets and Surface pages ([docs/SURFACE.md](docs/SURFACE.md)). A check that could not run is shown as not assessed, never as a pass | Surface findings rank in the weekly list next to vulnerabilities (critical and high above every non-KEV vulnerability: a judgement, see [docs/EXPOSURE.md](docs/EXPOSURE.md)), have a trend series and a Fleet card, and ride in the signed evidence export (slice 7b). One vantage point; scanning is not a pass for what it could not check |
+| **What is exposed from the outside?** | An external surface scanner: declared domains, hostnames and IPs (each confirmed as authorised to test) are checked daily and on demand for SPF, DKIM, DMARC, MTA-STS, TLS-RPT, DNSSEC, CAA, dangling CNAMEs, certificate expiry and chain, legacy TLS and exposed ports, on the Assets and Surface pages ([docs/SURFACE.md](docs/SURFACE.md)). A check that could not run is shown as not assessed, never as a pass. Surface findings rank in the weekly list next to vulnerabilities (critical and high above every non-KEV vulnerability: a judgement, see [docs/EXPOSURE.md](docs/EXPOSURE.md)), have a trend series and a Fleet card, and ride in the signed evidence export | One vantage point; scanning is not a pass for what it could not check |
 | **Is it getting better?** | A trendline of open findings per day (with the KEV share and the nothing-to-install count) for 30/90/180 days or any audit period, computed from when each finding was first seen and resolved; how each finding closed (fixed, package removed, advisory changed) is recorded. Control mapping for NIST 800-53, 800-171, CIS v8, CMMC and CJIS; audit periods, documented exceptions, a hash-chained audit ledger and offline-verifiable evidence exports | The trendline starts at the first feed snapshot; earlier history was never recorded. The surface series starts with the first surface scan; surface scans stored before slice 7b are unattested in the evidence export |
 
 Alongside that:
@@ -73,7 +73,7 @@ Alongside that:
 | --- | --- |
 | **File integrity** | Hash-based checks on sensitive paths, with baselines you accept explicitly. On Linux: account, SSH, sudo and crypto-policy files. On Windows: `hosts`, `services`, Group Policy scripts and scheduled tasks |
 | **Accounts** | Named users, TOTP, lockout, OIDC single sign-on, and an audit ledger of every action |
-| **Integrations** | Prometheus metrics, OpenTelemetry traces, an Ansible role and a Terraform module for rollout |
+| **Integrations** | Prometheus metrics, OpenTelemetry traces, an Ansible role and a Terraform module for rollout. Read-only collectors for **Datto RMM** (Windows inventory and patch status with no new agent, [docs/DATTO-RMM.md](docs/DATTO-RMM.md)) and **Microsoft 365** (MFA, legacy authentication, admin roles, hiding and forwarding inbox rules, [docs/M365.md](docs/M365.md)), and **Autotask** tickets from Fix this week ([docs/AUTOTASK.md](docs/AUTOTASK.md)). None of the three has run against a real account |
 
 ### What it is not
 
@@ -112,12 +112,13 @@ The server installer handles each distribution's differences:
 
 Most people run the server as a Proxmox LXC: one command, then a browser.
 
-1. **Create the server.** On the Proxmox host, as root. The first install often takes 15–30
-   minutes while it builds.
+1. **Create the server.** On the Proxmox host, as root. It installs the v0.1.0 release (prebuilt
+   and checksummed, nothing is compiled) in a new Debian 12 container, and starts the first
+   vulnerability feed sync.
 
    ```bash
    curl -fL --progress-bar \
-     https://raw.githubusercontent.com/WASP512/defendsec/main/packaging/proxmox/ct/defendsec.sh \
+     https://github.com/WASP512/defendsec/releases/download/v0.1.0/create-proxmox-ct.sh \
      -o /tmp/defendsec.sh && bash /tmp/defendsec.sh
    ```
 
@@ -182,32 +183,37 @@ drop the detection and response settings; where they disagree with this README, 
 
 ### Honest status
 
-- **Findings come from the synced distro feeds, with one known false-positive class.** The matcher
-  compares each package against the distro's own fixed versions (Ubuntu, Debian, RHEL family, SUSE),
-  so backported fixes are not flagged. Measured on a fully patched Ubuntu 22.04: 0 findings. On a
-  fully patched **Rocky 9** it reports the kernel CVEs Red Hat fixed in a build Rocky has not shipped
-  yet, because Rocky and Alma hosts are matched against Red Hat's feed. Until Rocky's own errata feed
-  is added, a Rocky/Alma "fix available" row may name a version your repositories do not have yet.
-  See `docs/VERIFIED.md`.
+- **Findings come from the synced distro feeds.** The matcher compares each package against the
+  distro's own fixed versions (Ubuntu, Debian, RHEL family, SUSE), so backported fixes are not
+  flagged. Measured on a fully patched Ubuntu 22.04: 0 findings. On a fully patched **Rocky 9.8**: 0
+  fixable findings; the 8 kernel CVEs Red Hat fixed in a build Rocky had not yet shipped are
+  `awaiting_vendor`, on the watch list and not in Fix this week. Debian's tracker lists open CVEs,
+  so a patched Debian host still shows `unfixed` rows. Only Ubuntu 22.04 and Rocky 9.8 have been
+  matched on a real host; see `docs/VERIFIED.md`.
 - **The Windows agent has never been run on a real Windows machine.** It has been verified by
   cross-compilation, parser tests and PowerShell parse checks only. That covers the service,
   inventory and posture checks. Treat any Windows deployment as an experiment. The Windows agent is
   inventory and posture only; its service and MSI stay until the Datto RMM collector covers Windows
   hosts ([docs/WINDOWS.md](docs/WINDOWS.md)).
-- **The Postgres-backed tests were not run in the baseline.** The Go tests that need a database
-  (105 of them) skip on the host the baseline ran on. CI is configured to run them; CI results
-  were not checked. See [docs/VERIFIED.md](docs/VERIFIED.md).
-- **The external surface scanner, the exposure ranking and the trendline do not exist yet.**
+- **The Datto RMM collector, the Microsoft 365 collector and Autotask have not been run against a
+  real account or tenant.** They are tested against fakes and fixtures. Surface findings, identity
+  findings and tickets are real code paths with synthetic evidence only
+  ([docs/VERIFIED.md](docs/VERIFIED.md)).
+- **The Postgres-backed tests run in CI** (and against a test database during each slice); the
+  baseline host that skipped them is history.
 - **The server holds the fleet in memory**, about 1.9 GB at 10,000 hosts, measured in an earlier
-  load test of the earlier-phase code ([docs/LOADTEST.md](docs/LOADTEST.md)). The load tool is on the
-  removal list, and the figure has not been re-measured.
+  load test of the earlier-phase code ([docs/LOADTEST.md](docs/LOADTEST.md)). The figure has not
+  been re-measured against this release.
 
 ## Verify what you run
 
 Releases are reproducible builds with CycloneDX SBOMs. `SHA256SUMS` is signed with Sigstore
-keyless signing and carries GitHub build provenance. `scripts/verify-release.sh` checks all of
-it, and `scripts/check-reproducible.sh` rebuilds and compares. *Verify our binaries with the same
-rigor we help you apply to your fleet.*
+keyless signing and carries GitHub build provenance (shipped in the release, so it verifies
+offline). `scripts/verify-release.sh --strict --reproduce` checks all of it, including a rebuild
+from source that must match byte for byte, and `scripts/check-reproducible.sh` rebuilds and
+compares in CI. *Verify our binaries with the same rigor we help you apply to your fleet.*
+See [docs/OPERATIONS.md](docs/OPERATIONS.md#verifying-a-defendsec-release) and the
+[changelog](CHANGELOG.md).
 
 ## Developers
 
