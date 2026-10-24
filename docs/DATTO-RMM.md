@@ -22,7 +22,7 @@ next to the agent-sourced ones. It is slice 8 of the [plan](DIRECTION.md).
   list (a typed UID that RMM does not list is refused). Changing the site retires the old site's devices.
 - **One RMM device = one DefendSec host**, keyed `rmm-<deviceUid>`, with `devices.source = 'rmm'`.
   RMM rows live in Postgres only; apid never loads them into the agent store, so no agent code path
-  (commands, isolation, heartbeat, the distro matcher) treats one as an enrolled agent.
+  (commands, heartbeat, the distro matcher) treats one as an enrolled agent.
 - **Same machine reported by the DefendSec agent as well:** matched on the BIOS serial number when both
   sides have a real one, otherwise on the short host name (an agent with a *different* real serial is
   another machine with a reused name; two candidates are ambiguous, and an ambiguous match is no

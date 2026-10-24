@@ -293,9 +293,9 @@ for what the Windows agent collects and what it cannot yet do.
 | Page | Use it for |
 | --- | --- |
 | **Fleet** | Counts and a host table |
-| **Hosts** | One machine: inventory, patches, integrity, signed response |
+| **Hosts** | One machine: inventory, patches, integrity, host commands (off unless enabled) |
 | **Enroll** | Copy the agent install command (admin only) |
-| **Exposure / Alerts** | The ranked exposure list and detections (Alerts needs Postgres, which packaged installs have) |
+| **Exposure / Alerts** | The ranked exposure list and alerts for file-integrity drift, failed configuration checks and vulnerabilities (Alerts needs Postgres, which packaged installs have) |
 | **Integrity** | File-hash drift |
 | **Policies** | Snapshot checks (check-in, firewall, encryption, …) |
 

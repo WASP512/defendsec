@@ -2,7 +2,7 @@
 
 Use this after a successful install. First-time setup is in [INSTALL.md](./INSTALL.md).
 
-DefendSec is inventory plus host detection. It is **not** MDM: no wipe, lock, DEP, profiles, or CSP.
+DefendSec is a proactive exposure-management tool: inventory, advisories, configuration checks and an outside-in surface scan. It is **not** an EDR (it detects and responds to nothing) and **not** MDM (no wipe, lock, DEP, profiles, or CSP).
 
 ---
 
@@ -289,30 +289,43 @@ DEFENDSEC_DATA_DIR="$PWD/data" DATABASE_URL=postgres://... ./scripts/backup.sh
 
 ---
 
-## Alerts and signed commands
+## Alerts and host commands
 
-- **Alerts** lists FIM, SCA, and vulnerability findings when Postgres is running (packaged installs include Postgres).
+- **Alerts** lists file-integrity drift, configuration-check failures and vulnerability findings
+  when Postgres is running (packaged installs include Postgres).
 - Acknowledge / resolve / reopen is admin-only.
-- Open FIM drift and SCA findings can auto-resolve when the host returns to baseline.
-- Host mutation is always Ed25519-signed: isolate, release, kill-by-name, live query, agent update, allowlisted scripts, quarantine path.
-- Isolate only drops network if the agent is root **and** `DEFENDSEC_ISOLATE_NET=1`. Otherwise it is a flag in the console.
-- **What network isolation allows** (Linux and Windows): the control plane — so the agent can
-  always reconnect and receive *release* — and nothing else, inbound or outbound. On Linux it also
-  allows loopback, DHCP (so the host keeps its address) and IPv6 neighbour discovery. Connections
-  that were open when the host was isolated are cut: accepting "established" traffic would have
-  kept the attacker's session alive.
-- On Linux it is an nftables table (`inet defendsec_isolate`), covering IPv4 and IPv6, replaced
-  atomically and effective alongside firewalld or ufw. Where `nft` is unavailable it falls back to
-  `iptables` and `ip6tables`, and refuses to isolate rather than leave IPv6 open. Isolation is
-  re-applied when the agent starts, so a reboot does not quietly release a host the console shows
-  as isolated. If that fails, the agent logs an error, the host's isolation message says network
-  isolation is not in effect, and it tries again at every start until it succeeds or the host is
-  released. A control plane configured by name is resolved when isolation is applied, and those
-  addresses are kept (`isolate-resolved.json` in the state directory) for a restart while isolated,
-  when DNS is blocked; they are deleted on release. `scripts/test-isolation-netns.sh` checks all of this against real traffic in
-  network namespaces, and runs in CI.
-- On Windows, connections already open when isolation starts are not cut, because Windows
-  Firewall evaluates connections when they are made.
+- Open drift and configuration-check findings resolve on their own when the host returns to its
+  baseline. A change to a watched file is also kept as a change event (the Integrity page), which
+  is evidence and does not open an alert of its own.
+- **Host commands are off by default.** DefendSec has two signed commands left, `live_query` (a
+  fixed list of read-only questions: listening ports, users, logged-in users, scheduled jobs,
+  services, mounts, OS) and `agent_update` (the agent downloads a binary, checks its SHA-256 and
+  replaces itself). There is no isolate, release, kill, quarantine or script command, and no policy
+  engine or approval flow in front of the two that remain. To enable them, name them and restart
+  `defendsec-apid`:
+
+  ```bash
+  # /etc/defendsec/apid.env
+  DEFENDSEC_ALLOW_COMMANDS=live_query,agent_update
+  ```
+
+  Only the admin role can issue them, an unnamed type is refused with a 403 and the refusal is
+  written to the audit ledger, every issued command is signed with the control-plane key, expires
+  after two minutes, and is attributed and chained. The agent acknowledgement is signed too.
+- **Upgrading from a build that had isolation.** Agents from before slice 6 re-applied network
+  isolation at start. This agent does not, and cannot release it. Release any isolated host
+  *before* upgrading its agent. If one was upgraded first, remove what the old agent added by hand
+  (names from the removed code, kept on `archive/action-governance`): on Linux the nftables table
+  (`nft delete table inet defendsec_isolate`) or, where it fell back to iptables, the jump rules
+  from `INPUT` and `OUTPUT` to the chains `DEFENDSEC_ISOLATE_IN` and `DEFENDSEC_ISOLATE_OUT` (in
+  both `iptables` and `ip6tables`) and then the chains; on Windows the two firewall rules
+  `DefendSec isolation - control plane` and `DefendSec isolation - block inbound`, and the profile
+  policy, which isolation set to block outbound too (`netsh advfirewall set allprofiles
+  firewallpolicy blockinbound,allowoutbound` is the usual default). The agent's state directory may
+  still hold `isolate-state.json`; it is no longer read. Settings for removed features (`DEFENDSEC_POLICY_FILE`,
+  `DEFENDSEC_PLAYBOOK_DIR`, `DEFENDSEC_SIGMA_DIR`, `DEFENDSEC_MCP_ADDR`, `DEFENDSEC_MCP_ORIGINS`,
+  `DEFENDSEC_ISOLATE_NET`, `DEFENDSEC_ETW`) are ignored, and apid logs a warning for the server
+  ones that are still set.
 
 ---
 
@@ -359,172 +372,6 @@ curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
 It reports the configured windows **and how much history is really held**. That second number is
 the one an assessor wants: retention configuration does not create history that was never
 recorded, so a one-year policy on a system installed last month evidences one month.
-
----
-
-## Response policy
-
-Before Phase 2, an admin token could issue any command to any host. Now a **deny-by-default policy
-engine sits between the API and the signer**: a command no rule permits is never signed, so it
-cannot run even if the console is bypassed entirely — the agent checks a signature that was never
-produced. A UI that hides a button enforces nothing; an unsigned command is inert.
-
-```bash
-DEFENDSEC_POLICY_FILE=/etc/defendsec/policy.yaml
-```
-
-**Without this set, every host command is refused.** That is the correct posture for an
-unconfigured response tool, and apid says so loudly at startup. Start from the shipped example:
-
-```bash
-sudo cp /opt/defendsec/packaging/policy/default.yaml /etc/defendsec/policy.yaml
-```
-
-Keep it in version control. "Who changed this rule, and when" is the first question asked after a
-command that should not have been permitted, and a policy editable only through a web form has no
-answer. A file that fails to parse **refuses to start** rather than half-loading — the rules that
-failed to parse are exactly the ones nobody notices are missing — and a misspelled key is an error,
-because silently dropping `host_clases` turns a narrow rule into a fleet-wide one.
-
-### How rules are evaluated
-
-1. Any matching **deny** wins, regardless of where it sits in the file. Order-dependent policy is
-   policy nobody can reason about.
-2. Otherwise the **strictest matching permit** applies, so adding a permissive rule never silently
-   removes an approval requirement.
-3. If nothing matches, the command is **denied**.
-
-```yaml
-rules:
-  - id: isolate-production-needs-two
-    effect: permit
-    commands: [isolate]
-    roles: [admin]
-    host_classes: [production]
-    require_approvals: 2
-
-  - id: never-disrupt-domain-controllers
-    effect: deny
-    commands: [kill_process, quarantine_path, run_script]
-    host_classes: [domain-controller]
-    reason: >-
-      A domain controller losing a process takes estate-wide authentication
-      down. Isolate it instead.
-
-limits:
-  - id: isolate-fleet-hourly
-    commands: [isolate]
-    scope: fleet      # fleet is the default; a per-host cap would let a
-    max: 5            # runaway isolate the estate one host at a time
-    per: 1h
-```
-
-A `reason` is **required** on every deny rule and is returned to whoever the rule stops. A refusal
-that says only "forbidden" produces a support ticket and then a request for a bypass; one that
-names the rule produces a conversation about the rule.
-
-### Host classes
-
-Rules match on classes carried by the host, so they stay correct as the estate changes:
-
-```bash
-curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{"deviceId":"<id>","classes":["production","critical"]}' \
-  http://127.0.0.1:47264/v1/policy/host-classes
-```
-
-Reclassifying a host changes what policy permits against it, so it is an authorisation change and
-is recorded in the ledger.
-
-### Two-person integrity
-
-A command whose rule sets `require_approvals: 2` comes back `202 Accepted` and is stored
-**unsigned** — deliberately not a signed command with a pending flag, so flipping a status column
-in the database yields nothing an agent will execute. Approvals are keyed on (request, actor), so
-the same administrator clicking twice is one approval.
-
-```bash
-curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  http://127.0.0.1:47264/v1/policy/approvals
-
-curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  -H 'content-type: application/json' -d '{"pendingId":"<id>"}' \
-  http://127.0.0.1:47264/v1/policy/approvals
-```
-
-On the final approval the command is **re-evaluated against policy** before signing. Minutes have
-passed: a limit may now be exhausted, a window may have closed, the host may have been
-reclassified. Requests expire after 30 minutes, because one that never expires is a way to get a
-command signed weeks later under conditions nobody re-examined.
-
-### Break-glass
-
-A time-boxed bypass for an emergency policy did not anticipate:
-
-```bash
-curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{"justification":"active ransomware on the finance segment","minutes":30}' \
-  http://127.0.0.1:47264/v1/policy/break-glass
-```
-
-A written justification of at least 20 characters is required and is shown to every administrator
-as an undismissable banner until it expires. Maximum four hours — an emergency lasting longer is a
-situation, and a situation should have a rule.
-
-**Two things it does not override**, by design:
-
-- **An explicit deny.** A bypass is for reaching what policy never anticipated, not for doing the
-  one thing it went out of its way to forbid.
-- **A two-person requirement.** The whole point of that control is that one person cannot act
-  alone; a bypass one person can open would remove it.
-
-### Playbooks
-
-Named, reviewable sequences in `DEFENDSEC_PLAYBOOK_DIR`:
-
-```bash
-DEFENDSEC_PLAYBOOK_DIR=/etc/defendsec/playbooks
-```
-
-A playbook is **not an authority**. Every step is signed and policy-checked individually, at the
-moment it runs, against the host it targets — a sequence that executed three commands on one
-policy decision would be a way to smuggle past the engine. A step that is refused or needs a
-second approver **halts the run** rather than being skipped: skipping quietly turns a four-step
-response into a three-step one, and the missing step is usually the dangerous one.
-
-Steps can reference the triggering finding (`{{alert.path}}`, `{{alert.deviceId}}`, and so on).
-A placeholder must be the **whole value**, never embedded in a longer string — these paths come
-from files on a possibly-compromised host, and interpolating one into a payload would let a
-crafted filename rewrite the rest of the command.
-
-### Automatic response
-
-Setting `automatic: true` on a playbook lets it run without anyone pressing a button. Three gates
-must all agree: the playbook opts in, its trigger matches, and **policy permits every step**. The
-human confirmation is replaced by policy, not removed. A second brake suppresses repeat automatic
-runs of the same playbook on the same host for an hour, which stops the loop where a playbook
-triggers on a finding it caused.
-
-The shipped example that runs automatically only performs a `live_query`. Nothing that changes
-state ships as automatic, and you should hold anything you add to the same bar until you trust the
-trigger on your own estate.
-
-### Reviewing decisions
-
-Every evaluation, permit and deny alike, goes to the tamper-evident ledger with the SHA-256 of the
-policy document that made it — so "what did the policy say at the time" is answerable from the
-ledger rather than from what is on disk today. The **Response** page shows the rules, the pending
-approvals and the recent decisions.
-
-```bash
-curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  'http://127.0.0.1:47264/v1/policy/decisions?effect=deny'
-```
-
-Denials are the half that matters after an incident. "Did anyone try" is a question only a
-deny-by-default engine can answer.
 
 ---
 
@@ -622,111 +469,15 @@ openssl ts -verify -in token.tsr -data hash.bin -CAfile tsa-roots.pem
 
 ---
 
-## Behavioural detection
-
-DefendSec watches what hosts *do*, not only what state they are in. Process events are matched
-against Sigma rules, and a match becomes an alert carrying the process lineage that led to it —
-which a state-based check cannot provide, because by the time a file hash changes the process that
-changed it has usually exited.
-
-```bash
-# /etc/defendsec/apid.env
-DEFENDSEC_SIGMA_DIR=/opt/defendsec/packs/sigma
-```
-
-Rules are [Sigma](https://sigmahq.io/), so rules from community repositories work as they are.
-Unlike policy and configuration packs, a rule that will not compile is **skipped rather than
-fatal** — a rule directory is routinely a synced copy of thousands of community rules, a fraction
-of which use features no single engine implements, and refusing to start because of an unrelated
-one would leave you with no detection at all. Skipped rules are logged individually and listed in
-the coverage view.
-
-Not implemented, and refused at load rather than silently mis-evaluated: aggregation conditions
-(`| count() > 5`), unknown field modifiers, and references to selections that do not exist. Each
-would otherwise compile into something that means a different thing.
-
-### What the sensor can and cannot see
-
-There are two sensors, and which one you get changes your coverage materially. The agent logs
-which it chose at startup, along with its limitations, and the coverage view shows the capability
-of the one actually running.
-
-**eBPF (`ebpf-exec`) — preferred.** Hooks the execve tracepoints and sees *every* successful exec,
-with the argument vector as the caller passed it. Requirements:
-
-- Linux **5.8 or later**, for BPF ring buffers.
-- Kernel **BTF** (`CONFIG_DEBUG_INFO_BTF`, i.e. `/sys/kernel/btf/vmlinux` exists).
-- Privilege to load a program — root, or `CAP_BPF` + `CAP_PERFMON`, plus `CAP_SYS_RESOURCE` on
-  kernels before 5.11.
-- **tracefs mounted** at `/sys/kernel/tracing`. systemd mounts it by default; minimal containers
-  often do not.
-
-What it still cannot see: execve only, so a `fork` with no following exec is not reported, and nor
-are `execveat` callers. The first 16 arguments are recorded, 128 bytes each — longer vectors are
-**flagged truncated in the event**, never silently clipped. Network connections, file writes,
-privilege transitions and module loads have no sensor at all.
-
-**`/proc` polling (`proc-poll`) — fallback.** Used when any requirement above is unmet. The agent
-logs the specific reason at **warning** level, because this is a real reduction in coverage:
-
-- It **samples**, every 250ms. A process that starts and exits between samples is never seen —
-  and `curl … | sh` is short-lived. This is not a tuning problem; it is what sampling means.
-- It reads the command line after the process started, so a process that rewrites its own argv is
-  recorded as it rewrote itself.
-- Same missing kinds as above.
-
-If you see `eBPF sensor unavailable` in the agent log, the `reason` field names the specific
-requirement that was not met. Fixing it is usually worth doing: the gap between the two sensors is
-exactly the class of short-lived, scripted execution that matters most.
-
-To rebuild the BPF object after editing `internal/sensor/bpf/exec.bpf.c`:
-
-```bash
-apt install clang llvm libbpf-dev   # or: dnf install clang llvm libbpf-devel
-make bpf
-```
-
-The compiled object is committed, so building the agent itself needs none of that.
-
-### Coverage, blind spots first
-
-```bash
-curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  http://127.0.0.1:47264/v1/detection/coverage
-```
-
-It reports the event kinds no agent has actually reported, the rules that failed to load with
-their reasons, and the hosts that have dropped events — before it reports what is covered. A
-technique having a rule does not mean every way of performing that technique is detected; ATT&CK
-techniques are broad and a rule covers a behaviour.
-
-The console renders the same thing under **Detection**, in the same order, and deliberately without
-a coverage percentage: ATT&CK has no denominator that would make one honest, and a percentage is
-where a blind spot disappears into a rounding error. The cell worth looking at first is an event
-kind with rules and no sensor reporting it — those rules are loaded, and they cannot fire. Viewers
-can read the page; the forwarding section is admin-only, because destination addresses are part of
-your infrastructure map.
-
-### Dropped events
-
-The agent's event buffer drops rather than blocking. That is deliberate: if it applied
-backpressure, a slow server would become a slow host, and a sensor that destabilises the host gets
-uninstalled — at which point coverage is zero rather than degraded.
-
-Drops are **counted**, logged, written to the ledger and shown per host in the coverage view. A
-pipeline that drops silently produces a clean console during exactly the incident that overwhelmed
-it. If you see drops, the fix is usually fewer, more specific rules rather than a bigger buffer.
-
----
-
 ## Forwarding — DefendSec is not a SIEM
 
-A behavioural sensor produces thousands of events a second. Storing them all would make DefendSec
-a log lake: a different product, with a storage bill you are already paying somewhere else.
+DefendSec keeps its own findings and does not collect logs or events, so there is nothing to store
+beyond them. What it forwards is the alert table: **file-integrity drift, configuration-check
+failures and vulnerability findings**, to the platform you already run.
 
-So DefendSec keeps a **short window** — a few hundred events per host, enough to answer "what else
-was this host doing just before" on an alert — and forwards everything to the platform you already
-run.
+This does *not* include the audit ledger, nor the exposure findings of the external surface
+scanner, the Microsoft 365 identity collector or repository health. Those are in the console and
+in the signed evidence export, and are not forwarded yet.
 
 ```bash
 # /etc/defendsec/apid.env
@@ -738,24 +489,23 @@ DEFENDSEC_FORWARD='syslog=tcp://collector:514,webhook=https://siem.example/inges
 | `syslog` | `tcp://host:514`, `tls://host:6514`, `udp://host:514` | RFC 5424, `local0`, JSON payload, RFC 6587 octet framing. TCP by default — UDP discards silently under load, which is the wrong property for a security record |
 | `cef` | `tcp://host:514`, `tls://host:6514`, `udp://host:514` | The same syslog transport, carrying ArcSight Common Event Format, for SIEMs that parse CEF natively. Header and extension escaping follow the CEF specification, so a pipe in a hostname cannot shift fields |
 | `webhook` | `https://host/path#token` | Batched JSON POST; the token is sent as a bearer credential |
-| `slack` | `https://hooks.slack.com/services/…#min=high` | **Alerts only**, at or above `min` (default `high`), at most ten per post with a count of the rest. Events are never posted: a channel that receives every process execution is a channel everyone mutes |
+| `slack` | `https://hooks.slack.com/services/…#min=high` | At or above `min` (default `high`), at most ten per post with a count of the rest: a channel that receives everything is a channel everyone mutes |
 | `teams` | `https://….logic.azure.com/workflows/…#min=high` | As `slack`, as an Adaptive Card for a Teams Workflows webhook |
 | `otlp` | `https://collector:4318#TOKEN` or `#Authorization=Bearer%20x,x-tenant=a` | OpenTelemetry log records over OTLP/HTTP JSON to `/v1/logs`. A collector's partial rejection counts as a failure, not a success |
-| `file` | `/var/log/defendsec-events.jsonl` | JSON lines. Useful for proving the pipeline before pointing it at a collector, and for air-gapped hosts |
+| `file` | `/var/log/defendsec-alerts.jsonl` | JSON lines. Useful for proving the pipeline before pointing it at a collector, and for air-gapped hosts |
 
 Destination names in the status report never include a webhook secret or token.
 
 **Forwarding is lossy on purpose.** A collector that stops accepting connections must not stop
-DefendSec matching rules or raising alerts — a tool that stops defending because its log shipper
-is unhappy has its priorities backwards. Drops and delivery failures are counted:
+DefendSec processing inventory or raising alerts. Drops and delivery failures are counted:
 
 ```bash
 curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  http://127.0.0.1:47264/v1/detection/forwarding
+  http://127.0.0.1:47264/v1/forwarding
 ```
 
-Every alert is forwarded, not only behavioural ones: for many operators the collector is the
-system of record, and a finding that exists only in DefendSec is one their process will not see.
+Every alert is forwarded: for many operators the collector is the system of record, and a finding
+that exists only in DefendSec is one their process will not see.
 
 ---
 
@@ -769,7 +519,7 @@ send it as a bearer token.
 
 | Metric | What |
 | --- | --- |
-| `defendsec_devices{platform,state}` | Enrolled, online and isolated hosts |
+| `defendsec_devices{platform,state}` | Enrolled and online hosts |
 | `defendsec_grpc_requests_total{method,code}`, `defendsec_grpc_request_duration_seconds` | Agent RPCs |
 | `defendsec_admin_http_requests_total{route,code}`, `defendsec_admin_http_request_duration_seconds` | Admin API, by route pattern |
 | `defendsec_alerts_created_total{kind,severity}` | Alerts raised |
@@ -1104,276 +854,6 @@ Sign in with `data/admin-token.txt`. Enroll:
 ```
 
 Fedora-specific lab notes: [FEDORA.md](./FEDORA.md).
-
----
-
-## AI agents — read freely, propose, never act
-
-DefendSec can be driven by an AI agent over [MCP](https://modelcontextprotocol.io). The pitch is
-not "AI-powered security": it is that **DefendSec is the enforcement layer that makes AI-initiated
-response safe and provable.** An agent connected here cannot exceed the bounded command set, cannot
-bypass the policy engine, cannot sign its own authority, and cannot act without leaving a
-cryptographic record.
-
-**DefendSec does not call a model.** It is an MCP *server*. Your agent runs wherever you run it and
-connects inward. There is no API key to configure, no outbound dependency on any AI service, and no
-path by which fleet data leaves the box to a model provider.
-
-### Turning it on
-
-Off by default — an MCP endpoint is a control surface, and one listening by default is an attack
-surface you did not ask for.
-
-```bash
-# /etc/defendsec/apid.env
-DEFENDSEC_MCP_ADDR=127.0.0.1:47266
-# Only needed if a browser-based client will connect. Non-browser clients send
-# no Origin and need no entry here.
-DEFENDSEC_MCP_ORIGINS=https://console.example
-```
-
-It needs a configured database, because agent principals live there. It gets its own listener
-rather than a path on the admin API so you can bind, firewall and log it separately — an agent
-often runs somewhere the admin port deliberately is not reachable from.
-
-### Registering an agent
-
-```bash
-curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{"name":"triage","model":"some-model-v1","description":"alert triage"}' \
-  http://127.0.0.1:47264/v1/agents
-```
-
-The token comes back **once** and is not recoverable: only its hash is stored, so a database copy
-yields no working credential. The `model` field is required — the audit value of all this is being
-able to answer "what recommended this action", and an agent with no declared model makes that
-unanswerable from the start. It is self-reported, and the ledger says so rather than implying an
-attestation DefendSec cannot make.
-
-Revoke with `DELETE /v1/agents?name=triage`. The record is kept rather than deleted, so the ledger
-still shows the principal existed and when it was withdrawn.
-
-### An agent is not a user
-
-Agent principals are a separate table, not a role on accounts. This matters more than it sounds:
-
-- An agent token presented to the admin API resolves to **no caller at all**, not to an
-  under-privileged one. There is no code path by which an agent becomes an admin.
-- An agent cannot log into the console.
-- Policy rules can name agents — `roles: [agent]` — so what an agent may propose is yours to
-  configure, separately from what your operators may do.
-
-### What policy needs to say
-
-**Deny-by-default extends to the AI.** A policy permitting your admins and saying nothing about
-agents permits an agent nothing. To let one propose, say so:
-
-```yaml
-rules:
-  - id: agents-may-propose-containment
-    effect: permit
-    roles: [agent]
-    commands: [live_query, isolate, quarantine_path]
-```
-
-`run_script` and `agent_update` are not proposable at all, whatever your policy says. The first is
-arbitrary code; the second replaces the agent that enforces everything else.
-
-### The proposal path
-
-1. The agent calls `defendsec.propose_response` with a command type, a target, its reasoning, and
-   the record ids it relied on.
-2. Policy is evaluated **immediately**, as role `agent`. A refusal names the rule that decided and
-   nothing is recorded as pending.
-3. If permitted, the proposal is written **unsigned** to the approval queue with at least one human
-   approval required — even where the policy would have let a human act with no approval at all.
-4. An operator reviews it and approves. Only then is a command signed.
-
-Three properties worth knowing because they are load-bearing:
-
-- **The agent's own approval does not count.** A human requester self-approves; an agent does not.
-  Otherwise a one-approval rule would let an AI act unsupervised.
-- **Approval does not promote the request.** An approved proposal is re-evaluated as role `agent`,
-  not as the approving admin — so a rule written to bound agents still binds at signing time. If
-  approval promoted it, clicking approve would walk the proposal past the very rule meant to
-  constrain it.
-- **Break-glass does not widen it.** An emergency bypass is a human declaring an emergency. It does
-  not extend what an agent may propose.
-
-### Reviewing a proposal
-
-The console's **Proposals** page lists every unsigned proposal with the model's reasoning, the
-evidence it cited, the prompt it says it was given, the policy rule that permitted it, and the exact
-command and payload. The approve and reject controls sit *after* the case, not before it.
-
-Proposals deliberately do **not** appear in the Response page's generic approvals queue. They are
-the same kind of object as a human request awaiting a second approver — neither is signed — but a
-proposal shown as a bare pending command invites approving it without reading the argument, which is
-the one failure this page exists to prevent. The Response page links across instead.
-
-Approving re-evaluates policy at the moment of signing, so an approval is not a guarantee the
-command will issue: if the policy narrowed, a blast-radius limit filled, or the host was
-reclassified in between, it is refused and the refusal is recorded.
-
-### What the ledger records
-
-Every proposal, permitted or denied, lands in the hash-chained audit log with the proposing agent,
-its declared model, its reasoning verbatim, the evidence it cited, and the prompt it says it was
-given — alongside the approving human once one approves. That is what lets an auditor reconstruct
-not just what was done, but what recommended it.
-
-`defendsec verify` validates the whole chain, proposals included.
-
----
-
-## Triage assistance — correlation, not a model
-
-DefendSec explains its own alerts by correlating its own records. No model is involved, nothing is
-sent anywhere, and it keeps working when the network is the thing under attack.
-
-```bash
-# Explain one alert
-curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  'http://127.0.0.1:47264/v1/triage?alertId=<id>'
-
-# Summarise the open queue
-curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  'http://127.0.0.1:47264/v1/triage?status=open'
-
-# A host's observed package history
-curl -sS -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  'http://127.0.0.1:47264/v1/packages/changes?deviceId=<id>'
-```
-
-### File-integrity drift
-
-A file-integrity alert is correlated against the changed file's owning package and the host's
-observed package history. Five verdicts:
-
-| Verdict | Meaning |
-|---|---|
-| `package-upgrade` | A package that owns this path was upgraded inside the window. The ordinary explanation. |
-| `package-activity` | Packages changed nearby, but **none owns this file**. Not an explanation. |
-| `local-change` | The path belongs to no package, so an upgrade cannot be the cause. Somebody edited it. |
-| `unexplained` | Nothing on the host accounts for it. **This is the one to read.** |
-| `unknown-ownership` | The path is not in the ownership map, so nothing was ruled in or out. |
-
-**It explains; it does not resolve.** A package upgrade immediately before a security-relevant
-config file changes is both the most common innocent explanation and exactly the cover an attacker
-would choose. Every explanation carries a caveat and the checks that would actually settle it, and
-there is no auto-resolve — the `autoResolvable` field is always false so nothing downstream can
-treat a confident verdict as permission to close the alert.
-
-Package history needs a configured database. Without one the verdict reflects the absence of data,
-not the absence of an upgrade, and says so.
-
-### Path ownership
-
-Resolved from a curated map covering the paths DefendSec watches by default, with drop-in files
-inheriting their directory's owner (`/etc/ssh/sshd_config.d/99-hardening.conf` → `openssh-server`).
-Anything outside the map returns **no owner** rather than a guess: a wrong owner would produce a
-confident explanation of the wrong thing.
-
-If you watch extra paths via `DEFENDSEC_FIM_PATHS`, expect `unknown-ownership` on them. Asking the
-package manager directly (`dpkg -S`, `rpm -qf`) is the authoritative answer and is not yet wired
-into the agent.
-
-### Summarisation
-
-Groups alerts on (kind, title) — crude on purpose. A cleverer similarity measure would group things
-that merely look alike, and a cluster that silently swallowed an unrelated alert is worse than a
-longer list. Alerts that group with nothing else are listed separately: on a busy fleet those are
-usually the ones worth reading, and a queue sorted by time buries them.
-
-A finding that appears on many hosts at once is usually one change rolling across the fleet rather
-than N separate incidents, and the summary says so.
-
-### Follow-up queries
-
-Suggested only from **your own saved queries**, never generated. The live-query surface is an
-allowlist so arbitrary queries cannot be run; a suggested query DefendSec invented would route
-around that allowlist using your credentials.
-
----
-
-## Bounded autonomy — letting an agent act
-
-By default an agent proposes and **never acts**. Autonomy is opt-in and needs **two** switches on at
-once. Both default to off.
-
-### Switch one: the policy rule
-
-```yaml
-rules:
-  - id: agents-may-query
-    effect: permit
-    roles: [agent]
-    commands: [live_query]
-    autonomous: true
-
-limits:
-  - id: query-fleet-hourly
-    commands: [live_query]
-    scope: fleet
-    max: 20
-    per: 1h
-```
-
-Three things are refused when the policy **loads**, so a policy that cannot be safe does not start:
-
-- autonomy on a `deny` rule;
-- autonomy together with `require_approvals` above one;
-- **autonomy over a command no limit covers.** A wildcard rule needs a wildcard limit, and
-  `max: 0` forbids rather than bounds, so it does not count as a ceiling.
-
-**Put autonomy on the only rule matching that command.** Where two permits match, the one
-*withholding* autonomy wins — so a broad non-autonomous rule silently shadows a narrower autonomous
-one. The shipped policy gives `live_query` its own rule for exactly this reason.
-
-### Switch two: the principal
-
-```bash
-curl -sS -X POST -H "Authorization: Bearer $DEFENDSEC_ADMIN_TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{"name":"triage","enabled":true}' \
-  http://127.0.0.1:47264/v1/agents/autonomy
-```
-
-Withdraw it by sending `"enabled": false`. That is the fast revocation path: it stops one agent
-immediately, takes effect on its next call, and touches nothing that governs the others. Revoking
-the principal entirely (`DELETE /v1/agents?name=triage`) also stops autonomy.
-
-A revoked principal cannot be *granted* autonomy — the row would be inert but self-contradictory.
-Withdrawing from a revoked principal does work, because an operator pulling autonomy from something
-dormant should succeed.
-
-### What autonomy does not change
-
-- **Blast-radius limits still bite**, counted exactly as for a human-issued command. An autonomous
-  agent sweeping the fleet stops at its configured ceiling.
-- **Deny-by-default still applies.** A command no rule permits is refused.
-- **Break-glass does not widen it.** An emergency is a human declaring an emergency.
-- **The signing path is unchanged** — same key, same envelope, same ledger.
-
-Autonomy removes the human from the loop and removes nothing else.
-
-### What to automate first
-
-Read-only queries. The worst outcome of getting a `live_query` wrong is noise; the worst outcome of
-getting an `isolate` wrong is an outage you caused yourself. The shipped policy deliberately
-contains no autonomous rule for `isolate` — an agent that can take hosts off the network unattended
-is a denial-of-service tool with good intentions.
-
-### Finding autonomous actions in the ledger
-
-They are recorded as `agent_autonomous_action`, not the generic `command_issue`, so "what did the AI
-do by itself" is a filter rather than an inference. The entry carries the model, the rule, the
-reasoning, the evidence cited, and who granted the autonomy. The command's actor is the agent —
-never a human who did not authorise it.
-
-When a proposal waits instead of running, the ledger records **which switch was off**, so an
-operator who expected autonomy does not have to read two configuration sources to find out why.
 
 ---
 
