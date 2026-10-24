@@ -842,14 +842,14 @@ screenshots of every surface the card asks for are in `docs/screenshots/`:
 | 5 | `go test -race -p 1 -count=1 ./internal/evidence ./internal/exposure ./internal/storepg ./internal/control ./internal/surface` | all `ok`, no race |
 | 6 | `govulncheck ./...` | "Your code is affected by 0 vulnerabilities" (one vulnerability in a required module that the code does not call, as before) |
 | 7 | `scripts/check-reproducible.sh` | green |
-| 8 | `npm test` | `# tests 142 / # pass 142 / # fail 0` (121 before; new: 7 in `lib/exposure-model.test.ts`, 14 in `lib/surface-exposure.test.ts`) |
+| 8 | `npm test` | `# tests 142 / # pass 142 / # fail 0` (121 before; new: 6 in `lib/exposure-model.test.ts`, 15 in `lib/surface-exposure.test.ts`) |
 | 9 | `npm run lint`, `npx tsc --noEmit -p .`, `npm run build` | clean, clean, green |
 
 ### Tests added
 
 - `internal/exposure` (4): the mixed order, a surface row ignoring KEV/EPSS/CVSS it was handed, KEV above an exposed port, the
   score table.
-- `internal/storepg/surface_exposure_test.go` (10, throwaway databases): the mixed list in the order the rule gives
+- `internal/storepg/surface_exposure_test.go` (12, throwaway databases): the mixed list in the order the rule gives
   (a KEV vulnerability, critical and high ports and SPF, then EPSS, then DMARC `p=none` between the CVSS-6 and CVSS-4
   vulnerabilities, then the low CAA finding; info never listed); the SQL order equals `exposure.Compare` and paging by keyset
   at limits 1, 2, 4 and 200 returns every row once; surface never in the watch list or `kevOnly`; resolved findings move to the
@@ -860,7 +860,7 @@ screenshots of every surface the card asks for are in `docs/screenshots/`:
   scan, a closed gap not counted as open, no leak into the vulnerability series); the evidence export verifying on a real
   database and failing on an edited observation and on a moved open date; unattested scans named, not failed; and day
   boundaries under a `America/Denver` session.
-- `internal/evidence/surface_test.go` (12): attested scans and recomputed intervals; five ways to alter a finding's dates and
+- `internal/evidence/surface_test.go` (10): attested scans and recomputed intervals; five ways to alter a finding's dates and
   eight ways to alter an observation, a change or a scan, each failing; reformatted JSON hashing the same; a withheld scan; an
   unattested scan; an edited provenance sentence; no surface check without a section; a failed scan not cascading into its
   asset's findings.
@@ -928,4 +928,4 @@ now present), unattested counted as attested: each made at least one test fail.
 | Surface summary card, trend series | linux, Postgres 16 | storepg + control integration, npm | see handoff | seeded data in a browser |
 | Surface drawer with raw observation | linux, Postgres 16 | storepg + control integration | see handoff | seeded data in a browser |
 | Reopened finding keeps its closed gap (migration 025) | linux, Postgres 16 | integration test | see handoff | not observed on a real domain |
-| Scan digest chained in the audit log; surface section verified by `defendsec-verify` | linux, Postgres 16 | evidence unit tests (12) + storepg/control integration | see handoff | exported by a real apid handler (fake resolver); verifier binary run on it, intact and three tampered ways |
+| Scan digest chained in the audit log; surface section verified by `defendsec-verify` | linux, Postgres 16 | evidence unit tests (10) + storepg/control integration | see handoff | exported by a real apid handler (fake resolver); verifier binary run on it, intact and three tampered ways |
