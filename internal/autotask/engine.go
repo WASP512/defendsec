@@ -77,6 +77,7 @@ func sourceOf(key string) string {
 
 // env is what the execute phase needs.
 type env struct {
+	tf                         client.Fields
 	set                        Settings
 	now                        time.Time
 	verified, live             bool
@@ -146,6 +147,7 @@ func (e *Engine) Run(ctx context.Context, set Settings, findings []Finding, mode
 	}
 	res.Verified = v.verified
 	if v.verified {
+		v.tf = tf
 		if l := tf["title"].Length; l > 0 {
 			v.titleMax = l
 		}
@@ -427,6 +429,10 @@ func tally(r *Result) {
 			r.Noted++
 		case OpComplete:
 			r.Completed++
+		case OpFlag:
+			if strings.Contains(o.Reason, "was completed in Autotask while") || strings.Contains(o.Reason, "was not found in Autotask") {
+				r.Flagged++
+			}
 		}
 	}
 }
@@ -542,7 +548,7 @@ func (e *Engine) payload(g Group, tag string, gen int, v env) client.TicketCreat
 	src, _ := pickInt(set.Source)
 	it, _ := pickInt(set.IssueType)
 	sub, _ := pickInt(set.SubIssueType)
-	due := v.now.AddDate(0, 0, set.DueDays(g.Urgency))
+	due := v.now.AddDate(0, 0, set.DueDays(g.Urgency)).Truncate(time.Second)
 	return client.TicketCreate{
 		CompanyID:    set.CompanyID,
 		Title:        TitleWithTag(g.Title, tag, v.titleMax),
@@ -571,7 +577,31 @@ func (e *Engine) createOp(p *plan, v env) Op {
 		reason = fmt.Sprintf("A new ticket (number %d for this action): the earlier one was completed in Autotask.", p.gen)
 	}
 	return Op{Kind: OpCreate, Status: OpPlanned, GroupKey: p.group.Key, Tag: tag, Urgency: p.group.Urgency, Title: pl.Title,
-		Create: &pl, Members: len(p.group.Members), Reason: reason}
+		Create: &pl, Labels: pickLabels(v.tf, pl), Members: len(p.group.Members), Reason: reason}
+}
+
+// pickLabels names the picklist values of a ticket as Autotask's live lists do.
+func pickLabels(tf client.Fields, pl client.TicketCreate) map[string]string {
+	if tf == nil {
+		return nil
+	}
+	out := map[string]string{}
+	add := func(key, field string, val *int64) {
+		if val == nil {
+			return
+		}
+		if l := tf.Label(field, strconv.FormatInt(*val, 10)); l != "" {
+			out[key] = l
+		}
+	}
+	add("queue", "queueID", pl.QueueID)
+	add("source", "source", pl.Source)
+	add("issueType", "issueType", pl.IssueType)
+	add("subIssueType", "subIssueType", pl.SubIssueType)
+	st, pr := pl.Status, pl.Priority
+	add("status", "status", &st)
+	add("priority", "priority", &pr)
+	return out
 }
 
 func (e *Engine) flagOp(p *plan) Op {

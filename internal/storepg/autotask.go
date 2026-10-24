@@ -461,6 +461,7 @@ type AutotaskRun struct {
 	Completed     int           `json:"completed"`
 	Failed        int           `json:"failed"`
 	Deferred      int           `json:"deferred"`
+	Flagged       int           `json:"flagged"`
 	Problems      []string      `json:"problems"`
 	Ops           []autotask.Op `json:"ops"`
 }
@@ -507,7 +508,7 @@ func (s *Store) RecordAutotaskRun(ctx context.Context, trigger string, started t
 	probJSON, _ := json.Marshal(res.Problems)
 	run := AutotaskRun{Mode: res.Mode, TriggeredBy: trigger, StartedAt: started, FinishedAt: finished, Status: res.Status(), Verified: res.Verified,
 		UnverifiedWhy: why, Fingerprint: res.Fingerprint, CompanyName: res.CompanyName, Requests: res.Requests, Groups: res.Groups, Below: res.BelowThreshold,
-		Created: res.Created, Noted: res.Noted, Completed: res.Completed, Failed: res.Failed, Deferred: res.Deferred, Problems: res.Problems, Ops: res.Ops}
+		Created: res.Created, Noted: res.Noted, Completed: res.Completed, Failed: res.Failed, Deferred: res.Deferred, Flagged: res.Flagged, Problems: res.Problems, Ops: res.Ops}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return run, err
@@ -515,10 +516,10 @@ func (s *Store) RecordAutotaskRun(ctx context.Context, trigger string, started t
 	defer tx.Rollback(ctx) //nolint:errcheck
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO autotask_runs (mode, triggered_by, started_at, finished_at, status, verified, unverified_why, fingerprint, company_name, requests, groups,
-			below_threshold, created, noted, completed, failed, deferred, problems, ops)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19::jsonb) RETURNING id`,
+			below_threshold, created, noted, completed, failed, deferred, flagged, problems, ops)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb) RETURNING id`,
 		run.Mode, trigger, started, finished, run.Status, run.Verified, why, run.Fingerprint, run.CompanyName, run.Requests, run.Groups, run.Below,
-		run.Created, run.Noted, run.Completed, run.Failed, run.Deferred, string(probJSON), string(opsJSON)).Scan(&run.ID); err != nil {
+		run.Created, run.Noted, run.Completed, run.Failed, run.Deferred, run.Flagged, string(probJSON), string(opsJSON)).Scan(&run.ID); err != nil {
 		return run, err
 	}
 	action := "autotask_run"
@@ -538,13 +539,13 @@ func (s *Store) RecordAutotaskRun(ctx context.Context, trigger string, started t
 }
 
 const autotaskRunCols = `id, mode, triggered_by, started_at, finished_at, status, verified, unverified_why, fingerprint, company_name, requests, groups,
-	below_threshold, created, noted, completed, failed, deferred, problems, ops`
+	below_threshold, created, noted, completed, failed, deferred, flagged, problems, ops`
 
 func scanAutotaskRun(row pgx.Row) (AutotaskRun, error) {
 	var r AutotaskRun
 	var problems, ops []byte
 	if err := row.Scan(&r.ID, &r.Mode, &r.TriggeredBy, &r.StartedAt, &r.FinishedAt, &r.Status, &r.Verified, &r.UnverifiedWhy, &r.Fingerprint, &r.CompanyName,
-		&r.Requests, &r.Groups, &r.Below, &r.Created, &r.Noted, &r.Completed, &r.Failed, &r.Deferred, &problems, &ops); err != nil {
+		&r.Requests, &r.Groups, &r.Below, &r.Created, &r.Noted, &r.Completed, &r.Failed, &r.Deferred, &r.Flagged, &problems, &ops); err != nil {
 		return r, err
 	}
 	r.Problems, r.Ops = []string{}, []autotask.Op{}

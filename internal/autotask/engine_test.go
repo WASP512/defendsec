@@ -455,6 +455,9 @@ func TestATechnicianClosingTheTicketIsRespected(t *testing.T) {
 	if len(fl) != 1 || fl[0].Status != OpDone || !strings.Contains(fl[0].Reason, "was completed in Autotask while 1 member is still open") {
 		t.Fatalf("ops = %+v", res.Ops)
 	}
+	if res.Flagged != 1 {
+		t.Errorf("flagged = %d", res.Flagged)
+	}
 	if len(r.srv.Tickets()) != 1 || len(r.srv.Notes(tk.ID)) != 0 || r.store.row("vuln|openssl", 1).State != StateClosedInPSA {
 		t.Fatal("DefendSec reopened, noted on or duplicated a ticket a person had closed")
 	}
@@ -759,4 +762,20 @@ func samePayload(a, b client.TicketCreate) bool {
 	x, _ := json.Marshal(a)
 	y, _ := json.Marshal(b)
 	return string(x) == string(y)
+}
+
+func TestOpsNameThePicklistValuesWhenAutotaskWasRead(t *testing.T) {
+	r := newRig(t)
+	r.findings = []Finding{hostsFinding("web-01", "openssl", "CVE-1", true)}
+	res := r.run(ModeDryRun)
+	l := ops(res, OpCreate)[0].Labels
+	if l["queue"] != "Security Test Queue" || l["priority"] != "P1 Urgent" || l["status"] != "New" || l["source"] != "DefendSec" ||
+		l["issueType"] != "Cybersecurity & Cloud" || l["subIssueType"] != "Vulnerability remediation" {
+		t.Errorf("labels = %v", l)
+	}
+	e := &Engine{Store: r.store, Now: func() time.Time { return t0 }}
+	off, _ := e.Run(context.Background(), r.set, r.findings, ModeDryRun)
+	if got := ops(off, OpCreate)[0].Labels; len(got) != 0 {
+		t.Errorf("an offline run names values it did not read: %v", got)
+	}
 }

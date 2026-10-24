@@ -27,6 +27,7 @@ import {
   Network,
   MonitorCog,
   KeyRound,
+  Ticket,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { ConsoleTools } from "@/components/console-tools";
@@ -71,6 +72,8 @@ const nav = [
   { href: "/rmm", label: "Datto RMM", icon: MonitorCog },
   // Identity posture (slice 12). Appended: the groups below slice this array by position.
   { href: "/identity", label: "Identity", icon: KeyRound },
+  // Autotask tickets (slice 14). Appended: the groups below slice this array by position.
+  { href: "/autotask", label: "Autotask", icon: Ticket },
 ];
 
 const navGroups = [

@@ -475,6 +475,9 @@ type Op struct {
 	Title        string `json:"title"`
 	// Create is the exact ticket that is or would be created.
 	Create *client.TicketCreate `json:"create,omitempty"`
+	// Labels name the picklist values of Create, as Autotask's lists give them
+	// (only when the run read Autotask).
+	Labels map[string]string `json:"labels,omitempty"`
 	// Note is the exact note text.
 	Note   string `json:"note,omitempty"`
 	Reason string `json:"reason,omitempty"`
@@ -503,6 +506,9 @@ type Result struct {
 	Completed int `json:"completed"`
 	Failed    int `json:"failed"`
 	Deferred  int `json:"deferred"`
+	// Flagged counts the tickets that need a person's look (completed in Autotask
+	// while their findings are open, or gone from Autotask).
+	Flagged int `json:"flagged"`
 }
 
 // Status summarises a run for the history: ok, partial (something failed or was

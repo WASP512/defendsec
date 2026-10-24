@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS autotask_runs (
   completed       INT NOT NULL DEFAULT 0,
   failed          INT NOT NULL DEFAULT 0,
   deferred        INT NOT NULL DEFAULT 0,
+  flagged         INT NOT NULL DEFAULT 0,
   problems        JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(problems) = 'array'),
   ops             JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(ops) = 'array')
 );
