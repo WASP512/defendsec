@@ -33,6 +33,7 @@ import (
 	"defendsec/internal/playbook"
 	"defendsec/internal/policy"
 	"defendsec/internal/presence"
+	"defendsec/internal/repohealth"
 	"defendsec/internal/sca"
 	"defendsec/internal/sigma"
 	"defendsec/internal/sign"
@@ -102,12 +103,18 @@ type Server struct {
 	// surf is the external surface scanner's state (surface.go).
 	surf surfaceRunner
 
+	// repoStaleAfter is how old a repository index may be before it is a
+	// finding (DEFENDSEC_REPO_STALE_DAYS; 0 means the default of 7 days).
+	repoStaleAfter time.Duration
 	// rmmr is the Datto RMM collector's state (rmm.go).
 	rmmr rmmRunner
 
 	// m365r is the Microsoft 365 identity collector's state (m365.go).
 	m365r m365Runner
 }
+
+// SetRepoStaleAfter sets the repository-index staleness threshold.
+func (s *Server) SetRepoStaleAfter(d time.Duration) { s.repoStaleAfter = d }
 
 // SetAnchoring configures checkpoint anchoring. Called at startup rather than
 // passed to New, so the existing constructor signature stays as it is for the
@@ -366,6 +373,14 @@ func (s *Server) ReportInventory(ctx context.Context, req *defendsecv1.Inventory
 		Distro:          req.GetDistro(),
 		DistroRelease:   req.GetDistroRelease(),
 		PackageManager:  req.GetPackageManager(),
+	}
+	if rh := repohealth.FromProto(req.GetRepoHealth()); !rh.Empty() {
+		// The verdict is the server's, made now with the fleet's threshold; the
+		// agent only reports what it read.
+		now := time.Now().UTC()
+		a := repohealth.Assess(rh, now, s.repoStaleAfter)
+		rh.Assessment, rh.AssessedAt = &a, now.Format(time.RFC3339)
+		dev.RepoHealth = &rh
 	}
 	for _, item := range req.GetSoftware() {
 		dev.Software = append(dev.Software, presence.Software{

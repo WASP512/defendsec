@@ -139,10 +139,11 @@ function FixRow({ group, rank }: { group: ExposureGroup; rank: number }) {
             href={`/advisories?advisory=${encodeURIComponent(group.advisoryId)}`}
             className="font-medium underline-offset-2 hover:underline"
           >
-            {group.eol ? `${group.eol.productLabel} ${group.eol.cycle}` : group.cve || group.advisoryId}
+            {group.eol ? `${group.eol.productLabel} ${group.eol.cycle}` : group.repo ? group.repo.label : group.cve || group.advisoryId}
           </Link>
           <SeverityBadge severity={group.severity} />
           {group.eol ? <Badge variant="outline">{group.eol.stage === "eol" ? "End of life" : "Past active support"}</Badge> : null}
+          {group.repo ? <Badge variant="outline">Package repository</Badge> : null}
           {group.kev ? <Badge variant="destructive">KEV</Badge> : null}
         </div>
         <p className="text-sm">
@@ -155,7 +156,7 @@ function FixRow({ group, rank }: { group: ExposureGroup; rank: number }) {
           ))}
         </p>
         <p className="text-sm text-muted-foreground">
-          {hostsLabel(group)} · {group.packages.join(", ")} · {fixedLabel(group)}
+          {hostsLabel(group)} · {group.repo ? group.repo.manager : group.packages.join(", ")} · {fixedLabel(group)}
         </p>
       </div>
     </li>

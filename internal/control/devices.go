@@ -125,6 +125,7 @@ func FilterDevices(devs []presence.Device, q storepg.DeviceQuery) (storepg.Devic
 			Username: d.Username, IPAddresses: ips, DiskEncryption: d.DiskEncryption, Firewall: d.Firewall,
 			Isolated: d.Isolated, LastSeen: seen, Online: online,
 			SoftwareCount: len(d.Software), PendingUpdates: len(d.PendingUpdates),
+			PatchReliability: patchReliability(d), PatchReason: patchReason(d),
 		})
 	}
 	sort.Slice(match, func(i, j int) bool {
@@ -192,4 +193,26 @@ func CountDevices(devs []presence.Device, now time.Time) storepg.FleetCounts {
 		c.ByPlatform[d.Platform]++
 	}
 	return c
+}
+
+// patchReliability is the listing's answer to "can this host's pending-updates
+// count be believed": the server's verdict on the repository evidence the agent
+// reported, "unassessed" for a Linux host that reported none, and "" where the
+// question does not apply.
+func patchReliability(d presence.Device) string {
+	if d.RepoHealth != nil && d.RepoHealth.Assessment != nil {
+		return string(d.RepoHealth.Assessment.Reliability)
+	}
+	if d.Platform == "linux" {
+		return "unassessed"
+	}
+	return ""
+}
+
+// patchReason is the first reason the pending-updates list is unreliable.
+func patchReason(d presence.Device) string {
+	if d.RepoHealth != nil && d.RepoHealth.Assessment != nil && len(d.RepoHealth.Assessment.Reasons) > 0 {
+		return d.RepoHealth.Assessment.Reasons[0]
+	}
+	return ""
 }

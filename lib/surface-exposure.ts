@@ -3,6 +3,7 @@
 // pure models, so `node --test` can run it.
 
 import { checkLabel, type SurfaceCheck, type SurfaceFinding } from "./surface-model.ts";
+import { unreliableHostsNote } from "./patch-reliability.ts";
 import type { ExposureGroup, ExposureSummary, SurfaceSummary, TrendPoint } from "./exposure-model.ts";
 
 function plural(n: number, one: string, many: string = `${one}s`): string {
@@ -123,10 +124,13 @@ export function fixDescription(summary: Pick<ExposureSummary, "fixable">, shown:
   if (fixable.advisories > 0) {
     // advisories counts patches to install and, since slice 10, end-of-life releases to upgrade.
     const eolN = fixable.eol?.advisories ?? 0;
-    const vulnN = fixable.advisories - eolN;
+    const repoN = fixable.repoHealth?.advisories ?? 0;
+    const vulnN = fixable.advisories - eolN - repoN;
     const what: string[] = [];
     if (vulnN > 0) what.push(`${plural(vulnN, "vulnerability", "vulnerabilities")} with a fix to install`);
     if (eolN > 0) what.push(`${plural(eolN, "end-of-life release")} to upgrade`);
+    // A repository whose key or index is broken has stopped delivering updates.
+    if (repoN > 0) what.push(`${plural(repoN, "package repository", "package repositories")} whose updates have stopped`);
     parts.push(`${what.join(" and ")}, across ${plural(fixable.hosts, "host")}`);
   }
   if (surface > 0) parts.push(`${plural(surface, "external surface finding")}`);
@@ -141,7 +145,10 @@ export function fixEmptyText(summary: Pick<ExposureSummary, "hosts" | "surface">
     hosts.assessed === 0
       ? "No host has been assessed yet, so this says nothing about the fleet."
       : `Nothing to install on the ${plural(hosts.assessed, "assessed host")}.`;
-  const notAssessed = hosts.notAssessed > 0 ? ` ${plural(hosts.notAssessed, "host")} not assessed.` : "";
+  // A host whose repository check failed may simply not see its updates: an empty list says nothing about it.
+  const unreliable = hosts.patchUnreliable ?? 0;
+  const unreliableText = unreliable > 0 ? ` ${unreliableHostsNote(unreliable)}` : "";
+  const notAssessed = (hosts.notAssessed > 0 ? ` ${plural(hosts.notAssessed, "host")} not assessed.` : "") + unreliableText;
   let outside = "";
   if (surface === undefined) outside = "";
   else if (surface.scanned === 0) outside = " The external surface has not been scanned, so that says nothing either.";

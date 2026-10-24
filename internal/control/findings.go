@@ -12,7 +12,7 @@ import (
 
 // Findings API (read-only):
 //
-//	GET /v1/findings?deviceId=&kind=finding|eol|awaiting_vendor|unfixed|informational&resolved=1&limit=
+//	GET /v1/findings?deviceId=&kind=finding|eol|repo_health|awaiting_vendor|unfixed|informational&resolved=1&limit=
 //	GET /v1/findings/{id}
 //	GET /v1/findings/summary
 //
@@ -60,9 +60,9 @@ func (s *Server) HandleFindings(w http.ResponseWriter, r *http.Request) {
 		IncludeResolved: q.Get("resolved") == "1",
 	}
 	switch f.Kind {
-	case "", "finding", "eol", "awaiting_vendor", "unfixed", "informational":
+	case "", "finding", "eol", "repo_health", "awaiting_vendor", "unfixed", "informational":
 	default:
-		http.Error(w, "kind must be finding, eol, awaiting_vendor, unfixed or informational", http.StatusBadRequest)
+		http.Error(w, "kind must be finding, eol, repo_health, awaiting_vendor, unfixed or informational", http.StatusBadRequest)
 		return
 	}
 	limit := 500

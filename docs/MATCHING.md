@@ -78,6 +78,13 @@ contacts nothing, for offline matching and for support requests.
    `no_feed` (distro known, no feed loaded for that release) or `no_distro`. A host with no
    findings and no coverage was not assessed; the console says so.
 
+## Repository health
+
+`repoHealth` in the inventory (slice 11) is what the agent read about each enabled package repository: signature state, key
+ids and expiry, Release dates, the host's last refresh. The matcher turns it into findings of kind `repo_health` (basis
+`host`, no feed involved) and `Result.RepoHealthAssessed` says whether the host reported any. See
+[REPO_HEALTH.md](REPO_HEALTH.md).
+
 ## Application end-of-life
 
 Software from outside the distribution (a third-party repository, or a host with no package manager) is judged against its

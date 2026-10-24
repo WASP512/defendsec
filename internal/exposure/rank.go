@@ -12,10 +12,12 @@
 //     high severity (slice 7b), identity findings of critical or high severity
 //     (slice 12: an administrator with no MFA, a rule forwarding a mailbox
 //     outside), a reachable SMB port, a certificate that has
-//     expired, an SPF record that lets anyone send as the domain; and software
+//     expired, an SPF record that lets anyone send as the domain; software
 //     past the end of its security support (slice 10), a PHP 8.0 from a third
-//     party repository that no one patches any more. See "Surface findings" and
-//     "End-of-life findings" below.
+//     party repository that no one patches any more; and a package repository
+//     whose signing key has expired or is missing (slice 11), from which the
+//     host has silently stopped receiving updates. See "Surface findings",
+//     "End-of-life findings" and "Repository-health findings" below.
 //  3. EPSS, highest first: the probability of exploitation in the next 30 days.
 //     No score goes last.
 //  4. CVSS base score, highest first. No score goes last.
@@ -88,6 +90,33 @@
 //     exploited or scored vulnerability. It has no EPSS and the CVSS-equivalent
 //     of low (2.0): the rest band, after every vulnerability with an EPSS score,
 //     with the CVSS-only ones, below the security-EOL findings.
+//
+// # Repository-health findings
+//
+// A finding of kind repo_health (slice 11) is a package repository on a host
+// whose signing key has expired or is missing (severity high), whose index is
+// expired or has gone stale (medium), or for which the host holds no index. It
+// has no KEV flag, no EPSS and no CVSS, and it is not itself exploited: it is
+// the reason nothing the repository publishes is being installed or matched.
+// It ranks the way a surface finding of the same severity does, by the
+// CVSS-equivalent of its severity (SurfaceScore):
+//
+//   - High: the urgent band, after KEV, with the critical and high surface
+//     findings and the security-EOL ones, before every vulnerability that is not
+//     on KEV. The reasoning is the lesson from a client host: a dead repository hides the
+//     vulnerabilities it would have fixed, so leaving this at the bottom of a
+//     list of scored CVEs puts the cause below the symptoms. The price is the
+//     one the other urgent rows pay: a non-KEV CVE with a very high EPSS ranks
+//     below it; revisit it with real data.
+//   - Medium (a stale index): the rest band as a vulnerability with no EPSS and
+//     a CVSS of 5.0.
+//
+// Tie-break inside the urgent band. After the score (critical surface 9.5, then
+// the 8.0 group of high surface, security-EOL and high repo-health findings) the
+// severity label orders and then the advisory id, bytewise, which is a rule and
+// not an accident: "EOL:" before "REPO:" before "surface:". So at equal score
+// an end-of-life release comes first, then a dead repository, then an exposed
+// surface finding.
 package exposure
 
 import (
@@ -118,6 +147,10 @@ type Item struct {
 	// other. Its KEV, EPSS and CVSS are ignored: it ranks by stage under the
 	// end-of-life rules above.
 	EOLStage string
+	// RepoHealth marks a repository-health finding. Its KEV, EPSS and CVSS are
+	// ignored: it ranks by Severity under the repository-health rules above,
+	// which are the surface rules.
+	RepoHealth bool
 }
 
 // The bands an item falls into; a lower band ranks first.
@@ -151,6 +184,9 @@ func EOLScore(stage string) (score float64, ranked bool) {
 // of any feed starts with it.
 const SurfaceKeyPrefix = "surface:"
 
+// RepoKeyPrefix starts the AdvisoryID of every repository-health row.
+const RepoKeyPrefix = "REPO:"
+
 // IdentityKeyPrefix starts the AdvisoryID of every identity row (the zero-padded
 // finding id follows); like SurfaceKeyPrefix, no advisory id starts with it.
 const IdentityKeyPrefix = "identity:"
@@ -175,7 +211,7 @@ func SurfaceScore(severity string) (score float64, ranked bool) {
 
 // Band says which band an item falls into.
 func Band(i Item) int {
-	if i.Surface || i.Identity {
+	if i.Surface || i.Identity || i.RepoHealth {
 		switch strings.ToLower(i.Severity) {
 		case "critical", "high":
 			return BandUrgent
@@ -198,9 +234,9 @@ func Band(i Item) int {
 // finding has no exploitation signal and the CVSS-equivalent of its severity or
 // stage.
 func effective(i Item) Item {
-	if i.Surface || i.Identity {
+	if i.Surface || i.Identity || i.RepoHealth {
 		score, _ := SurfaceScore(i.Severity)
-		return Item{AdvisoryID: i.AdvisoryID, Severity: i.Severity, CVSS: &score, Surface: i.Surface, Identity: i.Identity}
+		return Item{AdvisoryID: i.AdvisoryID, Severity: i.Severity, CVSS: &score, Surface: i.Surface, Identity: i.Identity, RepoHealth: i.RepoHealth}
 	}
 	if score, ok := EOLScore(i.EOLStage); ok {
 		return Item{AdvisoryID: i.AdvisoryID, Severity: i.Severity, CVSS: &score, EOLStage: i.EOLStage}
