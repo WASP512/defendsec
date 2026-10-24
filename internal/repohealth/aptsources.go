@@ -299,13 +299,16 @@ func URIToFileName(uri string) string {
 
 // ReleaseBases returns the addresses, without the file name, where a source's
 // Release files live: <uri>/dists/<suite>/ normally, <uri>/<suite> for a flat
-// repository (a suite ending in "/", usually "./").
+// repository (a suite ending in "/", usually "./"). apt names the lists file
+// after the address it fetched, and for the usual "./" suite that address is
+// <uri>/./, so the file is <host>_._InRelease (measured on Ubuntu 22.04 with an
+// http flat repository), not <host>_InRelease.
 func (s AptSource) ReleaseBases() []string {
 	uri := strings.TrimRight(s.URI, "/")
 	if strings.HasSuffix(s.Suite, "/") {
 		suite := path.Clean(s.Suite)
 		if suite == "." {
-			return []string{uri + "/"}
+			return []string{uri + "/./"}
 		}
 		return []string{uri + "/" + suite + "/", uri + "/./" + suite + "/"}
 	}

@@ -33,6 +33,10 @@ For every enabled source in `/etc/apt/sources.list`, `sources.list.d/*.list` and
    or the lists directory's modification time when the host has no stamp.
 4. Key expiry dates are read from the keyring files with a small OpenPGP packet reader (dates only, no cryptography).
 
+apt names a lists file after the address it fetched. The usual flat repository (`deb URI ./`) is fetched from `URI/./`, so the
+file is `<host>:<port>_._InRelease`, not `<host>:<port>_InRelease` (measured on Ubuntu 22.04 with a local http repository; the
+first version looked for the wrong name and reported such a repository as `no_index`).
+
 `gpgv` is run argv-only (no shell) with fixed options, on files under `/var/lib/apt/lists` or the source's own keyring.
 It is the only new program. It reads; it cannot write to a keyring.
 
@@ -114,6 +118,10 @@ a row of every kind.
 
 - **What the host holds is the only evidence.** The agent cannot tell why apt has no index for a repository; it reports `no_index`
   and the verification result of whatever it could find.
+- **A repository whose key had already expired when apt first fetched it has no index** on an http source: apt refuses the
+  file and keeps no copy, so there is nothing to verify and the finding is `no_index` (still high), not `key_expired`. The
+  fix text says an expired or untrusted key is the usual cause and that `apt-get update` names it. `key_expired` is what the
+  host reports when apt once fetched the index with a valid key and the key expired afterwards (the 2026-10-22 sequence).
 - **`update-success-stamp` is not a health signal.** On the lab host `apt-get update` exited 100 with an expired-key repository and
   still touched the stamp (VERIFIED.md), so a fresh stamp does not clear a repository: each one is verified on its own.
 - **dnf and zypper:** key expiry and cached-metadata age only. `repo_gpgcheck` signatures on `repomd.xml` are not verified;

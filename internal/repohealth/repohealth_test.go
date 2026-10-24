@@ -159,8 +159,18 @@ func TestReleaseBases(t *testing.T) {
 		t.Errorf("names = %v %v %v", in, rel, gpg)
 	}
 	flat := AptSource{URI: "https://x.invalid/repo", Suite: "./"}
-	if got := flat.ReleaseBases(); got[0] != "https://x.invalid/repo/" {
+	if got := flat.ReleaseBases(); len(got) != 1 || got[0] != "https://x.invalid/repo/./" {
 		t.Errorf("flat = %v", got)
+	}
+	// What apt really wrote for http://127.0.0.1:8099/ ./ on Ubuntu 22.04.
+	lab := AptSource{URI: "http://127.0.0.1:8099/", Suite: "./"}
+	in, rel, gpg = lab.ListFileNames()
+	if in[0] != "127.0.0.1:8099_._InRelease" || rel[0] != "127.0.0.1:8099_._Release" || gpg[0] != "127.0.0.1:8099_._Release.gpg" {
+		t.Errorf("flat names = %v %v %v", in, rel, gpg)
+	}
+	sub := AptSource{URI: "http://x.invalid/repo", Suite: "sub/"}
+	if got := sub.ReleaseBases(); len(got) != 2 || got[0] != "http://x.invalid/repo/sub/" {
+		t.Errorf("flat sub-directory = %v", got)
 	}
 }
 

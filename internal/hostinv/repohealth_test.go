@@ -199,7 +199,7 @@ func TestCollectAptTrustedMissingKeyringAndGpgvFailures(t *testing.T) {
 	h := newFixtureHost(t)
 	h.write("etc/apt/sources.list.d/a.list", "deb [trusted=yes] http://a.test/apt ./\n")
 	h.write("etc/apt/sources.list.d/b.list", "deb [signed-by=/etc/apt/keyrings/gone.gpg] http://b.test/apt stable main\n")
-	h.write("var/lib/apt/lists/a.test_apt_InRelease", inRelease("Wed, 22 Oct 2026 08:00:00 UTC", ""))
+	h.write("var/lib/apt/lists/a.test_apt_._InRelease", inRelease("Wed, 22 Oct 2026 08:00:00 UTC", ""))
 	h.write("var/lib/apt/lists/b.test_apt_dists_stable_InRelease", inRelease("Wed, 22 Oct 2026 08:00:00 UTC", ""))
 	rep := collectApt(h.env())
 	a := repoByLabel(t, rep, "http://a.test/apt ./")
@@ -288,6 +288,38 @@ func TestCollectAptFileRepositoryIsVerifiedInPlace(t *testing.T) {
 	h2.write("etc/apt/sources.list.d/lab.list", "deb file:/srv/lab/repo dstest main\n")
 	if r := collectApt(h2.env()).Repos[0]; r.Signature != repohealth.SigNoIndex {
 		t.Errorf("empty file repo = %+v", r)
+	}
+}
+
+// A flat http repository ("deb URI ./"): apt keeps it as <host>:<port>_._InRelease,
+// the name measured on a real host. Looking for <host>:<port>_InRelease reported a
+// healthy repository as having no index.
+func TestCollectAptFlatHTTPRepositoryFindsItsListsFile(t *testing.T) {
+	h := newFixtureHost(t)
+	h.write("etc/apt/sources.list.d/flat.list", "deb [signed-by=/etc/apt/keyrings/flat.gpg] http://127.0.0.1:8099/ ./\n")
+	h.write("etc/apt/keyrings/flat.gpg", "k")
+	h.write("var/lib/apt/lists/127.0.0.1:8099_._InRelease", inRelease("Wed, 22 Oct 2026 08:00:00 UTC", ""))
+	h.verdicts["8099"] = goodStatus
+	r := collectApt(h.env()).Repos[0]
+	if r.Signature != repohealth.SigGood || r.ReleaseDate == nil || !strings.Contains(r.Detail, "apt holds") {
+		t.Errorf("flat http repo = %+v", r)
+	}
+	// The same file with the key expired: the finding must name the key.
+	h.verdicts["8099"] = expiredStatus
+	if r := collectApt(h.env()).Repos[0]; r.Signature != repohealth.SigExpiredKey {
+		t.Errorf("flat http repo, expired key = %+v", r)
+	}
+	// A flat repository under a path, and one never fetched.
+	h2 := newFixtureHost(t)
+	h2.write("etc/apt/sources.list", "deb [trusted=yes] http://obs.test/home/x/Debian_12 ./\n")
+	h2.write("var/lib/apt/lists/obs.test_home_x_Debian%5f12_._InRelease", inRelease("Wed, 22 Oct 2026 08:00:00 UTC", ""))
+	if r := collectApt(h2.env()).Repos[0]; r.Signature != repohealth.SigNotChecked || r.ReleaseDate == nil {
+		t.Errorf("flat http repo under a path = %+v", r)
+	}
+	h3 := newFixtureHost(t)
+	h3.write("etc/apt/sources.list", "deb http://never.test/ ./\n")
+	if r := collectApt(h3.env()).Repos[0]; r.Signature != repohealth.SigNoIndex {
+		t.Errorf("never fetched = %+v", r)
 	}
 }
 
