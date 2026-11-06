@@ -1912,7 +1912,7 @@ run gh auth login". A `cosign` v2.6.5 release signature (legacy `--signature`/`-
 | --- | --- | --- | --- | --- |
 | Release build, SBOMs, checksums | linux (CI runner, `wixl`) | `internal/supplychain` | `release.yml` dry run, run 40100363421 | built on hermesagent without the MSI |
 | Reproducible builds | linux, darwin, windows | `check-reproducible.sh` | CI + dry run | 7 targets reproducible |
-| Signature + provenance verified by `verify-release.sh --strict` | CI runner | — | dry-run run 40100363421 (branch identity) | **not run on a published release** |
+| Signature + provenance verified by `verify-release.sh --strict` | CI runner; hermesagent | — | dry-run run 40100363421 (branch identity) | published v0.1.0, `--strict --reproduce`, rc 0 (see "Published v0.1.0") |
 | Offline attestation verification without a login | any | — | — | public cli/cli artifact |
 | Release-mode server install | Ubuntu 22.04 | — | — | VM 120, 44 s |
 | Release-mode server install, SELinux enforcing | Rocky 9.8 | — | — | VM 121 |
@@ -1925,18 +1925,53 @@ run gh auth login". A `cosign` v2.6.5 release signature (legacy `--signature`/`-
 
 ### Not verified
 
-- **A published release.** Nothing here has run against a real tag: the tag-only steps (publish, download, `--strict
-  --reproduce` against GitHub, the tag-pinned identity) are untested, and so is `--release latest`.
-- The signature and attestation were made by a branch run; a tag run uses the same steps and a different ref.
+- **(Superseded, see "Published v0.1.0" below.)** The publish, download, `--strict --reproduce` and tag-pinned
+  identity steps have now run against the real release. `--release latest` and the update helper against GitHub are
+  still untested.
 - Debian 12, the Proxmox container script, Fedora, openSUSE and arm64 installs; `install-server.sh` on a host with
   an existing source install; the Windows MSI built by `wixl` was not installed on a Windows machine.
-- `cosign` verification of the real release signature on a clean machine (cosign v3 was shown to read the legacy format
-  on another project's release only).
 - The SBOM contents, and the update helper against GitHub (it ran against a local copy in test mode).
 - **A Rocky/Alma host can show a fixable finding for a fix Rocky has published in errata but not on its mirrors.** Seen
   once, on 2026-10-24; whether Apollo routinely publishes ahead of the mirror is not measured. The matcher is unchanged.
 - `README.md` and `docs/INSTALL.md` now describe the release install; the `RELEASE`/`--release` paths other than the
   stamped copy and `--release-dir` were not run on the lab VMs.
+
+### Published v0.1.0 — downloaded and verified (2026-11-06)
+
+The release workflow run 40124104531 (`Publish release`, event push, `head_branch` v0.1.0, head `282489d`,
+conclusion success) published release `v0.1.0` on 2026-10-24 (not draft, not prerelease, 47 assets). On 2026-11-06 on
+hermesagent, from an empty directory:
+
+- Every asset downloaded from `https://github.com/WASP512/defendsec/releases/download/v0.1.0/<name>`; 47 files, each
+  size equal to the size the releases API lists; `SHA256SUMS` identical to the manifest saved at the dry run.
+- `cosign` v3.1.4 (the release binary, checked against `cosign_checksums.txt`), `gh` 2.103.2, no `GH_TOKEN`, no
+  `gh auth login`, `verify-release.sh` byte-identical to the one in the v0.1.0 tag:
+
+```
+verify-release.sh --strict --reproduce --tag v0.1.0 <dir>      rc 0
+1. Checksums       OK: every file in the manifest matches / OK: no unlisted files
+2. Signature       OK: signed by WASP512/defendsec's release workflow, on a ref matching refs/tags/v[0-9].*
+3. Provenance      OK: ... (checked against the bundle published with the release)
+4. Reproducible    OK x10: defendsec-{apid,agentd,verify,web,feeds}-linux-{amd64,arm64} rebuilt from a fresh
+                   clone of the tag with .git removed, hashes equal
+RESULT: all checks passed.
+```
+
+- Negative control on a copy of the same directory: one byte appended to `install-agent.sh` and the first character of
+  the first `SHA256SUMS` line changed. `--strict` exits 1 with 3 failures: checksums (`VERSION` and `install-agent.sh`),
+  signature (cosign: invalid signature) and provenance (gh: verifying with issuer "sigstore.dev" failed).
+- Second negative control, a forged manifest (the attacker also rewrites the `SHA256SUMS` line of the file they changed):
+  a copy of the directory with `\n# tampered\n` appended to `install-agent.sh` and its `SHA256SUMS` line replaced by the
+  new hash. `--strict --tag v0.1.0` exits 1 with 2 failures: step 1 passes (every file in the manifest matches, no
+  unlisted files), step 2 fails (cosign: invalid signature, the edited `SHA256SUMS` does not match `SHA256SUMS.sig`) and step 3
+  fails (no verifiable provenance). The signature check, not the checksum, is what catches this. (A reviewer repeated
+  both controls independently with the same results.)
+
+What this does **not** show: the Windows binaries, the `.msi`, the SBOMs and `defendsec-console.tar.gz` are covered by
+the checksum, signature and provenance checks but were not rebuilt (`--reproduce` rebuilds the 10 linux binaries only);
+the SBOM contents were not read. The signature check asks the Rekor transparency log online (cosign v3 behaviour), so
+it needs network access. This checks the published artifacts, not that the installer works from GitHub: the
+`install-server.sh --release`, `update-server.sh` and `--release latest` paths were not run against the published release.
 
 ## Slice 13 — Google Workspace identity posture (migration 032)
 
