@@ -2119,3 +2119,15 @@ it needs network access. This checks the published artifacts, not that the insta
 | Identity > Google Workspace page, Fleet card, Fix this week rows, drawer | Next.js 16 build | `lib/identity-model.test.ts` | see handoff | browser, seeded database |
 
 - Windows and macOS: nothing here is platform-specific; `GOOS=windows go vet` only.
+
+## Clock fix — `TestRMMAPIEndToEnd` aged out (branch `lookout/8-clock-fix`)
+
+- Defect: the RMM fixtures carry fixed 2026-10-23/24 `lastSeen`/`lastAuditDate` values, but the collector and the stale/coverage views judged
+  "stale" against the wall clock, so `TestRMMAPIEndToEnd` expected `Stale:1` and from about 2026-10-29 got `Stale:2` (main CI `postgres-integration` red).
+- Fix: `Server.SetRMMClock` (tests only; default stays the wall clock). `internal/control/rmm.go` now takes "now" from one `rmmNow()` for the sync
+  (`rmm.Syncer.Now`), the status/device/devices views, the re-match and the schedule's "due" test. The scratch server pins the clock to the fixtures' time.
+- Verified by a run on 2026-11-06: on `origin/main` (4671665) `TestRMMAPIEndToEnd` fails with `Stale:2`; on the branch the CI command
+  `go test -p 1 -count=1 ./internal/storepg/... ./db/migrations/... ./internal/control/... ./internal/feeds/runner/... ./internal/rmm/...` passes
+  (user-space PG 16.15, `TZ=UTC`, `umask 0022`). New `TestRMMStaleFollowsInjectedClock` reads the same fixtures at two clock times (1 stale, then 2 stale
+  60 days on); both mutants (Syncer ignores the clock; `rmmNow` ignores the clock) fail by assertion. `TestRMMScheduleReadsWhenDueOnly` now moves the clock
+  instead of sleeping. Not verified: a run on a future date (no faketime on this host); the other tests were checked by reading, not by shifting the clock.
