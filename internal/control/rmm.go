@@ -56,6 +56,28 @@ type rmmRunner struct {
 	open func() (rmmClient, error)
 	// interval is how often the schedule reads the site (0 = RMMSyncInterval).
 	interval time.Duration
+	// clock is "now" for the collector and for the stale/coverage views. Nil
+	// means the wall clock; tests set it so fixtures do not age out.
+	clock func() time.Time
+}
+
+// SetRMMClock replaces the clock the RMM collector and its views use (tests).
+func (s *Server) SetRMMClock(now func() time.Time) {
+	s.rmmr.mu.Lock()
+	defer s.rmmr.mu.Unlock()
+	s.rmmr.clock = now
+}
+
+// rmmNow is the current time for RMM staleness: the injected clock, else the
+// wall clock. Always UTC.
+func (s *Server) rmmNow() time.Time {
+	s.rmmr.mu.Lock()
+	clock := s.rmmr.clock
+	s.rmmr.mu.Unlock()
+	if clock != nil {
+		return clock().UTC()
+	}
+	return time.Now().UTC()
 }
 
 // SetRMMClient replaces how the RMM client is built (tests, or a deployment
@@ -239,13 +261,13 @@ func (s *Server) HandleRMM(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if s.rmmReady(w, r, false) {
-			rows, err := s.pg.ListRMMDevices(r.Context(), time.Now().UTC(), 1000)
+			rows, err := s.pg.ListRMMDevices(r.Context(), s.rmmNow(), 1000)
 			if err != nil {
 				s.log.Warn("list rmm devices", "err", err)
 				http.Error(w, "could not read the devices", http.StatusInternalServerError)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"devices": rows, "generatedAt": time.Now().UTC().Format(time.RFC3339)})
+			writeJSON(w, http.StatusOK, map[string]any{"devices": rows, "generatedAt": s.rmmNow().Format(time.RFC3339)})
 		}
 	case strings.HasPrefix(rest, "devices/"):
 		if r.Method != http.MethodGet {
@@ -260,7 +282,7 @@ func (s *Server) HandleRMM(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not an RMM device id", http.StatusBadRequest)
 			return
 		}
-		d, err := s.pg.GetRMMDevice(r.Context(), time.Now().UTC(), id)
+		d, err := s.pg.GetRMMDevice(r.Context(), s.rmmNow(), id)
 		if errors.Is(err, storepg.ErrRMMNotFound) {
 			http.Error(w, "device not found", http.StatusNotFound)
 			return
@@ -277,7 +299,7 @@ func (s *Server) HandleRMM(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) rmmStatus(w http.ResponseWriter, r *http.Request) {
-	sum, err := s.pg.RMMSummary(r.Context(), time.Now().UTC())
+	sum, err := s.pg.RMMSummary(r.Context(), s.rmmNow())
 	if err != nil {
 		s.log.Warn("rmm summary", "err", err)
 		http.Error(w, "could not read the RMM state", http.StatusInternalServerError)
@@ -293,7 +315,7 @@ func (s *Server) rmmStatus(w http.ResponseWriter, r *http.Request) {
 		"intervalHours": s.rmmInterval().Hours(),
 		"scheduled":     strings.ToLower(strings.TrimSpace(os.Getenv("DEFENDSEC_RMM_SCHEDULE"))) != "off",
 		"notAssessed":   rmmNotAssessed,
-		"generatedAt":   time.Now().UTC().Format(time.RFC3339),
+		"generatedAt":   s.rmmNow().Format(time.RFC3339),
 		"readOnlyNote":  "DefendSec only ever reads from Datto RMM (GET requests, apart from the token request). It never runs a job, component or script and never changes anything in RMM.",
 	})
 }
@@ -412,7 +434,7 @@ func (s *Server) runRMMSync(ctx context.Context, trigger string) (storepg.RMMSyn
 	}
 	ctx, cancel := context.WithTimeout(ctx, rmmSyncTimeout)
 	defer cancel()
-	sy := &rmm.Syncer{Src: c, Store: s.pg, Log: s.log}
+	sy := &rmm.Syncer{Src: c, Store: s.pg, Log: s.log, Now: s.rmmNow}
 	return sy.Sync(ctx, trigger)
 }
 
@@ -494,7 +516,7 @@ func (s *Server) rmmScheduleOnce(ctx context.Context) bool {
 		return false
 	}
 	if last, err := s.pg.LatestRMMSync(ctx); err == nil && last != nil && last.SiteUID == cfg.SiteUID &&
-		time.Since(last.FinishedAt) < s.rmmInterval() {
+		s.rmmNow().Sub(last.FinishedAt) < s.rmmInterval() {
 		return false
 	}
 	if _, err := s.rmmClient(); err != nil {
@@ -518,7 +540,7 @@ func (s *Server) rmmRematch(ctx context.Context) {
 	if s.pg == nil {
 		return
 	}
-	n, err := rmm.Rematch(ctx, s.pg, time.Now().UTC())
+	n, err := rmm.Rematch(ctx, s.pg, s.rmmNow())
 	if err != nil {
 		s.log.Warn("rmm rematch", "err", err)
 		return

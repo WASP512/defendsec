@@ -63,6 +63,9 @@ func rmmScratchServer(t *testing.T) (*Server, *storepg.Store, *pgxpool.Pool, *da
 
 	srv := dattotest.New(t)
 	now := time.UnixMilli(1792824000000 + 3600*1000).UTC()
+	// The fixtures' lastSeen/lastAudit are fixed dates, so "stale" is judged against
+	// this clock and not the wall clock: the test must not age out.
+	s.SetRMMClock(func() time.Time { return now })
 	s.SetRMMClient(func() (rmmClient, error) {
 		return datto.New(datto.Config{APIURL: srv.URL, Key: dattotest.Key, Secret: dattotest.Secret, UnsafeAllowAnyURL: true,
 			RequestsPerSecond: 1000, Now: func() time.Time { return now }, Sleep: func(context.Context, time.Duration) error { return nil }})
@@ -279,6 +282,10 @@ func TestRMMAPIEndToEnd(t *testing.T) {
 func TestRMMScheduleReadsWhenDueOnly(t *testing.T) {
 	s, st, _, _ := rmmScratchServer(t)
 	ctx := context.Background()
+	// The schedule's "due" test and the times a read records come from one clock, so
+	// move that clock instead of sleeping.
+	clk := time.UnixMilli(1792824000000 + 3600*1000).UTC()
+	s.SetRMMClock(func() time.Time { return clk })
 	if s.rmmScheduleOnce(ctx) {
 		t.Fatal("the schedule read with no site selected")
 	}
@@ -291,8 +298,8 @@ func TestRMMScheduleReadsWhenDueOnly(t *testing.T) {
 	if s.rmmScheduleOnce(ctx) {
 		t.Error("a second read ran straight after the first")
 	}
-	s.rmmr.interval = time.Nanosecond // pretend 6 hours passed
-	time.Sleep(5 * time.Millisecond)
+	s.rmmr.interval = time.Hour
+	clk = clk.Add(2 * time.Hour) // pretend the interval passed
 	if !s.rmmScheduleOnce(ctx) {
 		t.Error("an overdue read did not run")
 	}
@@ -308,8 +315,7 @@ func TestRMMScheduleReadsWhenDueOnly(t *testing.T) {
 	if !s.claimRMM() {
 		t.Fatal("claim")
 	}
-	s.rmmr.interval = time.Nanosecond
-	time.Sleep(5 * time.Millisecond)
+	clk = clk.Add(2 * time.Hour)
 	if s.rmmScheduleOnce(ctx) {
 		t.Error("the schedule ran over a read in progress")
 	}
@@ -363,3 +369,42 @@ func TestRMMCredentialsFromEnvironment(t *testing.T) {
 
 var _ = httptest.NewRecorder
 var _ rmm.Source
+
+// "Stale" is judged against the server's RMM clock, not the wall clock: the same
+// fixtures read at two different times give two different answers, whatever day
+// the test runs on. (The test used to pass in October and fail from the day the
+// fixtures were more than staleAfterDays old.)
+func TestRMMStaleFollowsInjectedClock(t *testing.T) {
+	s, st, _, _ := rmmScratchServer(t) // the clock is set to the fixtures' "now"
+	ctx := context.Background()
+	if err := st.SetRMMSettings(ctx, "admin", dattotest.Site1, "Demo Client One", 5); err != nil {
+		t.Fatal(err)
+	}
+	read := func() (storepg.RMMSync, storepg.RMMSummary) {
+		t.Helper()
+		rec := surfReq(t, s.HandleRMM, "POST", "/v1/rmm/sync", "admin-token", map[string]any{"wait": true})
+		if rec.Code != 200 {
+			t.Fatalf("sync = %d %s", rec.Code, rec.Body.String())
+		}
+		res := decode[storepg.RMMSync](t, rec)
+		rec = surfReq(t, s.HandleRMM, "GET", "/v1/rmm/status", "viewer-token", nil)
+		sum := decode[struct {
+			Summary storepg.RMMSummary `json:"summary"`
+		}](t, rec)
+		return res, sum.Summary
+	}
+
+	// At the fixtures' own time one Windows device was audited 7 hours ago and the
+	// server 32 days ago.
+	res, sum := read()
+	if res.Windows != 2 || res.Stale != 1 || sum.Stale != 1 || sum.Covered != 1 {
+		t.Errorf("at the fixture time: sync %+v, summary %+v; want 2 windows, 1 stale, 1 covered", res, sum)
+	}
+	// 60 days on, both are stale; the wall clock has nothing to do with it.
+	later := time.UnixMilli(1792824000000+3600*1000).UTC().AddDate(0, 0, 60)
+	s.SetRMMClock(func() time.Time { return later })
+	res, sum = read()
+	if res.Windows != 2 || res.Stale != 2 || sum.Stale != 2 || sum.Covered != 0 {
+		t.Errorf("60 days later: sync %+v, summary %+v; want 2 windows, 2 stale, 0 covered", res, sum)
+	}
+}
