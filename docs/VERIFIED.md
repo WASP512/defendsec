@@ -1960,6 +1960,12 @@ RESULT: all checks passed.
 - Negative control on a copy of the same directory: one byte appended to `install-agent.sh` and the first character of
   the first `SHA256SUMS` line changed. `--strict` exits 1 with 3 failures: checksums (`VERSION` and `install-agent.sh`),
   signature (cosign: invalid signature) and provenance (gh: verifying with issuer "sigstore.dev" failed).
+- Second negative control, a forged manifest (the attacker also rewrites the `SHA256SUMS` line of the file they changed):
+  a copy of the directory with `\n# tampered\n` appended to `install-agent.sh` and its `SHA256SUMS` line replaced by the
+  new hash. `--strict --tag v0.1.0` exits 1 with 2 failures: step 1 passes (every file in the manifest matches, no
+  unlisted files), step 2 fails (cosign: invalid signature, the edited `SHA256SUMS` does not match `SHA256SUMS.sig`) and step 3
+  fails (no verifiable provenance). The signature check, not the checksum, is what catches this. (A reviewer repeated
+  both controls independently with the same results.)
 
 What this does **not** show: the Windows binaries, the `.msi`, the SBOMs and `defendsec-console.tar.gz` are covered by
 the checksum, signature and provenance checks but were not rebuilt (`--reproduce` rebuilds the 10 linux binaries only);
